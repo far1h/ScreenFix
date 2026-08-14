@@ -891,6 +891,60 @@ test.test("new monitor chooser supersedes an older callback", function()
     test.equal(case.controller.calibrationValue.screen.uuid, "second-uuid")
 end)
 
+test.test("failed monitor chooser startup revokes a retained callback", function()
+    for _, mode in ipairs({ "nil", "error" }) do
+        local case = newCase({ configuration = validConfig(true), accessibility = true })
+        local retainedCallback
+        case.calibration.selectScreen = function(_, callback)
+            retainedCallback = callback
+            if mode == "error" then
+                error("chooser startup failure", 0)
+            end
+            return nil
+        end
+        case.controller:start()
+
+        local selected, selectError = case.controller:selectMonitor()
+        retainedCallback(case.screen)
+
+        test.equal(selected, nil)
+        if mode == "error" then
+            test.equal(string.find(selectError, "chooser startup failure", 1, true) ~= nil, true)
+        end
+        test.equal(case.defaultForScreenCalls, 0)
+        test.equal(#case.calibrationStarts, 0)
+        test.equal(case.controller.calibrating, nil)
+    end
+end)
+
+test.test("first-run screen watcher invalidates the pending monitor chooser", function()
+    local case = newCase({ accessibility = true })
+    case.controller:start()
+    local staleCallback = case.selectCallback
+
+    case.screenCallback()
+    staleCallback(case.screen)
+
+    test.equal(case.defaultForScreenCalls, 0)
+    test.equal(#case.calibrationStarts, 0)
+    test.equal(case.controller.calibrating, nil)
+end)
+
+test.test("unrelated topology watcher invalidates the pending monitor chooser", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.controller:start()
+    case.controller:selectMonitor()
+    local staleCallback = case.selectCallback
+
+    case.screenCallback()
+    staleCallback(case.screen)
+
+    test.equal(case.controller.screen, case.screen)
+    test.equal(case.defaultForScreenCalls, 0)
+    test.equal(#case.calibrationStarts, 0)
+    test.equal(case.controller.calibrating, nil)
+end)
+
 test.test("successful toggles invalidate pending monitor chooser callbacks", function()
     for _, transition in ipairs({
         { enabled = true, method = "disable" },

@@ -154,33 +154,41 @@ function Controller:selectMonitor()
     invalidateChooser(self)
     local token = self.chooserGeneration
     self.chooserToken = token
-    return call(self.deps.calibration.selectScreen, self.deps.calibration, function(screen)
-        if self.started ~= true or self.chooserToken ~= token then
-            return
+    local selected, selectError = call(
+        self.deps.calibration.selectScreen,
+        self.deps.calibration,
+        function(screen)
+            if self.started ~= true or self.chooserToken ~= token then
+                return
+            end
+            self.chooserToken = nil
+
+            pcall(function()
+                if screen == nil then
+                    return
+                end
+
+                local value, valueError = call(
+                    self.deps.config.defaultForScreen,
+                    self.deps.config,
+                    screen
+                )
+                if self.started ~= true or self.chooserGeneration ~= token then
+                    return
+                end
+                if value == nil then
+                    callFunction(self.deps.hs.showError, tostring(valueError or "Unable to configure display"))
+                    return
+                end
+
+                startCalibration(self, value, screen)
+            end)
         end
-        self.chooserToken = nil
-
-        pcall(function()
-            if screen == nil then
-                return
-            end
-
-            local value, valueError = call(
-                self.deps.config.defaultForScreen,
-                self.deps.config,
-                screen
-            )
-            if self.started ~= true or self.chooserGeneration ~= token then
-                return
-            end
-            if value == nil then
-                callFunction(self.deps.hs.showError, tostring(valueError or "Unable to configure display"))
-                return
-            end
-
-            startCalibration(self, value, screen)
-        end)
-    end)
+    )
+    if selected ~= true and self.chooserToken == token then
+        invalidateChooser(self)
+    end
+    return selected, selectError
 end
 
 local function saveEnabled(controller, enabled)
@@ -511,6 +519,10 @@ function Controller:start()
     if type(watch) == "function" then
         watchOk, watchError = pcall(watch, self.deps.config, function()
             pcall(function()
+                if self.started ~= true then
+                    return
+                end
+                invalidateChooser(self)
                 self:refresh()
             end)
         end)
