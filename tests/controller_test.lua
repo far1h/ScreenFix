@@ -161,6 +161,14 @@ local function newCase(options)
     return state
 end
 
+local function menuItem(items, title)
+    for _, item in ipairs(items) do
+        if item.title == title then
+            return item
+        end
+    end
+end
+
 test.test("start prompts for monitor selection without valid configuration", function()
     local case = newCase()
 
@@ -193,6 +201,67 @@ test.test("refresh tears down a disabled configuration even when trusted", funct
     test.equal(#case.guardStarts, 0)
     test.equal(case.overlayDeleteCount, 1)
     test.equal(case.guardStopCount, 1)
+end)
+
+test.test("disabled cold start tracks a connected screen without running resources", function()
+    local case = newCase({ configuration = validConfig(false), accessibility = true })
+
+    case.controller:start()
+
+    test.equal(case.controller.screen, case.screen)
+    test.equal(menuItem(case.menubar.items[1].menu(), "Calibrate").disabled, false)
+    test.equal(#case.overlayShows, 0)
+    test.equal(#case.guardStarts, 0)
+    test.equal(#case.notify.notifications, 0)
+end)
+
+test.test("disabled screen disconnect clears state and cannot start calibration", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.controller:start()
+    case.controller:disable()
+    case.connected = false
+
+    case.screenCallback()
+    local result = case.controller:calibrate()
+
+    test.equal(case.controller.screen, nil)
+    test.equal(result, nil)
+    test.equal(#case.calibrationStarts, 0)
+    test.equal(menuItem(case.menubar.items[1].menu(), "Calibrate").disabled, true)
+    test.equal(#case.notify.notifications, 0)
+end)
+
+test.test("calibrate rechecks a disconnected screen before its watcher fires", function()
+    local case = newCase({ configuration = validConfig(false), accessibility = true })
+    case.controller:start()
+    test.equal(case.controller.screen, case.screen)
+    case.connected = false
+
+    local result = case.controller:calibrate()
+
+    test.equal(result, nil)
+    test.equal(case.controller.screen, nil)
+    test.equal(#case.calibrationStarts, 0)
+    test.equal(#case.notify.notifications, 0)
+end)
+
+test.test("disabled screen reconnect refreshes state and re-enables calibration", function()
+    local case = newCase({
+        configuration = validConfig(false),
+        accessibility = true,
+        connected = false,
+    })
+    case.controller:start()
+    test.equal(case.controller.screen, nil)
+    case.connected = true
+
+    case.screenCallback()
+
+    test.equal(case.controller.screen, case.screen)
+    test.equal(menuItem(case.menubar.items[1].menu(), "Calibrate").disabled, false)
+    test.equal(#case.overlayShows, 0)
+    test.equal(#case.guardStarts, 0)
+    test.equal(#case.notify.notifications, 0)
 end)
 
 test.test("refresh starts the trusted guard with absolute mask rectangles", function()
@@ -305,6 +374,7 @@ test.test("calibration keeps the mask, pauses the guard, and restores after Save
     test.equal(case.overlayDeleteCount, 0)
     test.equal(case.guardStopCount, 1)
     test.equal(case.controller.calibrating, true)
+    test.equal(menuItem(case.menubar.items[1].menu(), "Calibrate").checked, true)
 
     case.calibrationStarts[1].onSave(changedBands)
 
@@ -312,6 +382,7 @@ test.test("calibration keeps the mask, pauses the guard, and restores after Save
     test.equal(case.saveCalls[1].bands, changedBands)
     test.equal(case.controller.value.bands, changedBands)
     test.equal(case.controller.calibrating, false)
+    test.equal(menuItem(case.menubar.items[1].menu(), "Calibrate").checked, false)
     test.equal(#case.overlayShows, 3)
     test.equal(#case.guardStarts, 2)
 end)
@@ -348,14 +419,6 @@ test.test("monitor selection opens calibration and Save persists the new display
     test.equal(case.controller.value.screen.uuid, "damaged-uuid")
 end)
 
-local function menuItem(items, title)
-    for _, item in ipairs(items) do
-        if item.title == title then
-            return item
-        end
-    end
-end
-
 test.test("start creates a dynamic ScreenFix menu with runtime actions", function()
     local case = newCase({ configuration = validConfig(true), accessibility = false })
     case.controller:start()
@@ -368,7 +431,7 @@ test.test("start creates a dynamic ScreenFix menu with runtime actions", functio
     test.equal(type(item.menu), "function")
 
     local items = item.menu()
-    test.equal(menuItem(items, "Paused: Accessibility permission required").disabled, true)
+    test.equal(menuItem(items, "Paused: Allow Accessibility in System Settings").disabled, true)
     test.equal(type(menuItem(items, "Disable").fn), "function")
     test.equal(type(menuItem(items, "Calibrate").fn), "function")
     test.equal(type(menuItem(items, "Select Monitor").fn), "function")
@@ -378,6 +441,46 @@ test.test("start creates a dynamic ScreenFix menu with runtime actions", functio
     test.equal(menuItem(item.menu(), "Enable") ~= nil, true)
     menuItem(item.menu(), "Reload").fn()
     test.equal(case.reloadCount, 1)
+end)
+
+test.test("dynamic menu keeps checked, disabled, and permission guidance current", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = false })
+    case.controller:start()
+    local menu = case.menubar.items[1].menu
+
+    local items = menu()
+    local paused = menuItem(items, "Paused: Allow Accessibility in System Settings")
+    test.equal(paused ~= nil, true)
+    test.equal(paused.checked, false)
+    test.equal(paused.disabled, true)
+    test.equal(menuItem(items, "Disable").checked, true)
+    test.equal(menuItem(items, "Disable").disabled, false)
+    test.equal(menuItem(items, "Calibrate").checked, false)
+    test.equal(menuItem(items, "Calibrate").disabled, false)
+    test.equal(menuItem(items, "Select Monitor").checked, false)
+    test.equal(menuItem(items, "Select Monitor").disabled, false)
+    test.equal(menuItem(items, "Reload").checked, false)
+    test.equal(menuItem(items, "Reload").disabled, false)
+
+    menuItem(items, "Disable").fn()
+    items = menu()
+    test.equal(menuItem(items, "Enable").checked, false)
+    test.equal(menuItem(items, "Enable").disabled, false)
+    test.equal(menuItem(items, "Paused: Allow Accessibility in System Settings"), nil)
+
+    case.connected = false
+    case.screenCallback()
+    test.equal(menuItem(menu(), "Calibrate").disabled, true)
+    case.connected = true
+    case.screenCallback()
+    test.equal(menuItem(menu(), "Calibrate").disabled, false)
+
+    menuItem(menu(), "Enable").fn()
+    test.equal(menuItem(menu(), "Disable").checked, true)
+    test.equal(menuItem(menu(), "Paused: Allow Accessibility in System Settings") ~= nil, true)
+    case.accessibility = true
+    case.hs.accessibilityStateCallback()
+    test.equal(menuItem(menu(), "Paused: Allow Accessibility in System Settings"), nil)
 end)
 
 test.test("stop attempts every owned cleanup, restores callbacks, and is idempotent", function()

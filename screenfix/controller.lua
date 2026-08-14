@@ -168,11 +168,12 @@ function Controller:calibrate()
         return self:selectMonitor()
     end
 
-    local screen = self.screen or call(
+    local screen = call(
         self.deps.config.findScreen,
         self.deps.config,
         self.value
     )
+    self.screen = screen
     if screen == nil then
         self:refresh()
         return nil, "selected display is disconnected"
@@ -217,7 +218,8 @@ function Controller:refresh(useCachedAccessibility)
     end
 
     local value = self.calibrationValue or self.value
-    if value == nil or (value.enabled ~= true and not self.calibrating) then
+    if value == nil then
+        self.screen = nil
         call(self.deps.guard.stop, self.deps.guard)
         call(self.deps.overlay.delete, self.deps.overlay)
         return
@@ -226,13 +228,20 @@ function Controller:refresh(useCachedAccessibility)
     local screen = self.calibrationScreen
         or call(self.deps.config.findScreen, self.deps.config, value)
     self.screen = screen
+    if screen ~= nil then
+        self.notified.disconnected = nil
+    end
+    if value.enabled ~= true and not self.calibrating then
+        call(self.deps.guard.stop, self.deps.guard)
+        call(self.deps.overlay.delete, self.deps.overlay)
+        return
+    end
     if screen == nil then
         call(self.deps.guard.stop, self.deps.guard)
         call(self.deps.overlay.delete, self.deps.overlay)
         self:notifyOnce("disconnected", "The selected display is disconnected.")
         return
     end
-    self.notified.disconnected = nil
 
     local shown = call(self.deps.overlay.show, self.deps.overlay, screen, value.bands)
     if shown ~= true or self.accessibilityTrusted ~= true or self.calibrating then
@@ -261,14 +270,17 @@ function Controller:menuItems()
     local items = {}
     if self.value and self.value.enabled and not self.accessibilityTrusted then
         items[#items + 1] = {
-            title = "Paused: Accessibility permission required",
+            title = "Paused: Allow Accessibility in System Settings",
+            checked = false,
             disabled = true,
         }
     end
 
-    local enabled = self.value and self.value.enabled
+    local enabled = self.value ~= nil and self.value.enabled == true
     items[#items + 1] = {
         title = enabled and "Disable" or "Enable",
+        checked = enabled,
+        disabled = false,
         fn = protectedAction(function()
             if enabled then
                 self:disable()
@@ -279,6 +291,7 @@ function Controller:menuItems()
     }
     items[#items + 1] = {
         title = "Calibrate",
+        checked = self.calibrating == true,
         disabled = self.value == nil or self.screen == nil,
         fn = protectedAction(function()
             self:calibrate()
@@ -286,12 +299,16 @@ function Controller:menuItems()
     }
     items[#items + 1] = {
         title = "Select Monitor",
+        checked = false,
+        disabled = false,
         fn = protectedAction(function()
             self:selectMonitor()
         end),
     }
     items[#items + 1] = {
         title = "Reload",
+        checked = false,
+        disabled = false,
         fn = protectedAction(function()
             callFunction(self.deps.hs.reload)
         end),
