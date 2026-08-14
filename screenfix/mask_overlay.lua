@@ -67,13 +67,12 @@ function Overlay:show(screen, bands)
         return nil, frames
     end
 
-    self:delete()
-
     local created, buildError = createCanvases(self.deps.canvas, frames)
     if not created then
         return nil, buildError
     end
 
+    deleteCanvases(self.canvases)
     self.canvases = created
     self.hidden = false
     return true

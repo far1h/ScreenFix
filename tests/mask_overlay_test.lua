@@ -233,6 +233,58 @@ test.test("show cleans allocated canvases when configuration fails", function()
     end
 end)
 
+test.test("failed replacement construction preserves the visible committed mask", function()
+    local canvas = fake.canvas()
+    local overlay = overlayWithFrames({
+        { x = 10, y = 20, w = 30, h = 40 },
+        { x = 50, y = 60, w = 70, h = 80 },
+        { x = 90, y = 100, w = 110, h = 120 },
+    }, { canvas = canvas })
+    overlay:show(fake.screen("first", "Display", {}), {})
+    local committed = overlay.canvases
+    canvas.failConstructorAt = 5
+
+    local result, message = overlay:show(fake.screen("second", "Display", {}), {})
+
+    test.equal(result, nil)
+    test.equal(type(message), "string")
+    test.equal(overlay.canvases, committed)
+    test.equal(overlay.hidden, false)
+    for _, instance in ipairs(committed) do
+        test.equal(instance.deleteCount, 0)
+        test.equal(instance.deleted, false)
+    end
+    test.equal(canvas.canvases[4].deleteCount, 1)
+    test.equal(canvas.canvases[4].deleted, true)
+end)
+
+test.test("failed replacement configuration preserves the visible committed mask", function()
+    local canvas = fake.canvas()
+    local overlay = overlayWithFrames({
+        { x = 10, y = 20, w = 30, h = 40 },
+        { x = 50, y = 60, w = 70, h = 80 },
+        { x = 90, y = 100, w = 110, h = 120 },
+    }, { canvas = canvas })
+    overlay:show(fake.screen("first", "Display", {}), {})
+    local committed = overlay.canvases
+    canvas.failMethod = "behavior"
+    canvas.failMethodAt = 5
+
+    local result, message = overlay:show(fake.screen("second", "Display", {}), {})
+
+    test.equal(result, nil)
+    test.equal(type(message), "string")
+    test.equal(string.find(message, "behavior failure", 1, true) ~= nil, true)
+    test.equal(overlay.canvases, committed)
+    test.equal(overlay.hidden, false)
+    for _, instance in ipairs(committed) do
+        test.equal(instance.deleteCount, 0)
+        test.equal(instance.deleted, false)
+    end
+    test.equal(canvas.canvases[4].deleteCount, 1)
+    test.equal(canvas.canvases[5].deleteCount, 1)
+end)
+
 test.test("show fills each canvas with one opaque black rectangle", function()
     local frames = {
         { x = 10, y = 20, w = 30, h = 40 },
