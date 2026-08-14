@@ -373,3 +373,116 @@ test.test("correct protects setFrame errors and pauses retries", function()
     test.equal(guard:correct(window), false)
     test.equal(#window.setFrameCalls, 1)
 end)
+
+test.test("correct rejects a missing second pre-correction window frame", function()
+    local screen = fake.screen("selected", "Display", {
+        x = 0,
+        y = 0,
+        w = 1200,
+        h = 800,
+    })
+    local initialFrame = { x = 550, y = 100, w = 200, h = 400 }
+    local window = fake.window({
+        id = 42,
+        frame = initialFrame,
+        screen = screen,
+    })
+    local frameCalls = 0
+    window.frame = function()
+        frameCalls = frameCalls + 1
+        if frameCalls == 1 then
+            return initialFrame
+        end
+
+        return nil
+    end
+    local guard = WindowGuard.new({
+        geometry = geometry,
+        now = function()
+            return 0
+        end,
+    })
+    guard:start(screen, {
+        { x = 400, y = 0, w = 300, h = 800 },
+    })
+
+    local ok, result = pcall(function()
+        return guard:correct(window)
+    end)
+
+    test.equal(ok, true)
+    test.equal(result, false)
+    test.equal(#window.setFrameCalls, 0)
+end)
+
+test.test("correct rejects a missing selected-screen usable frame", function()
+    local screen = fake.screen("selected", "Display", {})
+    screen.frame = function()
+        return nil
+    end
+    local window = fake.window({
+        id = 42,
+        frame = { x = 550, y = 100, w = 200, h = 400 },
+        screen = screen,
+    })
+    local guard = WindowGuard.new({
+        geometry = geometry,
+        now = function()
+            return 0
+        end,
+    })
+    guard:start(screen, {
+        { x = 400, y = 0, w = 300, h = 800 },
+    })
+
+    local ok, result = pcall(function()
+        return guard:correct(window)
+    end)
+
+    test.equal(ok, true)
+    test.equal(result, false)
+    test.equal(#window.setFrameCalls, 0)
+end)
+
+test.test("correct blocks retries when the post-set window frame is missing", function()
+    local screen = fake.screen("selected", "Display", {
+        x = 0,
+        y = 0,
+        w = 1200,
+        h = 800,
+    })
+    local initialFrame = { x = 550, y = 100, w = 200, h = 400 }
+    local window = fake.window({
+        id = 42,
+        frame = initialFrame,
+        screen = screen,
+    })
+    local frameCalls = 0
+    window.frame = function()
+        frameCalls = frameCalls + 1
+        if frameCalls <= 2 then
+            return initialFrame
+        end
+
+        return nil
+    end
+    local clock = fake.clock(30)
+    local guard = WindowGuard.new({
+        geometry = geometry,
+        now = function()
+            return clock:now()
+        end,
+    })
+    guard:start(screen, {
+        { x = 400, y = 0, w = 300, h = 800 },
+    })
+
+    local ok, result = pcall(function()
+        return guard:correct(window)
+    end)
+
+    test.equal(ok, true)
+    test.equal(result, false)
+    test.equal(guard.blockedUntil[42], 31)
+    test.equal(#window.setFrameCalls, 1)
+end)

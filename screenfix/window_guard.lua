@@ -60,6 +60,10 @@ function WindowGuard:correct(window)
 
     local id = window:id()
     local currentFrame = window:frame()
+    if currentFrame == nil then
+        return false
+    end
+
     local now = self.deps.now()
     local blockedUntil = self.blockedUntil[id]
     if blockedUntil ~= nil and blockedUntil > now then
@@ -76,9 +80,14 @@ function WindowGuard:correct(window)
     end
 
     self.recent[id] = nil
+    local usableFrame = self.selectedScreen:frame()
+    if usableFrame == nil then
+        return false
+    end
+
     local target = self.deps.geometry.correctedFrame(
         currentFrame,
-        self.selectedScreen:frame(),
+        usableFrame,
         self.maskRects
     )
     if target == nil then
@@ -94,7 +103,9 @@ function WindowGuard:correct(window)
     end
 
     local actualFrame = window:frame()
-    if not self.deps.geometry.framesNear(actualFrame, target, 1) then
+    if actualFrame == nil
+        or not self.deps.geometry.framesNear(actualFrame, target, 1)
+    then
         self.blockedUntil[id] = now + 1
         return false
     end
