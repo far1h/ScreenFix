@@ -80,6 +80,46 @@ test.test("editorHit finds the band body away from all handles", function()
     test.equal(hit.part, "body")
 end)
 
+test.test("editorHit gives a touching boundary to the later default band", function()
+    local bands = geometry.localBands(
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        {
+            { x = 0.43, y = 0.00, w = 0.16, h = 0.34 },
+            { x = 0.46, y = 0.34, w = 0.11, h = 0.39 },
+            { x = 0.48, y = 0.73, w = 0.07, h = 0.27 },
+        }
+    )
+    local hit = geometry.editorHit({ x = 500, y = bands[2].y }, bands, 10)
+
+    test.equal(hit.index, 2)
+    test.equal(hit.part, "top")
+end)
+
+test.test("editorHit gives overlapping bodies to the later painted band", function()
+    local hit = geometry.editorHit(
+        { x = 200, y = 200 },
+        {
+            { x = 100, y = 100, w = 300, h = 300 },
+            { x = 150, y = 150, w = 100, h = 100 },
+        },
+        10
+    )
+
+    test.equal(hit.index, 2)
+    test.equal(hit.part, "body")
+end)
+
+test.test("editorHit follows handle paint order at a same-band corner", function()
+    local hit = geometry.editorHit(
+        { x = 100, y = 100 },
+        { { x = 100, y = 100, w = 200, h = 100 } },
+        10
+    )
+
+    test.equal(hit.index, 1)
+    test.equal(hit.part, "top")
+end)
+
 test.test("dragBand moves a body without leaving normalized bounds", function()
     local moved = geometry.dragBand(
         { x = 0.10, y = 0.70, w = 0.20, h = 0.20 },
@@ -139,6 +179,62 @@ test.test("dragBand keeps a bottom resize at least 20 rendered points high", fun
     )
 
     test.rect(resized, { x = 0.20, y = 0.20, w = 0.30, h = bottom - 0.20 })
+end)
+
+test.test("dragBand does not reverse an undersized left-edge drag", function()
+    local band = { x = 0.995, y = 0.20, w = 0.005, h = 0.20 }
+    local resized = geometry.dragBand(
+        band,
+        { part = "left" },
+        { x = 1, y = 0 },
+        { x = 0, y = 0, w = 1000, h = 1000 }
+    )
+
+    test.equal(resized.x >= band.x, true)
+    test.equal(resized.x >= 0 and resized.y >= 0 and resized.w >= 0 and resized.h >= 0, true)
+    test.equal(resized.x + resized.w <= 1 and resized.y + resized.h <= 1, true)
+end)
+
+test.test("dragBand does not reverse or overflow an undersized right-edge drag", function()
+    local band = { x = 0.995, y = 0.20, w = 0.005, h = 0.20 }
+    local resized = geometry.dragBand(
+        band,
+        { part = "right" },
+        { x = -1, y = 0 },
+        { x = 0, y = 0, w = 1000, h = 1000 }
+    )
+
+    test.equal(resized.x + resized.w <= band.x + band.w, true)
+    test.equal(resized.x >= 0 and resized.y >= 0 and resized.w >= 0 and resized.h >= 0, true)
+    test.equal(resized.x + resized.w <= 1 and resized.y + resized.h <= 1, true)
+end)
+
+test.test("dragBand does not reverse an undersized top-edge drag", function()
+    local band = { x = 0.20, y = 0.995, w = 0.20, h = 0.005 }
+    local resized = geometry.dragBand(
+        band,
+        { part = "top" },
+        { x = 0, y = 1 },
+        { x = 0, y = 0, w = 1000, h = 1000 }
+    )
+
+    test.equal(resized.y >= band.y, true)
+    test.equal(resized.x >= 0 and resized.y >= 0 and resized.w >= 0 and resized.h >= 0, true)
+    test.equal(resized.x + resized.w <= 1 and resized.y + resized.h <= 1, true)
+end)
+
+test.test("dragBand does not reverse or overflow an undersized bottom-edge drag", function()
+    local band = { x = 0.20, y = 0.995, w = 0.20, h = 0.005 }
+    local resized = geometry.dragBand(
+        band,
+        { part = "bottom" },
+        { x = 0, y = -1 },
+        { x = 0, y = 0, w = 1000, h = 1000 }
+    )
+
+    test.equal(resized.y + resized.h <= band.y + band.h, true)
+    test.equal(resized.x >= 0 and resized.y >= 0 and resized.w >= 0 and resized.h >= 0, true)
+    test.equal(resized.x + resized.w <= 1 and resized.y + resized.h <= 1, true)
 end)
 
 test.test("dragBand returns a new table without mutating the saved band", function()

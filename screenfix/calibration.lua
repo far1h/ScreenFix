@@ -259,6 +259,12 @@ function Calibration:updateDrag(point)
     self:draw()
 end
 
+function Calibration:report(err)
+    if type(self.deps.reportError) == "function" then
+        pcall(self.deps.reportError, tostring(err))
+    end
+end
+
 function Calibration:save()
     local valid, validationError = validateBands(self.workingBands)
     if not valid then
@@ -266,13 +272,14 @@ function Calibration:save()
     end
 
     local callback = self.onSave
-    local bands = self.workingBands
-    self:stop()
-    local called, callbackError = pcall(callback, bands)
+    local snapshot = copyBands(self.workingBands)
+    local called, callbackError = pcall(callback, snapshot)
     if not called then
+        self:report(callbackError)
         return nil, callbackError
     end
 
+    self:stop()
     return true
 end
 
@@ -303,6 +310,10 @@ function Calibration:stop()
 end
 
 function Calibration:start(screen, bands, onSave, onCancel)
+    if type(onSave) ~= "function" or type(onCancel) ~= "function" then
+        return nil, "calibration callbacks must be functions"
+    end
+
     local valid, validationError = validateBands(bands)
     if not valid then
         return nil, validationError
@@ -330,6 +341,8 @@ function Calibration:start(screen, bands, onSave, onCancel)
         onSave = self.onSave,
         onCancel = self.onCancel,
         drag = self.drag,
+        saveFrame = self.saveFrame,
+        cancelFrame = self.cancelFrame,
     }
     self.screenChooser = nil
     self.editorCanvas = editorCanvas
@@ -367,6 +380,8 @@ function Calibration:start(screen, bands, onSave, onCancel)
         self.onSave = previous.onSave
         self.onCancel = previous.onCancel
         self.drag = previous.drag
+        self.saveFrame = previous.saveFrame
+        self.cancelFrame = previous.cancelFrame
         return nil, prepareError
     end
 

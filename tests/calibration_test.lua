@@ -137,7 +137,7 @@ test.test("start uses an absolute canvas with local band coordinates", function(
     })
     canvas.canvases[1]:triggerMouse("mouseDown", 1376, 360)
     test.equal(calibration.drag.index, 1)
-    test.equal(calibration.drag.part, "left")
+    test.equal(calibration.drag.part, "top")
 end)
 
 test.test("start tracks mouse events across the full local background", function()
@@ -387,6 +387,130 @@ test.test("Save rejects invalid working bands without callbacks or input mutatio
     test.rect(original[1], { x = 0.40, y = 0.25, w = 0.20, h = 0.50 })
 end)
 
+test.test("Save reports callback failure and keeps the editor state live", function()
+    local canvas = fake.canvas()
+    local reports = {}
+    local received
+    local cancelCalls = 0
+    local onCancel = function()
+        cancelCalls = cancelCalls + 1
+    end
+    local calibration = Calibration.new({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+        reportError = function(message)
+            reports[#reports + 1] = message
+        end,
+    })
+
+    calibration:start(
+        fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 }),
+        validBands(),
+        function(snapshot)
+            received = snapshot
+            snapshot[1].x = 0
+            error("save failed", 0)
+        end,
+        onCancel
+    )
+    local editor = canvas.canvases[1]
+    local working = calibration.workingBands
+    local saved, saveError = calibration:save()
+
+    test.equal(saved, nil)
+    test.equal(saveError, "save failed")
+    test.equal(received == working, false)
+    test.equal(reports[1], "save failed")
+    test.equal(calibration.editorCanvas, editor)
+    test.equal(calibration.workingBands, working)
+    test.equal(calibration.onCancel, onCancel)
+    test.equal(type(editor.mouseCallbackFn), "function")
+    test.equal(editor.deleteCount, 0)
+    test.rect(working[1], { x = 0.40, y = 0.25, w = 0.20, h = 0.50 })
+    calibration:cancel()
+    test.equal(cancelCalls, 1)
+end)
+
+test.test("Save contains reportError failures and preserves the callback error", function()
+    local canvas = fake.canvas()
+    local reportCalls = 0
+    local calibration = Calibration.new({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+        reportError = function()
+            reportCalls = reportCalls + 1
+            error("report failed", 0)
+        end,
+    })
+
+    calibration:start(
+        fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 }),
+        validBands(),
+        function()
+            error("save failed", 0)
+        end,
+        function() end
+    )
+    local safe, saved, saveError = pcall(function()
+        return calibration:save()
+    end)
+
+    test.equal(safe, true)
+    test.equal(saved, nil)
+    test.equal(saveError, "save failed")
+    test.equal(reportCalls, 1)
+    test.equal(calibration.editorCanvas, canvas.canvases[1])
+    test.equal(canvas.canvases[1].deleteCount, 0)
+end)
+
+test.test("start rejects non-function save and cancel callbacks before allocation", function()
+    local function attempt(onSave, onCancel)
+        local canvas = fake.canvas()
+        local calibration = Calibration.new({
+            canvas = canvas,
+            chooser = fake.chooser(),
+            screens = function()
+                return {}
+            end,
+            mouseButtons = function()
+                return {}
+            end,
+            geometry = geometry,
+        })
+        local started, startError = calibration:start(
+            fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 }),
+            validBands(),
+            onSave,
+            onCancel
+        )
+        return started, startError, #canvas.constructorFrames
+    end
+
+    local saveStarted, saveError, saveConstructions = attempt(nil, function() end)
+    local cancelStarted, cancelError, cancelConstructions = attempt(function() end, nil)
+
+    test.equal(saveStarted, nil)
+    test.equal(type(saveError), "string")
+    test.equal(saveConstructions, 0)
+    test.equal(cancelStarted, nil)
+    test.equal(type(cancelError), "string")
+    test.equal(cancelConstructions, 0)
+end)
+
 test.test("Cancel discards working changes and calls only onCancel", function()
     local canvas = fake.canvas()
     local original = validBands()
@@ -519,4 +643,65 @@ test.test("start contains draw failures and cleans the partial editor", function
     test.equal(canvas.canvases[1].mouseCallbackFn, nil)
     test.equal(calibration.editorCanvas, nil)
     test.rect(original[1], { x = 0.40, y = 0.25, w = 0.20, h = 0.50 })
+end)
+
+local function replacementFailure(method)
+    local canvas = fake.canvas()
+    local saveCalls = 0
+    local calibration = Calibration.new({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return { left = true }
+        end,
+        geometry = geometry,
+    })
+    local firstScreen = fake.screen("first", "First", { x = 0, y = 0, w = 1000, h = 800 })
+    local replacementScreen = fake.screen("second", "Second", { x = 1000, y = 0, w = 1200, h = 1200 })
+    calibration:start(firstScreen, validBands(), function()
+        saveCalls = saveCalls + 1
+    end, function() end)
+    local oldCanvas = calibration.editorCanvas
+    local oldCallback = oldCanvas.mouseCallbackFn
+    local oldBands = calibration.workingBands
+    local oldSaveFrame = calibration.saveFrame
+    local oldCancelFrame = calibration.cancelFrame
+
+    canvas.failMethod = method
+    canvas.failMethodAt = 2
+    local started, startError = calibration:start(
+        replacementScreen,
+        {
+            { x = 0.10, y = 0.10, w = 0.20, h = 0.20 },
+            { x = 0.40, y = 0.40, w = 0.10, h = 0.20 },
+            { x = 0.70, y = 0.70, w = 0.10, h = 0.20 },
+        },
+        function() end,
+        function() end
+    )
+
+    test.equal(started, nil)
+    test.equal(startError, method .. " failure")
+    test.equal(calibration.editorCanvas, oldCanvas)
+    test.equal(oldCanvas.mouseCallbackFn, oldCallback)
+    test.equal(calibration.workingBands, oldBands)
+    test.equal(calibration.saveFrame, oldSaveFrame)
+    test.equal(calibration.cancelFrame, oldCancelFrame)
+    test.equal(oldCanvas.deleteCount, 0)
+    test.equal(canvas.canvases[2].deleteCount, 1)
+    test.equal(canvas.canvases[2].mouseCallbackFn, nil)
+    test.rect(oldBands[1], { x = 0.40, y = 0.25, w = 0.20, h = 0.50 })
+    oldCanvas:triggerMouse("mouseDown", 30, 750)
+    test.equal(saveCalls, 1)
+end
+
+test.test("failed replacement show keeps the committed editor live", function()
+    replacementFailure("show")
+end)
+
+test.test("failed replacement callback setup keeps the committed editor live", function()
+    replacementFailure("mouseCallback")
 end)

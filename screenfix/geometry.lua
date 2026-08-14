@@ -13,6 +13,17 @@ local function clamp(value, minimum, maximum)
     return math.max(minimum, math.min(value, maximum))
 end
 
+local function clampEdge(current, delta, minimum, maximum)
+    if current < minimum and delta <= 0 then
+        return current
+    end
+    if current > maximum and delta >= 0 then
+        return current
+    end
+
+    return clamp(current + delta, minimum, maximum)
+end
+
 local function overlappingBands(frame, maskRects)
     local result = {}
 
@@ -98,24 +109,26 @@ function M.localBands(fullFrame, bands)
 end
 
 function M.editorHit(localPoint, bands, handleSize)
-    for index, band in ipairs(bands) do
+    for index = #bands, 1, -1 do
+        local band = bands[index]
         local withinHeight = localPoint.y >= band.y and localPoint.y <= band.y + band.h
         local withinWidth = localPoint.x >= band.x and localPoint.x <= band.x + band.w
-        if withinHeight and math.abs(localPoint.x - band.x) <= handleSize then
-            return { index = index, part = "left" }
-        end
-        if withinHeight and math.abs(localPoint.x - band.x - band.w) <= handleSize then
-            return { index = index, part = "right" }
+        if withinWidth and math.abs(localPoint.y - band.y - band.h) <= handleSize then
+            return { index = index, part = "bottom" }
         end
         if withinWidth and math.abs(localPoint.y - band.y) <= handleSize then
             return { index = index, part = "top" }
         end
-        if withinWidth and math.abs(localPoint.y - band.y - band.h) <= handleSize then
-            return { index = index, part = "bottom" }
+        if withinHeight and math.abs(localPoint.x - band.x - band.w) <= handleSize then
+            return { index = index, part = "right" }
+        end
+        if withinHeight and math.abs(localPoint.x - band.x) <= handleSize then
+            return { index = index, part = "left" }
         end
     end
 
-    for index, band in ipairs(bands) do
+    for index = #bands, 1, -1 do
+        local band = bands[index]
         if localPoint.x >= band.x
             and localPoint.x <= band.x + band.w
             and localPoint.y >= band.y
@@ -136,23 +149,35 @@ function M.dragBand(normalizedBand, drag, localDelta, fullFrame)
         result.y = clamp(result.y + localDelta.y / fullFrame.h, 0, 1 - result.h)
     elseif drag.part == "left" then
         local right = result.x + result.w
-        result.x = clamp(result.x + localDelta.x / fullFrame.w, 0, right - 20 / fullFrame.w)
+        result.x = clampEdge(
+            result.x,
+            localDelta.x / fullFrame.w,
+            0,
+            math.max(0, right - 20 / fullFrame.w)
+        )
         result.w = right - result.x
     elseif drag.part == "right" then
-        local right = clamp(
-            result.x + result.w + localDelta.x / fullFrame.w,
-            result.x + 20 / fullFrame.w,
+        local right = clampEdge(
+            result.x + result.w,
+            localDelta.x / fullFrame.w,
+            math.min(1, result.x + 20 / fullFrame.w),
             1
         )
         result.w = right - result.x
     elseif drag.part == "top" then
         local bottom = result.y + result.h
-        result.y = clamp(result.y + localDelta.y / fullFrame.h, 0, bottom - 20 / fullFrame.h)
+        result.y = clampEdge(
+            result.y,
+            localDelta.y / fullFrame.h,
+            0,
+            math.max(0, bottom - 20 / fullFrame.h)
+        )
         result.h = bottom - result.y
     elseif drag.part == "bottom" then
-        local bottom = clamp(
-            result.y + result.h + localDelta.y / fullFrame.h,
-            result.y + 20 / fullFrame.h,
+        local bottom = clampEdge(
+            result.y + result.h,
+            localDelta.y / fullFrame.h,
+            math.min(1, result.y + 20 / fullFrame.h),
             1
         )
         result.h = bottom - result.y
