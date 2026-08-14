@@ -137,6 +137,13 @@ startCalibration = function(controller, value, screen)
     controller.calibrationValue = value
     controller.calibrationScreen = screen
     controller:refresh()
+    if controller.calibrating ~= true
+        or controller.calibrationScreen == nil
+        or controller.calibrationScreen ~= controller.screen
+    then
+        return false
+    end
+    screen = controller.calibrationScreen
 
     local started, startError = call(
         controller.deps.calibration.start,
@@ -235,6 +242,8 @@ function Controller:refresh(useCachedAccessibility)
             value = self.value
             screen = call(self.deps.config.findScreen, self.deps.config, value)
         end
+    elseif self.calibrating then
+        self.calibrationScreen = screen
     end
     self.screen = screen
     if screen ~= nil then

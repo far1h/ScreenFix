@@ -472,6 +472,80 @@ test.test("first-run calibration disconnect clears the unsaved stale overlay", f
     test.equal(#case.notify.notifications, 1)
 end)
 
+test.test("monitor selection does not open calibration after the chosen screen disappears", function()
+    local case = newCase({ accessibility = false, connected = false })
+    case.controller:start()
+
+    case.selectCallback(case.screen)
+
+    test.equal(#case.calibrationStarts, 0)
+    test.equal(case.calibrationStopCount, 1)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationValue, nil)
+    test.equal(case.controller.calibrationScreen, nil)
+    test.equal(case.controller.screen, nil)
+    test.equal(case.overlayDeleteCount, 2)
+    test.equal(#case.notify.notifications, 1)
+end)
+
+test.test("monitor selection rejects an ambiguous UUID-less screen without orphan state", function()
+    local ambiguousScreen = fake.screen(nil, "Mirrored Display", {
+        x = 0,
+        y = 0,
+        w = 1920,
+        h = 1080,
+    })
+    local case = newCase({ accessibility = false, screen = ambiguousScreen })
+    case.config.defaultForScreen = function()
+        local value = validConfig(true)
+        value.screen.uuid = nil
+        value.screen.name = "Mirrored Display"
+        value.screen.width = 1920
+        value.screen.height = 1080
+        return value
+    end
+    case.config.findScreen = function()
+        return nil
+    end
+    case.controller:start()
+
+    case.selectCallback(ambiguousScreen)
+
+    test.equal(#case.calibrationStarts, 0)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationValue, nil)
+    test.equal(case.controller.calibrationScreen, nil)
+    test.equal(case.controller.screen, nil)
+    test.equal(#case.notify.notifications, 1)
+end)
+
+test.test("monitor selection starts calibration on the resolver's live screen object", function()
+    local chosen = fake.screen("damaged-uuid", "Damaged Display", {
+        x = -3440,
+        y = 0,
+        w = 3440,
+        h = 1440,
+    })
+    local live = fake.screen("damaged-uuid", "Damaged Display", {
+        x = 0,
+        y = 0,
+        w = 3440,
+        h = 1440,
+    })
+    local case = newCase({ accessibility = false, screen = chosen })
+    case.config.findScreen = function()
+        return live
+    end
+    case.controller:start()
+
+    case.selectCallback(chosen)
+
+    test.equal(#case.calibrationStarts, 1)
+    test.equal(case.calibrationStarts[1].screen, live)
+    test.equal(case.controller.calibrationScreen, live)
+    test.equal(case.controller.screen, live)
+end)
+
 test.test("monitor selection opens calibration and Save persists the new display", function()
     local case = newCase({ accessibility = false })
     case.controller:start()
