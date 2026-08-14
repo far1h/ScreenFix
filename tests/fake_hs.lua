@@ -1,5 +1,83 @@
 local M = {}
 
+function M.canvas()
+    local module = {
+        canvases = {},
+        constructorFrames = {},
+    }
+    local methods = {}
+    local metatable = {
+        __index = function(canvas, key)
+            if type(key) == "number" then
+                return canvas.elements[key]
+            end
+
+            return methods[key]
+        end,
+        __newindex = function(canvas, key, value)
+            if type(key) == "number" then
+                canvas.elements[key] = value
+                canvas.elementAssignments[#canvas.elementAssignments + 1] = {
+                    index = key,
+                    value = value,
+                }
+                return
+            end
+
+            rawset(canvas, key, value)
+        end,
+    }
+
+    function module.new(frame)
+        local canvas = setmetatable({
+            clickActivatingCalls = {},
+            behaviorCalls = {},
+            levelCalls = {},
+            showCount = 0,
+            hideCount = 0,
+            deleteCount = 0,
+            deleted = false,
+            elements = {},
+            elementAssignments = {},
+        }, metatable)
+        module.constructorFrames[#module.constructorFrames + 1] = frame
+        module.canvases[#module.canvases + 1] = canvas
+        return canvas
+    end
+
+    function methods:clickActivating(value)
+        self.clickActivatingCalls[#self.clickActivatingCalls + 1] = value
+        return self
+    end
+
+    function methods:behavior(value)
+        self.behaviorCalls[#self.behaviorCalls + 1] = value
+        return self
+    end
+
+    function methods:level(value)
+        self.levelCalls[#self.levelCalls + 1] = value
+        return self
+    end
+
+    function methods:show()
+        self.showCount = self.showCount + 1
+        return self
+    end
+
+    function methods:hide()
+        self.hideCount = self.hideCount + 1
+        return self
+    end
+
+    function methods:delete()
+        self.deleteCount = self.deleteCount + 1
+        self.deleted = true
+    end
+
+    return module
+end
+
 function M.screen(uuid, name, fullFrame)
     return {
         getUUID = function()
