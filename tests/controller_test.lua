@@ -402,6 +402,76 @@ test.test("Cancel exits calibration without saving and restores the guard", func
     test.equal(#case.guardStarts, 2)
 end)
 
+test.test("active calibration disconnect stops editing and reconnect rebuilds on the live screen", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    local currentScreen = case.screen
+    case.config.findScreen = function()
+        return currentScreen
+    end
+    case.controller:start()
+    case.controller:calibrate()
+    test.equal(#case.calibrationStarts, 1)
+    test.equal(#case.overlayShows, 2)
+    currentScreen = nil
+
+    case.screenCallback()
+
+    test.equal(case.calibrationStopCount, 1)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationScreen, nil)
+    test.equal(case.controller.screen, nil)
+    test.equal(case.guardStopCount, 2)
+    test.equal(case.overlayDeleteCount, 1)
+    test.equal(#case.overlayShows, 2)
+    test.equal(#case.saveCalls, 0)
+    test.equal(#case.notify.notifications, 1)
+
+    local reconnected = fake.screen("damaged-uuid", "Damaged Display", {
+        x = 0,
+        y = 0,
+        w = 3440,
+        h = 1440,
+    })
+    currentScreen = reconnected
+    case.screenCallback()
+
+    test.equal(case.controller.screen, reconnected)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationScreen, nil)
+    test.equal(#case.calibrationStarts, 1)
+    test.equal(#case.overlayShows, 3)
+    test.equal(case.overlayShows[3].screen, reconnected)
+    test.equal(#case.guardStarts, 2)
+    test.equal(case.guardStarts[2].screen, reconnected)
+    test.equal(#case.saveCalls, 0)
+    test.equal(#case.notify.notifications, 1)
+end)
+
+test.test("first-run calibration disconnect clears the unsaved stale overlay", function()
+    local case = newCase({ accessibility = false })
+    local currentScreen = case.screen
+    case.config.findScreen = function()
+        return currentScreen
+    end
+    case.controller:start()
+    case.selectCallback(case.screen)
+    test.equal(#case.calibrationStarts, 1)
+    test.equal(#case.overlayShows, 1)
+    currentScreen = nil
+
+    local callbackOk = pcall(case.screenCallback)
+
+    test.equal(callbackOk, true)
+    test.equal(case.calibrationStopCount, 1)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationScreen, nil)
+    test.equal(case.controller.screen, nil)
+    test.equal(case.overlayDeleteCount, 2)
+    test.equal(#case.overlayShows, 1)
+    test.equal(#case.saveCalls, 0)
+    test.equal(#case.notify.notifications, 1)
+end)
+
 test.test("monitor selection opens calibration and Save persists the new display", function()
     local case = newCase({ accessibility = false })
     case.controller:start()

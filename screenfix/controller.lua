@@ -225,8 +225,17 @@ function Controller:refresh(useCachedAccessibility)
         return
     end
 
-    local screen = self.calibrationScreen
-        or call(self.deps.config.findScreen, self.deps.config, value)
+    local screen = call(self.deps.config.findScreen, self.deps.config, value)
+    if self.calibrating and screen == nil then
+        self.calibrating = false
+        self.calibrationValue = nil
+        self.calibrationScreen = nil
+        call(self.deps.calibration.stop, self.deps.calibration)
+        if self.value ~= nil then
+            value = self.value
+            screen = call(self.deps.config.findScreen, self.deps.config, value)
+        end
+    end
     self.screen = screen
     if screen ~= nil then
         self.notified.disconnected = nil
