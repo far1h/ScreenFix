@@ -39,6 +39,7 @@ local function newCase(options)
             { x = -1790, y = 1050, w = 240, h = 390 },
         },
         calibrationStarts = {},
+        defaultForScreenCalls = 0,
         guardStarts = {},
         guardStopCount = 0,
         overlayDeleteCount = 0,
@@ -79,6 +80,7 @@ local function newCase(options)
             return value
         end,
         defaultForScreen = function()
+            state.defaultForScreenCalls = state.defaultForScreenCalls + 1
             return validConfig(true)
         end,
         watch = function(_, callback)
@@ -116,6 +118,8 @@ local function newCase(options)
         selectScreen = function(_, callback)
             state.selectCalls = state.selectCalls + 1
             state.selectCallback = callback
+            state.selectCallbacks = state.selectCallbacks or {}
+            state.selectCallbacks[#state.selectCallbacks + 1] = callback
             return true
         end,
         start = function(_, selectedScreen, bands, onSave, onCancel)
@@ -605,6 +609,7 @@ test.test("late monitor chooser callback after stop cannot recreate calibration 
     local callbackOk = pcall(lateSelection, case.screen)
 
     test.equal(callbackOk, true)
+    test.equal(case.defaultForScreenCalls, 0)
     test.equal(#case.calibrationStarts, 0)
     test.equal(#case.saveCalls, 0)
     test.equal(case.controller.started, false)
@@ -835,6 +840,130 @@ test.test("calibration fails closed when live fullFrame is missing or throws", f
         test.equal(case.overlayDeleteCount, 1)
         test.equal(#case.guardStarts, 1)
     end
+end)
+
+test.test("new monitor chooser supersedes an older callback", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    local firstScreen = fake.screen("first-uuid", "First Display", {
+        x = 0,
+        y = 0,
+        w = 1920,
+        h = 1080,
+    })
+    local secondScreen = fake.screen("second-uuid", "Second Display", {
+        x = 1920,
+        y = 0,
+        w = 2560,
+        h = 1440,
+    })
+    case.config.defaultForScreen = function(_, screen)
+        case.defaultForScreenCalls = case.defaultForScreenCalls + 1
+        local value = validConfig(true)
+        value.screen.uuid = screen:getUUID()
+        value.screen.name = screen:name()
+        local frame = screen:fullFrame()
+        value.screen.width = frame.w
+        value.screen.height = frame.h
+        return value
+    end
+    case.config.findScreen = function(_, value)
+        if value.screen.uuid == firstScreen:getUUID() then
+            return firstScreen
+        end
+        if value.screen.uuid == secondScreen:getUUID() then
+            return secondScreen
+        end
+        return case.screen
+    end
+    case.controller:start()
+    case.controller:selectMonitor()
+    case.controller:selectMonitor()
+    local olderCallback = case.selectCallbacks[1]
+    local newerCallback = case.selectCallbacks[2]
+
+    newerCallback(secondScreen)
+    olderCallback(firstScreen)
+
+    test.equal(case.defaultForScreenCalls, 1)
+    test.equal(#case.calibrationStarts, 1)
+    test.equal(case.calibrationStarts[1].screen, secondScreen)
+    test.equal(case.controller.calibrationScreen, secondScreen)
+    test.equal(case.controller.calibrationValue.screen.uuid, "second-uuid")
+end)
+
+test.test("successful toggles invalidate pending monitor chooser callbacks", function()
+    for _, transition in ipairs({
+        { enabled = true, method = "disable" },
+        { enabled = false, method = "enable" },
+    }) do
+        local case = newCase({
+            configuration = validConfig(transition.enabled),
+            accessibility = true,
+        })
+        case.controller:start()
+        case.controller:selectMonitor()
+        local staleCallback = case.selectCallback
+
+        case.controller[transition.method](case.controller)
+        staleCallback(case.screen)
+
+        test.equal(case.defaultForScreenCalls, 0)
+        test.equal(#case.calibrationStarts, 0)
+        test.equal(case.controller.calibrating, false)
+    end
+end)
+
+test.test("direct calibration invalidates a pending monitor chooser callback", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.controller:start()
+    case.controller:selectMonitor()
+    local staleCallback = case.selectCallback
+
+    case.controller:calibrate()
+    staleCallback(case.screen)
+
+    test.equal(case.defaultForScreenCalls, 0)
+    test.equal(#case.calibrationStarts, 1)
+    test.equal(case.controller.calibrating, true)
+    test.equal(case.controller.calibrationScreen, case.screen)
+end)
+
+test.test("disconnect invalidates a pending monitor chooser callback", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.controller:start()
+    case.controller:selectMonitor()
+    local staleCallback = case.selectCallback
+
+    case.connected = false
+    case.screenCallback()
+    staleCallback(case.screen)
+
+    test.equal(case.defaultForScreenCalls, 0)
+    test.equal(#case.calibrationStarts, 0)
+    test.equal(case.controller.calibrating, nil)
+end)
+
+test.test("monitor chooser callbacks are one-shot and nil consumes the selection", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.controller:start()
+    case.controller:selectMonitor()
+    local cancelledCallback = case.selectCallback
+
+    cancelledCallback(nil)
+    cancelledCallback(case.screen)
+
+    test.equal(case.defaultForScreenCalls, 0)
+    test.equal(#case.calibrationStarts, 0)
+    test.equal(case.controller.calibrating, nil)
+
+    case.controller:selectMonitor()
+    local selectedCallback = case.selectCallback
+    selectedCallback(case.screen)
+    selectedCallback(case.screen)
+
+    test.equal(case.defaultForScreenCalls, 1)
+    test.equal(#case.calibrationStarts, 1)
+    test.equal(case.controller.calibrating, true)
 end)
 
 test.test("first-run calibration disconnect clears the unsaved stale overlay", function()

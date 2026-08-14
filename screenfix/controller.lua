@@ -113,11 +113,17 @@ local function invalidateCalibration(controller, stopAdapter)
     end
 end
 
+local function invalidateChooser(controller)
+    controller.chooserGeneration = controller.chooserGeneration + 1
+    controller.chooserToken = nil
+end
+
 ---Creates a runtime controller from explicit Hammerspoon adapters.
 function M.new(deps)
     return setmetatable({
         deps = deps,
         calibrationGeneration = 0,
+        chooserGeneration = 0,
         notified = {},
         started = false,
     }, Controller)
@@ -141,7 +147,19 @@ end
 
 ---Opens the monitor chooser.
 function Controller:selectMonitor()
+    if self.started ~= true then
+        return false
+    end
+
+    invalidateChooser(self)
+    local token = self.chooserGeneration
+    self.chooserToken = token
     return call(self.deps.calibration.selectScreen, self.deps.calibration, function(screen)
+        if self.started ~= true or self.chooserToken ~= token then
+            return
+        end
+        self.chooserToken = nil
+
         pcall(function()
             if screen == nil then
                 return
@@ -152,6 +170,9 @@ function Controller:selectMonitor()
                 self.deps.config,
                 screen
             )
+            if self.started ~= true or self.chooserGeneration ~= token then
+                return
+            end
             if value == nil then
                 callFunction(self.deps.hs.showError, tostring(valueError or "Unable to configure display"))
                 return
@@ -177,6 +198,7 @@ local function saveEnabled(controller, enabled)
         return nil, saveError
     end
 
+    invalidateChooser(controller)
     controller.value = saved
     invalidateCalibration(controller, true)
     controller:refresh()
@@ -208,6 +230,7 @@ startCalibration = function(controller, value, screen)
         return false
     end
 
+    invalidateChooser(controller)
     if controller.calibrating then
         invalidateCalibration(controller, true)
     end
@@ -366,6 +389,7 @@ function Controller:refresh(useCachedAccessibility)
         return
     end
     if screen == nil then
+        invalidateChooser(self)
         call(self.deps.guard.stop, self.deps.guard)
         call(self.deps.overlay.delete, self.deps.overlay)
         self:notifyOnce("disconnected", "The selected display is disconnected.")
@@ -537,6 +561,7 @@ function Controller:stop()
     self.menu = nil
     self.accessibilityCallback = nil
     self.previousAccessibilityCallback = nil
+    invalidateChooser(self)
     invalidateCalibration(self, false)
     self.screen = nil
 
