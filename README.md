@@ -101,7 +101,7 @@ Removing the link does not delete the project directory.
 
 ## Collaborating
 
-Run the complete test suite from the project root with Lua 5.4:
+Run the complete test suite from the project root with Lua 5.4 or later:
 
 ```bash
 lua tests/run.lua
