@@ -12,15 +12,18 @@ local function keyCount(value)
     return count
 end
 
-local function overlayWithFrames(frames)
-    local canvas = fake.canvas()
+local function overlayWithFrames(frames, overrides)
+    overrides = overrides or {}
+    local canvas = overrides.canvas or fake.canvas()
     local overlay = MaskOverlay.new({
         canvas = canvas,
-        geometry = {
+        geometry = overrides.geometry or {
             absoluteBands = function()
                 return frames
             end,
         },
+        hideDockIcon = overrides.hideDockIcon or function()
+        end,
     })
 
     return overlay, canvas
@@ -30,6 +33,130 @@ test.test("new creates an overlay with no canvases", function()
     local overlay = MaskOverlay.new({})
 
     test.equal(#overlay.canvases, 0)
+end)
+
+test.test("show prepares full-screen canvas support once before construction", function()
+    local canvas = fake.canvas()
+    local prepareCalls = 0
+    local overlay = overlayWithFrames({
+        { x = 10, y = 20, w = 30, h = 40 },
+        { x = 50, y = 60, w = 70, h = 80 },
+        { x = 90, y = 100, w = 110, h = 120 },
+    }, {
+        canvas = canvas,
+        hideDockIcon = function()
+            prepareCalls = prepareCalls + 1
+            test.equal(#canvas.constructorFrames, 0)
+        end,
+    })
+
+    overlay:show(fake.screen("first", "Display", {}), {})
+    overlay:show(fake.screen("second", "Display", {}), {})
+
+    test.equal(prepareCalls, 1)
+    test.equal(#canvas.constructorFrames, 6)
+end)
+
+test.test("show preserves the existing mask when full-screen preparation fails", function()
+    local canvas = fake.canvas()
+    local shouldFail = false
+    local overlay = overlayWithFrames({
+        { x = 10, y = 20, w = 30, h = 40 },
+        { x = 50, y = 60, w = 70, h = 80 },
+        { x = 90, y = 100, w = 110, h = 120 },
+    }, {
+        canvas = canvas,
+        hideDockIcon = function()
+            if shouldFail then
+                error("dock icon failure")
+            end
+        end,
+    })
+    overlay:show(fake.screen("first", "Display", {}), {})
+    local existing = overlay.canvases
+    overlay.prepared = false
+    shouldFail = true
+
+    local ok, result, message = pcall(function()
+        return overlay:show(fake.screen("second", "Display", {}), {})
+    end)
+
+    test.equal(ok, true)
+    test.equal(result, nil)
+    test.equal(type(message), "string")
+    test.equal(string.find(message, "dock icon failure", 1, true) ~= nil, true)
+    test.equal(overlay.prepared, false)
+    test.equal(overlay.canvases, existing)
+    test.equal(#canvas.constructorFrames, 3)
+    for _, instance in ipairs(existing) do
+        test.equal(instance.deleteCount, 0)
+        test.equal(instance.deleted, false)
+    end
+end)
+
+test.test("show returns true after building the mask", function()
+    local overlay = overlayWithFrames({
+        { x = 10, y = 20, w = 30, h = 40 },
+        { x = 50, y = 60, w = 70, h = 80 },
+        { x = 90, y = 100, w = 110, h = 120 },
+    })
+
+    local result = overlay:show(fake.screen("screen", "Display", {}), {})
+
+    test.equal(result, true)
+end)
+
+test.test("show cleans partial canvases when construction fails", function()
+    local canvas = fake.canvas()
+    canvas.failConstructorAt = 2
+    local overlay = overlayWithFrames({
+        { x = 10, y = 20, w = 30, h = 40 },
+        { x = 50, y = 60, w = 70, h = 80 },
+        { x = 90, y = 100, w = 110, h = 120 },
+    }, { canvas = canvas })
+
+    local ok, result, message = pcall(function()
+        return overlay:show(fake.screen("screen", "Display", {}), {})
+    end)
+
+    test.equal(ok, true)
+    test.equal(result, nil)
+    test.equal(type(message), "string")
+    test.equal(#canvas.constructorFrames, 2)
+    test.equal(#canvas.canvases, 1)
+    test.equal(#overlay.canvases, 0)
+    test.equal(canvas.canvases[1].showCount, 1)
+    test.equal(canvas.canvases[1].deleteCount, 1)
+    test.equal(canvas.canvases[1].deleted, true)
+end)
+
+test.test("show cleans allocated canvases when configuration fails", function()
+    local canvas = fake.canvas()
+    canvas.failMethod = "behavior"
+    canvas.failMethodAt = 2
+    local overlay = overlayWithFrames({
+        { x = 10, y = 20, w = 30, h = 40 },
+        { x = 50, y = 60, w = 70, h = 80 },
+        { x = 90, y = 100, w = 110, h = 120 },
+    }, { canvas = canvas })
+
+    local ok, result, message = pcall(function()
+        return overlay:show(fake.screen("screen", "Display", {}), {})
+    end)
+
+    test.equal(ok, true)
+    test.equal(result, nil)
+    test.equal(type(message), "string")
+    test.equal(string.find(message, "behavior failure", 1, true) ~= nil, true)
+    test.equal(#canvas.constructorFrames, 2)
+    test.equal(#canvas.canvases, 2)
+    test.equal(#overlay.canvases, 0)
+    test.equal(canvas.canvases[1].showCount, 1)
+    test.equal(canvas.canvases[2].showCount, 0)
+    for _, instance in ipairs(canvas.canvases) do
+        test.equal(instance.deleteCount, 1)
+        test.equal(instance.deleted, true)
+    end
 end)
 
 test.test("show fills each canvas with one opaque black rectangle", function()
@@ -113,7 +240,12 @@ test.test("show creates a canvas for each absolute band", function()
             return frames
         end,
     }
-    local overlay = MaskOverlay.new({ canvas = canvas, geometry = geometry })
+    local overlay = MaskOverlay.new({
+        canvas = canvas,
+        geometry = geometry,
+        hideDockIcon = function()
+        end,
+    })
 
     overlay:show(screen, bands)
 
@@ -139,7 +271,12 @@ test.test("show replaces prior canvases after deleting them", function()
             return frames
         end,
     }
-    local overlay = MaskOverlay.new({ canvas = canvas, geometry = geometry })
+    local overlay = MaskOverlay.new({
+        canvas = canvas,
+        geometry = geometry,
+        hideDockIcon = function()
+        end,
+    })
     overlay:show(fake.screen("first", "Display", {}), {})
     local firstReferences = overlay.canvases
 
