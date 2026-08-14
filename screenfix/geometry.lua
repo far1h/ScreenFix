@@ -26,7 +26,13 @@ local function overlappingBands(frame, maskRects)
 end
 
 local function buildCandidate(windowFrame, regionStart, regionEnd)
-    local width = math.min(windowFrame.w, regionEnd - regionStart)
+    local regionWidth = regionEnd - regionStart
+
+    if regionWidth <= 0 then
+        return nil
+    end
+
+    local width = math.min(windowFrame.w, regionWidth)
 
     return {
         x = clamp(windowFrame.x, regionStart, regionEnd - width),
@@ -100,6 +106,11 @@ function M.correctedFrame(windowFrame, usableFrame, maskRects)
     adjusted.h = math.min(adjusted.h, usableFrame.h)
     adjusted.y = clamp(adjusted.y, usableFrame.y, usableFrame.y + usableFrame.h - adjusted.h)
     local bands = overlappingBands(adjusted, maskRects)
+
+    if #bands == 0 then
+        return adjusted
+    end
+
     local leftBoundary = bands[1].x
     local rightBoundary = bands[1].x + bands[1].w
 
@@ -112,6 +123,19 @@ function M.correctedFrame(windowFrame, usableFrame, maskRects)
     local rightStart = clamp(rightBoundary, usableStart, usableEnd)
     local left = buildCandidate(adjusted, usableStart, leftEnd)
     local right = buildCandidate(adjusted, rightStart, usableEnd)
+
+    if not left and not right then
+        return nil
+    end
+
+    if not left then
+        return right
+    end
+
+    if not right then
+        return left
+    end
+
     local leftCost = candidateCost(windowFrame, left, 0)
     local rightCost = candidateCost(windowFrame, right, 1)
 

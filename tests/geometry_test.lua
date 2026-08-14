@@ -92,6 +92,46 @@ test.test("correctedFrame combines all mask bands in the final vertical span", f
     test.rect(result, { x = 700, y = 100, w = 500, h = 600 })
 end)
 
+test.test("correctedFrame keeps the clamped frame when vertical movement clears the mask", function()
+    local result = geometry.correctedFrame(
+        { x = 350, y = 20, w = 500, h = 100 },
+        { x = 0, y = 100, w = 1200, h = 700 },
+        { { x = 400, y = 0, w = 300, h = 80 } }
+    )
+
+    test.rect(result, { x = 350, y = 100, w = 500, h = 100 })
+end)
+
+test.test("correctedFrame uses right when the left safe region has no width", function()
+    local result = geometry.correctedFrame(
+        { x = 0, y = 100, w = 500, h = 400 },
+        { x = 0, y = 0, w = 1200, h = 800 },
+        { { x = 0, y = 0, w = 300, h = 800 } }
+    )
+
+    test.rect(result, { x = 300, y = 100, w = 500, h = 400 })
+end)
+
+test.test("correctedFrame returns nil when neither safe region has width", function()
+    local result = geometry.correctedFrame(
+        { x = 100, y = 100, w = 500, h = 400 },
+        { x = 0, y = 0, w = 1200, h = 800 },
+        { { x = 0, y = 0, w = 1200, h = 800 } }
+    )
+
+    test.equal(result, nil)
+end)
+
+test.test("correctedFrame keeps deterministic targets in negative coordinates", function()
+    local result = geometry.correctedFrame(
+        { x = -850, y = 100, w = 500, h = 400 },
+        { x = -1200, y = 0, w = 1200, h = 800 },
+        { { x = -800, y = 0, w = 300, h = 800 } }
+    )
+
+    test.rect(result, { x = -500, y = 100, w = 500, h = 400 })
+end)
+
 test.test("framesNear accepts sub-point drift but rejects material change", function()
     local frame = { x = 100, y = 200, w = 500, h = 400 }
 
