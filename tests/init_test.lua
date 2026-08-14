@@ -35,7 +35,9 @@ local function withBootstrap(options, verify)
     local captured = {
         dockHideCount = 0,
         oldStopCount = 0,
+        realRuntimes = {},
         showErrors = {},
+        wakeWatchers = {},
         watcherNewCalls = {},
         windowFilterNewCount = 0,
     }
@@ -57,6 +59,18 @@ local function withBootstrap(options, verify)
         return filter
     end
     local hs = {
+        caffeinate = {
+            watcher = {
+                screensDidWake = "screensDidWake",
+                systemDidWake = "systemDidWake",
+                new = function(callback)
+                    local wakeWatcher = fake.watcher(callback)
+                    wakeWatcher.startError = options.wakeWatcherError
+                    captured.wakeWatchers[#captured.wakeWatchers + 1] = wakeWatcher
+                    return wakeWatcher
+                end,
+            },
+        },
         canvas = { marker = "canvas" },
         chooser = { marker = "chooser" },
         menubar = fake.menubar(),
@@ -185,6 +199,7 @@ local function withBootstrap(options, verify)
                 captured.controllerDeps = deps
                 captured.packagePath = package.path
                 captured.realRuntime = RealController.new(deps)
+                captured.realRuntimes[#captured.realRuntimes + 1] = captured.realRuntime
                 return captured.realRuntime
             end,
         } or {
@@ -301,11 +316,32 @@ test.test("init assembles exact production dependencies and starts one controlle
         test.equal(captured.guardDeps.now(), 42)
 
         test.equal(captured.controllerDeps.hs, hs)
+        test.equal(captured.controllerDeps.hs.caffeinate, hs.caffeinate)
         test.equal(captured.controllerDeps.geometry, geometry)
         test.equal(captured.controllerDeps.config, screenConfig)
         test.equal(captured.controllerDeps.overlay, overlay)
         test.equal(captured.controllerDeps.guard, guard)
         test.equal(captured.controllerDeps.calibration, calibration)
+    end)
+end)
+
+test.test("init reload stops the prior wake watcher before starting one replacement", function()
+    withBootstrap({ realController = true }, function(captured, runOk)
+        test.equal(runOk, true)
+        test.equal(#captured.realRuntimes, 1)
+        test.equal(#captured.wakeWatchers, 1)
+        test.equal(captured.wakeWatchers[1].startCount, 1)
+
+        local replacementChunk = assert(loadfile("./init.lua"))
+        replacementChunk()
+
+        test.equal(#captured.realRuntimes, 2)
+        test.equal(captured.realRuntimes[1].started, false)
+        test.equal(captured.wakeWatchers[1].stopCount, 1)
+        test.equal(#captured.wakeWatchers, 2)
+        test.equal(captured.wakeWatchers[2].startCount, 1)
+        test.equal(captured.wakeWatchers[2].stopCount, 0)
+        test.equal(_G.screenFixRuntime, captured.realRuntimes[2])
     end)
 end)
 
@@ -346,6 +382,25 @@ test.test("init rolls back a real controller when screen watcher startup fails",
         test.equal(captured.overlayDeleteCount, 1)
         test.equal(hs.menubar.items[1].deleteCount, 1)
         test.equal(hs.accessibilityStateCallback, priorCallback)
+        test.equal(captured.realRuntime.started, false)
+        test.equal(_G.screenFixRuntime, nil)
+    end)
+end)
+
+test.test("init rolls back a real controller when wake watcher startup fails", function()
+    withBootstrap({
+        realController = true,
+        wakeWatcherError = "wake watcher startup failure",
+    }, function(captured, runOk, runError)
+        test.equal(runOk, false)
+        test.equal(string.find(runError, "wake watcher startup failure", 1, true) ~= nil, true)
+        test.equal(captured.configWatchCount, 1)
+        test.equal(captured.configStopWatchingCount, 1)
+        test.equal(#captured.wakeWatchers, 1)
+        test.equal(captured.wakeWatchers[1].stopCount, 1)
+        test.equal(captured.calibrationStopCount, 1)
+        test.equal(captured.guardStopCount, 1)
+        test.equal(captured.overlayDeleteCount, 1)
         test.equal(captured.realRuntime.started, false)
         test.equal(_G.screenFixRuntime, nil)
     end)

@@ -24,6 +24,7 @@ local function newCase(options)
     options = options or {}
     local menubar = fake.menubar()
     local notify = fake.notify()
+    local caffeinate = fake.caffeinate()
     local screen = options.screen or fake.screen("damaged-uuid", "Damaged Display", {
         x = -3440,
         y = 0,
@@ -51,6 +52,7 @@ local function newCase(options)
         watchCalls = 0,
     }
     local hs = {
+        caffeinate = caffeinate,
         menubar = menubar,
         notify = notify,
         accessibilityStateCallback = options.previousAccessibilityCallback,
@@ -97,6 +99,9 @@ local function newCase(options)
                 screen = selectedScreen,
                 bands = bands,
             }
+            if state.overlayError ~= nil then
+                return nil, state.overlayError
+            end
             return true
         end,
         delete = function()
@@ -154,6 +159,7 @@ local function newCase(options)
     })
 
     state.calibration = calibration
+    state.caffeinate = caffeinate
     state.config = config
     state.controller = controller
     state.guard = guard
@@ -225,6 +231,138 @@ end)
 
 test.test("start fails transactionally when a retained watcher cannot start", function()
     assertWatcherStartupFailure(true)
+end)
+
+test.test("start owns one wake watcher and remains idempotent", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+
+    case.controller:start()
+    case.controller:start()
+
+    test.equal(#case.caffeinate.watchers, 1)
+    test.equal(case.caffeinate.watchers[1].startCount, 1)
+    test.equal(case.controller.wakeWatcher, case.caffeinate.watchers[1])
+end)
+
+local function assertWakeWatcherStartupFailure(startFailure)
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    local retained
+    case.caffeinate.watcher.new = function(callback)
+        if not startFailure then
+            error("wake watcher construction failure", 0)
+        end
+
+        retained = fake.watcher(callback)
+        retained.startError = "wake watcher start failure"
+        case.caffeinate.watchers[#case.caffeinate.watchers + 1] = retained
+        return retained
+    end
+
+    local startOk, startError = pcall(function()
+        case.controller:start()
+    end)
+
+    test.equal(startOk, false)
+    local expected = startFailure and "wake watcher start failure"
+        or "wake watcher construction failure"
+    test.equal(string.find(startError, expected, 1, true) ~= nil, true)
+    test.equal(case.controller.started, false)
+    test.equal(case.stopWatchingCount, 1)
+    test.equal(case.calibrationStopCount, 1)
+    test.equal(case.guardStopCount, 1)
+    test.equal(case.overlayDeleteCount, 1)
+    test.equal(case.menubar.items[1].deleteCount, 1)
+    if retained then
+        test.equal(retained.stopCount, 1)
+    end
+end
+
+test.test("start fails transactionally when wake watcher construction throws", function()
+    assertWakeWatcherStartupFailure(false)
+end)
+
+test.test("start fails transactionally when a retained wake watcher cannot start", function()
+    assertWakeWatcherStartupFailure(true)
+end)
+
+test.test("wake events reconcile disconnect and reconnect runtime state", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.controller:start()
+    local watcher = case.caffeinate.watchers[1]
+
+    case.connected = false
+    watcher.callback(case.caffeinate.watcher.systemDidWake)
+
+    test.equal(case.controller.screen, nil)
+    test.equal(case.overlayDeleteCount, 1)
+    test.equal(case.guardStopCount, 1)
+    test.equal(#case.notify.notifications, 1)
+
+    case.connected = true
+    watcher.callback(case.caffeinate.watcher.screensDidWake)
+
+    test.equal(case.controller.screen, case.screen)
+    test.equal(#case.overlayShows, 2)
+    test.equal(#case.guardStarts, 2)
+end)
+
+test.test("wake callback ignores unrelated caffeinate events", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.controller:start()
+    local refreshCalls = 0
+    case.controller.refresh = function()
+        refreshCalls = refreshCalls + 1
+    end
+
+    case.caffeinate.watchers[1].callback(case.caffeinate.watcher.systemWillSleep)
+
+    test.equal(refreshCalls, 0)
+end)
+
+test.test("wake callback invalidates a pending monitor chooser", function()
+    local case = newCase({ accessibility = true })
+    case.controller:start()
+    local staleSelection = case.selectCallback
+
+    case.caffeinate.watchers[1].callback(case.caffeinate.watcher.systemDidWake)
+    staleSelection(case.screen)
+
+    test.equal(#case.calibrationStarts, 0)
+end)
+
+test.test("wake callback contains refresh errors", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.controller:start()
+    case.controller.refresh = function()
+        error("wake refresh failure", 0)
+    end
+
+    local callbackOk = pcall(
+        case.caffeinate.watchers[1].callback,
+        case.caffeinate.watcher.screensDidWake
+    )
+
+    test.equal(callbackOk, true)
+end)
+
+test.test("stop releases the wake watcher and rejects its late callback", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.controller:start()
+    local watcher = case.caffeinate.watchers[1]
+    local refreshCalls = 0
+    case.controller.refresh = function()
+        refreshCalls = refreshCalls + 1
+    end
+
+    case.controller:stop()
+    case.controller:stop()
+    local callbackOk = pcall(watcher.callback, case.caffeinate.watcher.systemDidWake)
+
+    test.equal(callbackOk, true)
+    test.equal(watcher.stopCount, 1)
+    test.equal(watcher.delete, nil)
+    test.equal(refreshCalls, 0)
+    test.equal(case.controller.wakeWatcher, nil)
 end)
 
 test.test("refresh renders an enabled mask without Accessibility permission", function()
@@ -329,6 +467,90 @@ test.test("refresh starts the trusted guard with absolute mask rectangles", func
         w = 3440,
         h = 1440,
     })
+end)
+
+test.test("mask rendering failure pauses protection once and recovery resumes it", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.overlayError = "canvas configuration failure"
+
+    case.controller:start()
+    case.controller:refresh()
+
+    test.equal(case.controller.maskError, "canvas configuration failure")
+    test.equal(#case.guardStarts, 0)
+    test.equal(case.guardStopCount, 2)
+    test.equal(#case.notify.notifications, 1)
+    test.equal(string.find(
+        case.notify.notifications[1].attributes.informativeText,
+        "canvas configuration failure",
+        1,
+        true
+    ) ~= nil, true)
+    local paused = menuItem(
+        case.menubar.items[1].menu(),
+        "Paused: Mask rendering failed"
+    )
+    test.equal(paused ~= nil, true)
+    test.equal(paused.checked, false)
+    test.equal(paused.disabled, true)
+
+    case.overlayError = nil
+    case.controller:refresh()
+
+    test.equal(case.controller.maskError, nil)
+    test.equal(menuItem(
+        case.menubar.items[1].menu(),
+        "Paused: Mask rendering failed"
+    ), nil)
+    test.equal(#case.guardStarts, 1)
+    test.equal(#case.notify.notifications, 1)
+end)
+
+test.test("stop clears the mask failure notification episode before restart", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.overlayError = "canvas configuration failure"
+    case.controller:start()
+
+    case.controller:stop()
+    case.controller:start()
+
+    test.equal(case.controller.maskError, "canvas configuration failure")
+    test.equal(#case.notify.notifications, 2)
+end)
+
+test.test("inactive and disconnected states clear the mask failure episode", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.overlayError = "canvas configuration failure"
+    case.controller:start()
+
+    case.controller:disable()
+
+    test.equal(case.controller.maskError, nil)
+    test.equal(case.controller.notified.mask, nil)
+    test.equal(menuItem(
+        case.menubar.items[1].menu(),
+        "Paused: Mask rendering failed"
+    ), nil)
+
+    case.controller:enable()
+    test.equal(case.controller.maskError, "canvas configuration failure")
+    test.equal(#case.notify.notifications, 2)
+
+    case.connected = false
+    case.screenCallback()
+
+    test.equal(case.controller.maskError, nil)
+    test.equal(case.controller.notified.mask, nil)
+    test.equal(menuItem(
+        case.menubar.items[1].menu(),
+        "Paused: Mask rendering failed"
+    ), nil)
+
+    case.connected = true
+    case.screenCallback()
+
+    test.equal(case.controller.maskError, "canvas configuration failure")
+    test.equal(#case.notify.notifications, 4)
 end)
 
 test.test("Accessibility prompts only on first start and later refreshes do not prompt", function()

@@ -260,15 +260,40 @@ function M.watcher(callback)
 
     function watcher:start()
         self.startCount = self.startCount + 1
+        if self.startError ~= nil then
+            error(self.startError, 0)
+        end
         return self
     end
 
     function watcher:stop()
         self.stopCount = self.stopCount + 1
+        if self.stopError ~= nil then
+            error(self.stopError, 0)
+        end
         return self
     end
 
     return watcher
+end
+
+function M.caffeinate()
+    local module = {
+        watchers = {},
+        watcher = {
+            screensDidWake = "screensDidWake",
+            systemDidWake = "systemDidWake",
+            systemWillSleep = "systemWillSleep",
+        },
+    }
+
+    function module.watcher.new(callback)
+        local watcher = M.watcher(callback)
+        module.watchers[#module.watchers + 1] = watcher
+        return watcher
+    end
+
+    return module
 end
 
 function M.timer()

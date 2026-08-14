@@ -118,6 +118,11 @@ local function invalidateChooser(controller)
     controller.chooserToken = nil
 end
 
+local function clearMaskFailure(controller)
+    controller.maskError = nil
+    controller.notified.mask = nil
+end
+
 ---Creates a runtime controller from explicit Hammerspoon adapters.
 function M.new(deps)
     return setmetatable({
@@ -353,6 +358,7 @@ function Controller:refresh(useCachedAccessibility)
     local value = self.calibrationValue or self.value
     if value == nil then
         self.screen = nil
+        clearMaskFailure(self)
         call(self.deps.guard.stop, self.deps.guard)
         call(self.deps.overlay.delete, self.deps.overlay)
         return
@@ -387,25 +393,41 @@ function Controller:refresh(useCachedAccessibility)
         self.notified.disconnected = nil
     end
     if topologyFrameError then
+        clearMaskFailure(self)
         call(self.deps.guard.stop, self.deps.guard)
         call(self.deps.overlay.delete, self.deps.overlay)
         return
     end
     if value.enabled ~= true and not self.calibrating then
+        clearMaskFailure(self)
         call(self.deps.guard.stop, self.deps.guard)
         call(self.deps.overlay.delete, self.deps.overlay)
         return
     end
     if screen == nil then
         invalidateChooser(self)
+        clearMaskFailure(self)
         call(self.deps.guard.stop, self.deps.guard)
         call(self.deps.overlay.delete, self.deps.overlay)
         self:notifyOnce("disconnected", "The selected display is disconnected.")
         return
     end
 
-    local shown = call(self.deps.overlay.show, self.deps.overlay, screen, value.bands)
-    if shown ~= true or self.accessibilityTrusted ~= true or self.calibrating then
+    local shown, showError = call(
+        self.deps.overlay.show,
+        self.deps.overlay,
+        screen,
+        value.bands
+    )
+    if shown ~= true then
+        self.maskError = tostring(showError or "Unknown mask rendering error")
+        self:notifyOnce("mask", "Mask rendering failed: " .. self.maskError)
+        call(self.deps.guard.stop, self.deps.guard)
+        return
+    end
+
+    clearMaskFailure(self)
+    if self.accessibilityTrusted ~= true or self.calibrating then
         call(self.deps.guard.stop, self.deps.guard)
         return
     end
@@ -429,6 +451,13 @@ end
 ---Builds the current dynamic menubar contents.
 function Controller:menuItems()
     local items = {}
+    if self.maskError ~= nil then
+        items[#items + 1] = {
+            title = "Paused: Mask rendering failed",
+            checked = false,
+            disabled = true,
+        }
+    end
     if self.value and self.value.enabled and not self.accessibilityTrusted then
         items[#items + 1] = {
             title = "Paused: Allow Accessibility in System Settings",
@@ -501,6 +530,53 @@ local function createMenu(controller)
     controller.menu = item
 end
 
+local function startWakeWatcher(controller)
+    local watcherModule = controller.deps.hs.caffeinate
+        and controller.deps.hs.caffeinate.watcher
+    if type(watcherModule) ~= "table" or type(watcherModule.new) ~= "function" then
+        return nil, "wake watcher is required"
+    end
+
+    local watcher
+    local wakeCallback
+    wakeCallback = function(event)
+        if controller.started ~= true
+            or controller.wakeWatcher ~= watcher
+            or controller.wakeCallback ~= wakeCallback
+            or (event ~= watcherModule.systemDidWake
+                and event ~= watcherModule.screensDidWake)
+        then
+            return
+        end
+
+        pcall(function()
+            invalidateChooser(controller)
+            controller:refresh()
+        end)
+    end
+
+    local constructed, constructError = pcall(function()
+        watcher = watcherModule.new(wakeCallback)
+    end)
+    if not constructed or watcher == nil then
+        return nil, constructError or "wake watcher construction failed"
+    end
+
+    controller.wakeWatcher = watcher
+    controller.wakeCallback = wakeCallback
+    local started, startError = pcall(function()
+        if type(watcher.start) ~= "function" then
+            error("wake watcher start is required", 0)
+        end
+        watcher:start()
+    end)
+    if not started then
+        return nil, startError
+    end
+
+    return true
+end
+
 ---Starts ScreenFix once.
 function Controller:start()
     if self.started then
@@ -533,6 +609,11 @@ function Controller:start()
     if not watchOk then
         self:stop()
         error(watchError, 0)
+    end
+    local wakeStarted, wakeError = startWakeWatcher(self)
+    if wakeStarted ~= true then
+        self:stop()
+        error(wakeError, 0)
     end
     self.previousAccessibilityCallback = self.deps.hs.accessibilityStateCallback
     local previousAccessibilityCallback = self.previousAccessibilityCallback
@@ -570,11 +651,15 @@ function Controller:stop()
     local menu = self.menu
     local accessibilityCallback = self.accessibilityCallback
     local previousAccessibilityCallback = self.previousAccessibilityCallback
+    local wakeWatcher = self.wakeWatcher
     self.menu = nil
     self.accessibilityCallback = nil
     self.previousAccessibilityCallback = nil
+    self.wakeWatcher = nil
+    self.wakeCallback = nil
     invalidateChooser(self)
     invalidateCalibration(self, false)
+    clearMaskFailure(self)
     self.screen = nil
 
     pcall(function()
@@ -583,6 +668,7 @@ function Controller:stop()
         end
     end)
     call(self.deps.config.stopWatching, self.deps.config)
+    call(wakeWatcher and wakeWatcher.stop, wakeWatcher)
     call(self.deps.calibration.stop, self.deps.calibration)
     call(self.deps.guard.stop, self.deps.guard)
     call(self.deps.overlay.delete, self.deps.overlay)

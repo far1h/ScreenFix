@@ -51,12 +51,13 @@ The user enables Hammerspoon's Launch at login preference. No additional daemon,
 | Module | Responsibility |
 | --- | --- |
 | `screenfix/screen_config.lua` | Load, validate, and save settings; find the selected display; observe display changes. |
+| `screenfix/controller.lua` | Reconcile masks, correction, calibration, menus, and owned watcher lifecycles. |
 | `screenfix/mask_overlay.lua` | Create, update, show, hide, and delete the three `hs.canvas` mask rectangles. |
 | `screenfix/window_guard.lua` | Subscribe to `hs.window.filter` events and correct only overlapping windows. |
 | `screenfix/calibration.lua` | Present direct manipulation handles, select a display, and commit or cancel edits. |
 | `screenfix/geometry.lua` | Provide pure rectangle conversion, intersection, and safe-frame calculations. |
 
-The implementation uses Hammerspoon's documented [`hs.canvas`](https://www.hammerspoon.org/docs/hs.canvas.html), [`hs.window.filter`](https://www.hammerspoon.org/docs/hs.window.filter.html), [`hs.screen`](https://www.hammerspoon.org/docs/hs.screen.html), and [`hs.settings`](https://www.hammerspoon.org/docs/hs.settings.html) APIs.
+The implementation uses Hammerspoon's documented [`hs.canvas`](https://www.hammerspoon.org/docs/hs.canvas.html), [`hs.window.filter`](https://www.hammerspoon.org/docs/hs.window.filter.html), [`hs.screen`](https://www.hammerspoon.org/docs/hs.screen.html), [`hs.caffeinate.watcher`](https://www.hammerspoon.org/docs/hs.caffeinate.watcher.html), and [`hs.settings`](https://www.hammerspoon.org/docs/hs.settings.html) APIs.
 
 ## Saved configuration
 
@@ -86,11 +87,13 @@ Band coordinates are normalized to the selected screen's `fullFrame()`. This kee
 
 Each band is an opaque black `hs.canvas`. Normal mode exposes no mouse-tracked elements, so pointer input passes through to the underlying application. The canvases use the Hammerspoon window behaviors needed to join all Spaces and accompany full-screen Spaces. Their level must keep the mask above application content without hiding calibration controls.
 
+Mask replacement is transactional: ScreenFix constructs and configures every replacement canvas before deleting the committed set. A construction or configuration failure deletes only partial replacements, keeps the prior visible mask unchanged, pauses window correction, and reports one notification per failure episode. The menu shows `Paused: Mask rendering failed` until rendering succeeds or the mask is disabled or disconnected.
+
 Calibration mode temporarily makes each rectangle interactive and draws high-contrast handles. Save validates that all bands have positive size and remain within the selected screen. Cancel restores the last saved configuration.
 
 ## Window correction
 
-The window guard listens for created, moved or resized, and newly visible window events. Events are debounced to avoid repeated corrections while macOS and an application are still updating a frame.
+The window guard listens for created, moved or resized, and newly visible window events. Subscription immediately includes already-allowed windows, so startup does not wait for a later event to protect them. All callbacks use the same debounce to avoid repeated corrections while macOS and an application are still updating a frame.
 
 A window is eligible only when it:
 
@@ -110,7 +113,7 @@ If an application refuses the requested frame, ScreenFix leaves it alone and sup
 
 ## Display and permission changes
 
-An `hs.screen.watcher` reacts to connection, disconnection, arrangement, and scaling changes.
+An `hs.screen.watcher` reacts to connection, disconnection, arrangement, and scaling changes. An owned `hs.caffeinate.watcher` performs the same reconciliation after `systemDidWake` and `screensDidWake`; unrelated power events are ignored. Both watcher lifecycles are mandatory, error-contained, and reload-safe.
 
 - When the selected display disappears, ScreenFix deletes the mask canvases, pauses correction, and shows one notification.
 - When it returns, ScreenFix resolves the saved identity, rebuilds the mask from normalized coordinates, and resumes correction.
@@ -158,6 +161,8 @@ Manual verification on macOS 13 Ventura covers:
 - A safe window does not move.
 - A full-screen window is not resized or moved.
 - Disconnecting the display leaves no orphaned overlays and reconnecting restores the saved mask.
+- Sleep/wake reconciliation tears down stale display resources and rebuilds them after reconnect.
+- A failed mask replacement preserves the committed canvases, pauses correction, and reports its degraded state without notification spam.
 - Missing Accessibility permission does not prevent the black mask from working.
 - Reloading Hammerspoon does not duplicate canvases, watchers, subscriptions, or menu items.
 

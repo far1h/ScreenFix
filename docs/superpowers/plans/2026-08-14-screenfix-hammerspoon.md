@@ -709,10 +709,12 @@ With injected adapter factories, test that the controller:
 - always renders a valid enabled mask even without Accessibility permission;
 - starts the guard only when enabled, configured, connected, and Accessibility-trusted;
 - shows a one-time disconnected notification and restores on the screen-watcher callback;
+- owns a mandatory `hs.caffeinate.watcher`, refreshes only for system/display wake events, and stops it during rollback, shutdown, and reload;
 - saves Enable/Disable changes and immediately tears resources down or rebuilds them;
 - enters calibration with the guard paused and restores it after Save or Cancel;
 - exposes Enable/Disable, Calibrate, Select Monitor, and Reload menu items;
 - reports paused permission state in the menu;
+- reports a one-time mask-rendering failure episode in the menu, preserves the committed mask, and resumes correction after rendering recovers;
 - handles `hs.accessibilityStateCallback` by refreshing once permission changes; and
 - deletes every owned resource when stopped.
 
@@ -742,6 +744,8 @@ controller:stop()
 ```
 
 Keep orchestration in short methods: `refresh`, `enable`, `disable`, `selectMonitor`, `calibrate`, `saveCalibration`, `menuItems`, `notifyOnce`, and `stop`. `refresh` is the only method that decides whether overlay and guard should run.
+
+The controller treats both screen and caffeinate watcher startup as mandatory and transactional. It subscribes only to `systemDidWake` and `screensDidWake`, invalidates pending monitor selection before wake reconciliation, and contains late callbacks after stop. A failed normal-mask render stores the current error, stops the guard, adds a disabled `Paused: Mask rendering failed` row, and notifies once until a successful render or inactive/disconnected state clears the episode.
 
 Create the menu with `hs.menubar.new(true, "ScreenFix")`, title it `SF`, and pass a function to `setMenu` so checked and disabled states are always current. Use `hs.accessibilityState(true)` only at first start; subsequent checks use `false` to avoid repeated prompts.
 
