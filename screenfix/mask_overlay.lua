@@ -59,9 +59,16 @@ function Overlay:show(screen, bands)
         self.prepared = true
     end
 
+    local framesAvailable, frames = pcall(function()
+        local fullFrame = screen:fullFrame()
+        return self.deps.geometry.absoluteBands(fullFrame, bands)
+    end)
+    if not framesAvailable then
+        return nil, frames
+    end
+
     self:delete()
 
-    local frames = self.deps.geometry.absoluteBands(screen:fullFrame(), bands)
     local created, buildError = createCanvases(self.deps.canvas, frames)
     if not created then
         return nil, buildError

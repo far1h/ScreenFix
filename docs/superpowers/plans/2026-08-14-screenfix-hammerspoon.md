@@ -351,12 +351,16 @@ git commit -m "feat: persist monitor-specific mask settings"
 
 Extend the canvas fake so every constructor and chained method is recorded. Test that `show(screen, bands)`:
 
+- requires an injected `hideDockIcon`, invokes it once before the first display lookup or canvas construction, and does not repeat it on rebuild;
+- returns `nil, error` without changing the current canvases when `hideDockIcon`, `screen:fullFrame()`, or `geometry.absoluteBands` raises;
 - converts normalized bands using `screen:fullFrame()`;
 - creates exactly three opaque black rectangle canvases;
 - assigns `canJoinAllSpaces`, `fullScreenAuxiliary`, and `stationary` behaviors;
 - sets the `screenSaver` level;
 - defines no mouse tracking attributes in normal mode;
-- deletes old canvases before rebuilding; and
+- deletes old canvases only after display lookup succeeds;
+- builds into a temporary collection, cleans every partial canvas with protected deletion on allocation or configuration failure, and retains no partial mask;
+- returns `true` after a successful build; and
 - lets `hide()` and `delete()` clean up idempotently.
 
 - [ ] **Step 2: Run the suite and observe the missing-module failure**
@@ -367,38 +371,92 @@ Expected: FAIL loading `screenfix.mask_overlay`.
 
 - [ ] **Step 3: Implement the overlay owner**
 
-Use this object boundary:
+`MaskOverlay.new` requires `canvas`, `geometry`, and `hideDockIcon` dependencies. `show` returns `true` on success or `nil, error` on failure. Use this object boundary:
 
 ```lua
 local M = {}
 local Overlay = {}
 Overlay.__index = Overlay
 
+local function deleteCanvases(canvases)
+  for _, canvas in ipairs(canvases) do
+    pcall(function()
+      canvas:delete()
+    end)
+  end
+end
+
+local function configureCanvas(canvas)
+  canvas[1] = {
+    type = "rectangle",
+    action = "fill",
+    fillColor = { white = 0, alpha = 1 },
+    frame = { x = 0, y = 0, w = "100%", h = "100%" },
+  }
+  canvas:clickActivating(false)
+  canvas:behavior({ "canJoinAllSpaces", "fullScreenAuxiliary", "stationary" })
+  canvas:level("screenSaver")
+  canvas:show()
+end
+
+local function createCanvases(canvasModule, frames)
+  local created = {}
+  local built, buildError = pcall(function()
+    for _, frame in ipairs(frames) do
+      local canvas = canvasModule.new(frame)
+      if not canvas then
+        error("canvas construction failed", 0)
+      end
+
+      created[#created + 1] = canvas
+      configureCanvas(canvas)
+    end
+  end)
+
+  if not built then
+    deleteCanvases(created)
+    return nil, buildError
+  end
+
+  return created
+end
+
 function M.new(deps)
-  return setmetatable({ deps = deps, canvases = {} }, Overlay)
+  return setmetatable({ deps = deps, canvases = {}, hidden = true, prepared = false }, Overlay)
 end
 
 function Overlay:show(screen, bands)
-  self:delete()
-  local absolute = self.deps.geometry.absoluteBands(screen:fullFrame(), bands)
-  for _, frame in ipairs(absolute) do
-    local canvas = self.deps.canvas.new(frame)
-    canvas[1] = {
-      type = "rectangle",
-      action = "fill",
-      fillColor = { white = 0, alpha = 1 },
-      frame = { x = 0, y = 0, w = "100%", h = "100%" },
-    }
-    canvas:clickActivating(false)
-    canvas:behavior({ "canJoinAllSpaces", "fullScreenAuxiliary", "stationary" })
-    canvas:level("screenSaver")
-    canvas:show()
-    table.insert(self.canvases, canvas)
+  if not self.prepared then
+    local prepared, prepareError = pcall(self.deps.hideDockIcon)
+    if not prepared then
+      return nil, prepareError
+    end
+
+    self.prepared = true
   end
+
+  local framesAvailable, frames = pcall(function()
+    local fullFrame = screen:fullFrame()
+    return self.deps.geometry.absoluteBands(fullFrame, bands)
+  end)
+  if not framesAvailable then
+    return nil, frames
+  end
+
+  self:delete()
+
+  local created, buildError = createCanvases(self.deps.canvas, frames)
+  if not created then
+    return nil, buildError
+  end
+
+  self.canvases = created
+  self.hidden = false
+  return true
 end
 ```
 
-Add short `hide()` and `delete()` methods. `delete()` must clear the Lua references after calling each canvas's `delete()`.
+Add short `hide()` and `delete()` methods. `delete()` must use `deleteCanvases`, clear the Lua references, and be safe when called repeatedly.
 
 - [ ] **Step 4: Run all unit tests**
 
@@ -635,12 +693,13 @@ git commit -m "feat: add direct mask calibration"
 
 **Files:**
 - Create: `tests/controller_test.lua`
+- Create: `tests/init_test.lua`
 - Create: `screenfix/controller.lua`
 - Create: `init.lua`
 - Modify: `tests/fake_hs.lua`
 - Modify: `tests/run.lua`
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [ ] **Step 1: Write failing lifecycle and bootstrap assembly tests**
 
 With injected adapter factories, test that the controller:
 
@@ -655,11 +714,13 @@ With injected adapter factories, test that the controller:
 - handles `hs.accessibilityStateCallback` by refreshing once permission changes; and
 - deletes every owned resource when stopped.
 
-- [ ] **Step 2: Run the suite and observe the missing-controller failure**
+In `tests/init_test.lua`, load the real `init.lua` bootstrap with a fake global `hs` and recording `package.preload` module stubs. The `MaskOverlay.new` stub must capture the exact dependency table without supplying defaults. Assert that `hideDockIcon` is a function, invoke the captured function, and assert that the fake `hs.dockicon.hide()` was called exactly once. This assembly test must not use an overlay helper that fills in a missing `hideDockIcon`, because such a default would conceal an incomplete production bootstrap.
+
+- [ ] **Step 2: Run the suite and observe the missing runtime failures**
 
 Run: `lua tests/run.lua`
 
-Expected: FAIL loading `screenfix.controller`.
+Expected: FAIL loading `screenfix.controller` or `init.lua`; both the lifecycle and production assembly tests are red before implementation.
 
 - [ ] **Step 3: Implement the controller with explicit lifecycle methods**
 
@@ -713,6 +774,9 @@ local screenConfig = ScreenConfig.new({
 local overlay = MaskOverlay.new({
   canvas = hs.canvas,
   geometry = geometry,
+  hideDockIcon = function()
+    hs.dockicon.hide()
+  end,
 })
 
 local windowFilter = hs.window.filter
@@ -769,7 +833,7 @@ Expected: all test cases pass, syntax checking produces no output, and both comm
 - [ ] **Step 6: Commit the increment**
 
 ```bash
-git add init.lua screenfix/controller.lua tests/controller_test.lua tests/fake_hs.lua tests/run.lua
+git add init.lua screenfix/controller.lua tests/controller_test.lua tests/init_test.lua tests/fake_hs.lua tests/run.lua
 git commit -m "feat: orchestrate ScreenFix lifecycle"
 ```
 

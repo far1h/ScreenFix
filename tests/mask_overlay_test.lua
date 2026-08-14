@@ -94,6 +94,80 @@ test.test("show preserves the existing mask when full-screen preparation fails",
     end
 end)
 
+test.test("show preserves the existing mask when full-frame lookup fails", function()
+    local frames = {
+        { x = 10, y = 20, w = 30, h = 40 },
+        { x = 50, y = 60, w = 70, h = 80 },
+        { x = 90, y = 100, w = 110, h = 120 },
+    }
+    local overlay, canvas = overlayWithFrames(frames)
+    overlay:show(fake.screen("first", "Display", {}), {})
+    local existing = overlay.canvases
+    local failingScreen = {
+        fullFrame = function()
+            error("full-frame failure")
+        end,
+    }
+
+    local ok, result, message = pcall(function()
+        return overlay:show(failingScreen, {})
+    end)
+
+    test.equal(ok, true)
+    test.equal(result, nil)
+    test.equal(type(message), "string")
+    test.equal(string.find(message, "full-frame failure", 1, true) ~= nil, true)
+    test.equal(overlay.canvases, existing)
+    test.equal(#canvas.constructorFrames, 3)
+    for _, instance in ipairs(existing) do
+        test.equal(instance.hideCount, 0)
+        test.equal(instance.deleteCount, 0)
+        test.equal(instance.deleted, false)
+    end
+end)
+
+test.test("show preserves the existing mask when band calculation fails", function()
+    local canvas = fake.canvas()
+    local shouldFail = false
+    local frames = {
+        { x = 10, y = 20, w = 30, h = 40 },
+        { x = 50, y = 60, w = 70, h = 80 },
+        { x = 90, y = 100, w = 110, h = 120 },
+    }
+    local geometry = {
+        absoluteBands = function()
+            if shouldFail then
+                error("band calculation failure")
+            end
+
+            return frames
+        end,
+    }
+    local overlay = overlayWithFrames(frames, {
+        canvas = canvas,
+        geometry = geometry,
+    })
+    overlay:show(fake.screen("first", "Display", {}), {})
+    local existing = overlay.canvases
+    shouldFail = true
+
+    local ok, result, message = pcall(function()
+        return overlay:show(fake.screen("second", "Display", {}), {})
+    end)
+
+    test.equal(ok, true)
+    test.equal(result, nil)
+    test.equal(type(message), "string")
+    test.equal(string.find(message, "band calculation failure", 1, true) ~= nil, true)
+    test.equal(overlay.canvases, existing)
+    test.equal(#canvas.constructorFrames, 3)
+    for _, instance in ipairs(existing) do
+        test.equal(instance.hideCount, 0)
+        test.equal(instance.deleteCount, 0)
+        test.equal(instance.deleted, false)
+    end
+end)
+
 test.test("show returns true after building the mask", function()
     local overlay = overlayWithFrames({
         { x = 10, y = 20, w = 30, h = 40 },
@@ -259,7 +333,7 @@ test.test("show creates a canvas for each absolute band", function()
     end
 end)
 
-test.test("show replaces prior canvases after deleting them", function()
+test.test("show replaces prior canvases after resolving display frames", function()
     local canvas = fake.canvas()
     local frames = {
         { x = 10, y = 20, w = 30, h = 40 },
@@ -284,7 +358,8 @@ test.test("show replaces prior canvases after deleting them", function()
     local originalFullFrame = secondScreen.fullFrame
     secondScreen.fullFrame = function()
         for _, instance in ipairs(firstReferences) do
-            test.equal(instance.deleted, true)
+            test.equal(instance.deleteCount, 0)
+            test.equal(instance.deleted, false)
         end
         return originalFullFrame()
     end
