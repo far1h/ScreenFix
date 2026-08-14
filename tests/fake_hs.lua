@@ -468,4 +468,70 @@ function M.windowFilter()
     return module
 end
 
+function M.menubar()
+    local module = {
+        items = {},
+        newCalls = {},
+    }
+
+    function module.new(inMenuBar, autosaveName)
+        module.newCalls[#module.newCalls + 1] = {
+            inMenuBar = inMenuBar,
+            autosaveName = autosaveName,
+        }
+        local item = {
+            deleteCount = 0,
+            menuCalls = {},
+            titleCalls = {},
+        }
+
+        function item:setTitle(title)
+            self.titleCalls[#self.titleCalls + 1] = title
+            self.title = title
+            return self
+        end
+
+        function item:setMenu(menu)
+            self.menuCalls[#self.menuCalls + 1] = menu
+            self.menu = menu
+            return self
+        end
+
+        function item:delete()
+            self.deleteCount = self.deleteCount + 1
+            if self.deleteError then
+                error(self.deleteError, 0)
+            end
+        end
+
+        module.items[#module.items + 1] = item
+        return item
+    end
+
+    return module
+end
+
+function M.notify()
+    local module = {
+        notifications = {},
+    }
+
+    function module.new(attributes)
+        local notification = {
+            attributes = attributes,
+            sendCount = 0,
+        }
+
+        function notification:send()
+            self.sendCount = self.sendCount + 1
+            return self
+        end
+
+        module.notifications[#module.notifications + 1] = notification
+        return notification
+    end
+
+    return module
+end
+
 return M

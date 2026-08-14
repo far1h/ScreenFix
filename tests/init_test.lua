@@ -1,0 +1,297 @@
+local test = require("tests.test_helper")
+
+local moduleNames = {
+    "screenfix.geometry",
+    "screenfix.screen_config",
+    "screenfix.mask_overlay",
+    "screenfix.window_guard",
+    "screenfix.calibration",
+    "screenfix.controller",
+}
+
+local function keyCount(value)
+    local count = 0
+    for _ in pairs(value) do
+        count = count + 1
+    end
+    return count
+end
+
+local function withBootstrap(options, verify)
+    options = options or {}
+    local previousHs = _G.hs
+    local previousRuntime = _G.screenFixRuntime
+    local previousPath = package.path
+    local previousLoaded = {}
+    local previousPreload = {}
+    for _, name in ipairs(moduleNames) do
+        previousLoaded[name] = package.loaded[name]
+        previousPreload[name] = package.preload[name]
+        package.loaded[name] = nil
+    end
+
+    local captured = {
+        dockHideCount = 0,
+        oldStopCount = 0,
+        showErrors = {},
+        watcherNewCalls = {},
+        windowFilterNewCount = 0,
+    }
+    local screens = { { marker = "screen" } }
+    local watcher = { marker = "watcher" }
+    local windowFilter = {
+        windowCreated = {},
+        windowMoved = {},
+        windowOnScreen = {},
+    }
+    function windowFilter.new()
+        captured.windowFilterNewCount = captured.windowFilterNewCount + 1
+        local filter = {}
+        function filter:setOverrideFilter(override)
+            captured.override = override
+            return self
+        end
+        captured.filter = filter
+        return filter
+    end
+    local hs = {
+        canvas = { marker = "canvas" },
+        chooser = { marker = "chooser" },
+        dockicon = {
+            hide = function()
+                captured.dockHideCount = captured.dockHideCount + 1
+            end,
+        },
+        eventtap = {
+            checkMouseButtons = function()
+                return { left = false }
+            end,
+        },
+        screen = {
+            allScreens = function()
+                return screens
+            end,
+            watcher = {
+                new = function(callback)
+                    captured.watcherNewCalls[#captured.watcherNewCalls + 1] = callback
+                    return watcher
+                end,
+            },
+        },
+        settings = { marker = "settings" },
+        showError = function(message)
+            captured.showErrors[#captured.showErrors + 1] = message
+        end,
+        timer = {
+            doAfter = function()
+            end,
+            secondsSinceEpoch = function()
+                return 42
+            end,
+        },
+        window = {
+            filter = windowFilter,
+        },
+    }
+    local geometry = { marker = "geometry" }
+    local screenConfig = { marker = "screen-config" }
+    local overlay = { marker = "overlay" }
+    local guard = { marker = "guard" }
+    local calibration = { marker = "calibration" }
+    local runtime = {
+        marker = "runtime",
+        startCount = 0,
+        stopCount = 0,
+    }
+    function runtime:start()
+        self.startCount = self.startCount + 1
+        if options.startError then
+            error(options.startError, 0)
+        end
+    end
+    function runtime:stop()
+        self.stopCount = self.stopCount + 1
+    end
+    local oldRuntime = {
+        stop = function()
+            captured.oldStopCount = captured.oldStopCount + 1
+            if options.oldStopError then
+                error(options.oldStopError, 0)
+            end
+        end,
+    }
+    local modules = {
+        ["screenfix.geometry"] = geometry,
+        ["screenfix.screen_config"] = {
+            new = function(deps)
+                captured.screenConfigDeps = deps
+                return screenConfig
+            end,
+        },
+        ["screenfix.mask_overlay"] = {
+            new = function(deps)
+                captured.overlayDeps = deps
+                return overlay
+            end,
+        },
+        ["screenfix.window_guard"] = {
+            new = function(deps)
+                captured.guardDeps = deps
+                return guard
+            end,
+        },
+        ["screenfix.calibration"] = {
+            new = function(deps)
+                captured.calibrationDeps = deps
+                return calibration
+            end,
+        },
+        ["screenfix.controller"] = {
+            new = function(deps)
+                captured.controllerDeps = deps
+                captured.packagePath = package.path
+                if options.constructorError then
+                    error(options.constructorError, 0)
+                end
+                return runtime
+            end,
+        },
+    }
+    for name, module in pairs(modules) do
+        package.preload[name] = function()
+            return module
+        end
+    end
+    _G.hs = hs
+    _G.screenFixRuntime = oldRuntime
+
+    local chunk, loadError = loadfile("./init.lua")
+    local runOk
+    local runError
+    if chunk then
+        runOk, runError = pcall(chunk)
+    else
+        runOk, runError = false, loadError
+    end
+    local verifyOk, verifyError = pcall(
+        verify,
+        captured,
+        runOk,
+        runError,
+        hs,
+        geometry,
+        screenConfig,
+        overlay,
+        guard,
+        calibration,
+        runtime,
+        screens,
+        watcher,
+        windowFilter
+    )
+
+    _G.hs = previousHs
+    _G.screenFixRuntime = previousRuntime
+    package.path = previousPath
+    for _, name in ipairs(moduleNames) do
+        package.loaded[name] = previousLoaded[name]
+        package.preload[name] = previousPreload[name]
+    end
+
+    if not verifyOk then
+        error(verifyError, 0)
+    end
+end
+
+test.test("init assembles exact production dependencies and starts one controller", function()
+    withBootstrap({}, function(
+        captured,
+        runOk,
+        runError,
+        hs,
+        geometry,
+        screenConfig,
+        overlay,
+        guard,
+        calibration,
+        runtime,
+        screens,
+        watcher,
+        windowFilter
+    )
+        test.equal(runOk, true)
+        test.equal(runError, nil)
+        test.equal(captured.oldStopCount, 1)
+        test.equal(runtime.startCount, 1)
+        test.equal(_G.screenFixRuntime, runtime)
+        test.equal(string.find(captured.packagePath, "./?.lua;./?/init.lua;", 1, true), 1)
+
+        test.equal(keyCount(captured.overlayDeps), 3)
+        test.equal(captured.overlayDeps.canvas, hs.canvas)
+        test.equal(captured.overlayDeps.geometry, geometry)
+        test.equal(type(captured.overlayDeps.hideDockIcon), "function")
+        captured.overlayDeps.hideDockIcon()
+        test.equal(captured.dockHideCount, 1)
+
+        test.equal(captured.screenConfigDeps.settings, hs.settings)
+        test.equal(captured.screenConfigDeps.allScreens(), screens)
+        local screenCallback = function()
+        end
+        test.equal(captured.screenConfigDeps.newScreenWatcher(screenCallback), watcher)
+        test.equal(captured.watcherNewCalls[1], screenCallback)
+
+        test.equal(captured.calibrationDeps.canvas, hs.canvas)
+        test.equal(captured.calibrationDeps.chooser, hs.chooser)
+        test.equal(captured.calibrationDeps.geometry, geometry)
+        test.equal(type(captured.calibrationDeps.reportError), "function")
+        captured.calibrationDeps.reportError("calibration failure")
+        test.equal(captured.showErrors[1], "calibration failure")
+
+        local filter = captured.guardDeps.filterFactory()
+        test.equal(filter, captured.filter)
+        test.equal(captured.windowFilterNewCount, 1)
+        test.equal(keyCount(captured.override), 3)
+        test.equal(captured.override.visible, true)
+        test.equal(captured.override.fullscreen, false)
+        test.equal(captured.override.currentSpace, true)
+        test.equal(captured.guardDeps.events[1], windowFilter.windowCreated)
+        test.equal(captured.guardDeps.events[2], windowFilter.windowMoved)
+        test.equal(captured.guardDeps.events[3], windowFilter.windowOnScreen)
+        test.equal(captured.guardDeps.now(), 42)
+
+        test.equal(captured.controllerDeps.hs, hs)
+        test.equal(captured.controllerDeps.geometry, geometry)
+        test.equal(captured.controllerDeps.config, screenConfig)
+        test.equal(captured.controllerDeps.overlay, overlay)
+        test.equal(captured.controllerDeps.guard, guard)
+        test.equal(captured.controllerDeps.calibration, calibration)
+    end)
+end)
+
+test.test("init leaves no corrupt global when controller startup fails", function()
+    withBootstrap({ startError = "start failure" }, function(captured, runOk, runError, _, _, _, _, _, _, runtime)
+        test.equal(runOk, false)
+        test.equal(string.find(runError, "start failure", 1, true) ~= nil, true)
+        test.equal(captured.oldStopCount, 1)
+        test.equal(runtime.stopCount, 1)
+        test.equal(_G.screenFixRuntime, nil)
+    end)
+end)
+
+test.test("init leaves no corrupt global when controller construction fails", function()
+    withBootstrap({ constructorError = "constructor failure" }, function(captured, runOk, runError)
+        test.equal(runOk, false)
+        test.equal(string.find(runError, "constructor failure", 1, true) ~= nil, true)
+        test.equal(captured.oldStopCount, 1)
+        test.equal(_G.screenFixRuntime, nil)
+    end)
+end)
+
+test.test("init contains old-runtime stop errors and starts a clean replacement", function()
+    withBootstrap({ oldStopError = "old stop failure" }, function(captured, runOk, _, _, _, _, _, _, _, runtime)
+        test.equal(runOk, true)
+        test.equal(captured.oldStopCount, 1)
+        test.equal(runtime.startCount, 1)
+        test.equal(_G.screenFixRuntime, runtime)
+    end)
+end)
