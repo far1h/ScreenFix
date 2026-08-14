@@ -99,6 +99,7 @@ function WindowGuard:start(screen, maskRects)
     if not subscribeOk then
         protectedCall(filter, "unsubscribeAll")
         protectedCall(filter, "pause")
+        protectedCall(filter, "delete")
         return
     end
 

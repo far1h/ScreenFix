@@ -134,11 +134,13 @@ test.test("start contains factory errors and remains restartable", function()
     test.equal(case.guard.filter, case.filterModule.filters[1])
 end)
 
-test.test("start cleans a filter whose subscription raises", function()
+test.test("start deletes a configured filter whose subscription raises", function()
     local case = lifecycleCase()
     local originalFactory = case.guard.deps.filterFactory
     case.guard.deps.filterFactory = function()
-        local filter = case.filterModule.new()
+        local filter = case.filterModule.new():setOverrideFilter({
+            currentSpace = true,
+        })
         filter.subscribeError = "subscription failure"
         return filter
     end
@@ -152,6 +154,47 @@ test.test("start cleans a filter whose subscription raises", function()
     test.equal(case.guard.filter, nil)
     test.equal(failedFilter.unsubscribeAllCount, 1)
     test.equal(failedFilter.pauseCount, 1)
+    test.equal(string.format(
+        "%d/%d/%d",
+        failedFilter.deleteCount,
+        case.filterModule.retainedFilterCount(),
+        case.filterModule.watcherCount()
+    ), "1/0/0")
+    test.equal(failedFilter.lifecycleCalls[1], "unsubscribeAll")
+    test.equal(failedFilter.lifecycleCalls[2], "pause")
+    test.equal(failedFilter.lifecycleCalls[3], "delete")
+
+    case.guard.deps.filterFactory = originalFactory
+    case.guard:start(case.screen, {})
+
+    test.equal(case.guard.filter, case.filterModule.filters[2])
+end)
+
+test.test("subscription rollback contains delete errors and restarts", function()
+    local case = lifecycleCase()
+    local originalFactory = case.guard.deps.filterFactory
+    case.guard.deps.filterFactory = function()
+        local filter = case.filterModule.new():setOverrideFilter({
+            currentSpace = true,
+        })
+        filter.subscribeError = "subscription failure"
+        filter.deleteError = "filter delete failure"
+        return filter
+    end
+
+    local startOk = pcall(function()
+        case.guard:start(case.screen, {})
+    end)
+    local failedFilter = case.filterModule.filters[1]
+
+    test.equal(startOk, true)
+    test.equal(case.guard.filter, nil)
+    test.equal(string.format(
+        "%d/%d/%d",
+        failedFilter.deleteCount,
+        case.filterModule.retainedFilterCount(),
+        case.filterModule.watcherCount()
+    ), "1/0/0")
 
     case.guard.deps.filterFactory = originalFactory
     case.guard:start(case.screen, {})

@@ -316,6 +316,12 @@ function M.windowFilter()
 
         function filter:setOverrideFilter(override)
             self.override = override
+            if override.currentSpace ~= nil then
+                module.registries.spacesInstances[self] = true
+            else
+                module.registries.spacesInstances[self] = nil
+            end
+            updateWatchers()
             return self
         end
 
@@ -334,9 +340,6 @@ function M.windowFilter()
             }
             self.paused = false
             module.registries.activeInstances[self] = true
-            if self.override ~= nil and self.override.currentSpace == true then
-                module.registries.spacesInstances[self] = true
-            end
             updateWatchers()
             return self
         end
