@@ -643,6 +643,7 @@ Test that calibration:
 
 - presents one `hs.chooser` row per connected screen using serializable UUID, name, width, and height values;
 - creates one full-screen editor canvas on the chosen monitor;
+- sets the editor canvas to `assistiveTechHigh` before input callbacks and `show`, keeping it above `screenSaver` mask canvases;
 - positions that canvas with the monitor's absolute `fullFrame()` while drawing every element in canvas-local coordinates;
 - uses a tracked background surface and `canvasMouseEvents(true, true, false, true)`;
 - draws three black bands, edge handles, Save, and Cancel controls;
@@ -673,6 +674,8 @@ calibration:stop()
 ```
 
 The editor canvas is positioned with the absolute `screen:fullFrame()`. All canvas element frames are local: the drawable origin is `{ x = 0, y = 0 }`, bands come from `geometry.localBands`, and Save/Cancel offsets are measured from that local origin. Never add the screen's global `x` or `y` to an element frame.
+
+Set `editorCanvas:level("assistiveTechHigh")` before mouse callback setup and `show()`. Treat level configuration like the other transactional setup steps: if it fails, delete only the partial replacement and restore the prior editor, callbacks, bands, and controls unchanged.
 
 The bottom background element covers the entire local canvas and has `trackMouseDown`, `trackMouseUp`, and `trackMouseMove`; higher visual elements need no tracking, so the background receives coordinates across the whole editor. Because the callback's `x` and `y` are relative to that tracked full-canvas background element, pass them directly to `editorHit` as a local point. Compute drag deltas from successive local callback positions, then let `dragBand` divide by `fullFrame.w` and `fullFrame.h` when updating normalized values. On mouse down, hit-test Save, Cancel, then band handles/body. On mouse move, update only while a drag is active and the left button remains down. On mouse up, clear the drag state. Redraw from the copied working bands after every change.
 

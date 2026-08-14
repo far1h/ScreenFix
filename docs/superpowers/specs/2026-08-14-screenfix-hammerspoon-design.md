@@ -89,7 +89,7 @@ Each band is an opaque black `hs.canvas`. Normal mode exposes no mouse-tracked e
 
 Mask replacement is transactional: ScreenFix constructs and configures every replacement canvas before deleting the committed set. A construction or configuration failure deletes only partial replacements, keeps the prior visible mask unchanged, pauses window correction, and reports one notification per failure episode. The menu shows `Paused: Mask rendering failed` until rendering succeeds or the mask is disabled or disconnected.
 
-Calibration mode temporarily makes each rectangle interactive and draws high-contrast handles. Save validates that all bands have positive size and remain within the selected screen. Cancel restores the last saved configuration.
+Calibration mode temporarily makes each rectangle interactive and draws high-contrast handles. Its editor canvas uses the `assistiveTechHigh` window level so controls remain above normal `screenSaver` mask canvases even when topology reconciliation rebuilds them. The level is configured transactionally before input callbacks and display; a construction or level failure preserves the committed editor. Save validates that all bands have positive size and remain within the selected screen. Cancel restores the last saved configuration.
 
 ## Window correction
 

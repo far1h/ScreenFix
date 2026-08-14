@@ -1,4 +1,5 @@
 local Calibration = require("screenfix.calibration")
+local MaskOverlay = require("screenfix.mask_overlay")
 local fake = require("tests.fake_hs")
 local geometry = require("screenfix.geometry")
 local test = require("tests.test_helper")
@@ -138,6 +139,63 @@ test.test("start uses an absolute canvas with local band coordinates", function(
     canvas.canvases[1]:triggerMouse("mouseDown", 1376, 360)
     test.equal(calibration.drag.index, 1)
     test.equal(calibration.drag.part, "top")
+end)
+
+test.test("calibration editor stays above rebuilt masks before input and show", function()
+    local canvas = fake.canvas()
+    local frame = { x = 0, y = 0, w = 1000, h = 800 }
+    local screen = fake.screen("display", "Display", frame)
+    local overlay = MaskOverlay.new({
+        canvas = canvas,
+        geometry = {
+            absoluteBands = function()
+                return { { x = 400, y = 0, w = 200, h = 800 } }
+            end,
+        },
+        hideDockIcon = function()
+        end,
+    })
+    local calibration = Calibration.new({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        screens = function()
+            return { screen }
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+
+    overlay:show(screen, validBands())
+    calibration:start(screen, validBands(), function() end, function() end)
+
+    local maskCanvas = canvas.canvases[1]
+    local editorCanvas = canvas.canvases[2]
+    test.equal(maskCanvas.levelCalls[1], "screenSaver")
+    test.equal(editorCanvas.levelCalls[1], "assistiveTechHigh")
+    test.equal(
+        canvas.windowLevels[editorCanvas.levelCalls[1]]
+            > canvas.windowLevels[maskCanvas.levelCalls[1]],
+        true
+    )
+
+    local levelIndex
+    local mouseIndex
+    local showIndex
+    for index, operation in ipairs(canvas.operationLog) do
+        if operation.canvas == editorCanvas then
+            if operation.name == "level" then
+                levelIndex = index
+            elseif operation.name == "mouseCallback" then
+                mouseIndex = index
+            elseif operation.name == "show" then
+                showIndex = index
+            end
+        end
+    end
+    test.equal(levelIndex < mouseIndex, true)
+    test.equal(levelIndex < showIndex, true)
 end)
 
 test.test("start tracks mouse events across the full local background", function()
@@ -670,8 +728,12 @@ local function replacementFailure(method)
     local oldSaveFrame = calibration.saveFrame
     local oldCancelFrame = calibration.cancelFrame
 
-    canvas.failMethod = method
-    canvas.failMethodAt = 2
+    if method == "construction" then
+        canvas.failConstructorAt = 2
+    else
+        canvas.failMethod = method
+        canvas.failMethodAt = 2
+    end
     local started, startError = calibration:start(
         replacementScreen,
         {
@@ -684,15 +746,21 @@ local function replacementFailure(method)
     )
 
     test.equal(started, nil)
-    test.equal(startError, method .. " failure")
+    local expectedError = method == "construction"
+        and "canvas construction failed"
+        or method .. " failure"
+    test.equal(startError, expectedError)
     test.equal(calibration.editorCanvas, oldCanvas)
     test.equal(oldCanvas.mouseCallbackFn, oldCallback)
     test.equal(calibration.workingBands, oldBands)
     test.equal(calibration.saveFrame, oldSaveFrame)
     test.equal(calibration.cancelFrame, oldCancelFrame)
     test.equal(oldCanvas.deleteCount, 0)
-    test.equal(canvas.canvases[2].deleteCount, 1)
-    test.equal(canvas.canvases[2].mouseCallbackFn, nil)
+    local replacementCanvas = canvas.canvases[2]
+    if replacementCanvas then
+        test.equal(replacementCanvas.deleteCount, 1)
+        test.equal(replacementCanvas.mouseCallbackFn, nil)
+    end
     test.rect(oldBands[1], { x = 0.40, y = 0.25, w = 0.20, h = 0.50 })
     oldCanvas:triggerMouse("mouseDown", 30, 750)
     test.equal(saveCalls, 1)
@@ -702,6 +770,14 @@ test.test("failed replacement show keeps the committed editor live", function()
     replacementFailure("show")
 end)
 
+test.test("failed replacement construction keeps the committed editor live", function()
+    replacementFailure("construction")
+end)
+
 test.test("failed replacement callback setup keeps the committed editor live", function()
     replacementFailure("mouseCallback")
+end)
+
+test.test("failed replacement level keeps the committed editor live", function()
+    replacementFailure("level")
 end)

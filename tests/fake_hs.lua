@@ -4,6 +4,11 @@ function M.canvas()
     local module = {
         canvases = {},
         constructorFrames = {},
+        operationLog = {},
+        windowLevels = {
+            assistiveTechHigh = 1500,
+            screenSaver = 1000,
+        },
     }
     local methods = {}
     local metatable = {
@@ -40,6 +45,14 @@ function M.canvas()
 
     module.methodCallCounts = {}
 
+    local function record(canvas, name, value)
+        module.operationLog[#module.operationLog + 1] = {
+            canvas = canvas,
+            name = name,
+            value = value,
+        }
+    end
+
     function module.new(frame)
         module.constructorFrames[#module.constructorFrames + 1] = frame
         if module.failConstructorAt == #module.constructorFrames then
@@ -66,6 +79,7 @@ function M.canvas()
 
     function methods:clickActivating(value)
         self.clickActivatingCalls[#self.clickActivatingCalls + 1] = value
+        record(self, "clickActivating", value)
         failSelectedMethod("clickActivating")
         return self
     end
@@ -77,6 +91,7 @@ function M.canvas()
             enterExit = enterExit,
             move = move,
         }
+        record(self, "canvasMouseEvents")
         failSelectedMethod("canvasMouseEvents")
         return self
     end
@@ -85,6 +100,7 @@ function M.canvas()
         self.mouseCallbackCallCount = self.mouseCallbackCallCount + 1
         self.mouseCallbackCalls[#self.mouseCallbackCalls + 1] = callback
         self.mouseCallbackFn = callback
+        record(self, "mouseCallback", callback)
         failSelectedMethod("mouseCallback")
         return self
     end
@@ -97,24 +113,28 @@ function M.canvas()
 
     function methods:behavior(value)
         self.behaviorCalls[#self.behaviorCalls + 1] = value
+        record(self, "behavior", value)
         failSelectedMethod("behavior")
         return self
     end
 
     function methods:level(value)
         self.levelCalls[#self.levelCalls + 1] = value
+        record(self, "level", value)
         failSelectedMethod("level")
         return self
     end
 
     function methods:show()
         self.showCount = self.showCount + 1
+        record(self, "show")
         failSelectedMethod("show")
         return self
     end
 
     function methods:hide()
         self.hideCount = self.hideCount + 1
+        record(self, "hide")
         failSelectedMethod("hide")
         return self
     end
@@ -122,6 +142,7 @@ function M.canvas()
     function methods:delete()
         self.deleteCount = self.deleteCount + 1
         self.deleted = true
+        record(self, "delete")
         failSelectedMethod("delete")
     end
 

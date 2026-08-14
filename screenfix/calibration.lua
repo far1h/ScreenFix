@@ -354,6 +354,7 @@ function Calibration:start(screen, bands, onSave, onCancel)
 
     local prepared, prepareError = pcall(function()
         self:draw()
+        editorCanvas:level("assistiveTechHigh")
         editorCanvas:clickActivating(true)
         editorCanvas:canvasMouseEvents(true, true, false, true)
         editorCanvas:mouseCallback(function(_, message, _, x, y)
