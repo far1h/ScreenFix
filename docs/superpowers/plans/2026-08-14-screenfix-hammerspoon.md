@@ -163,22 +163,23 @@ Add one test at a time for:
 
 1. returning `nil` when a window does not intersect any band;
 2. preserving size on the nearest side when both sides fit;
-3. choosing a farther side when it avoids shrinking;
-4. shrinking an oversized window only as much as required;
-5. using left as the exact cost tie-breaker;
-6. combining every band that overlaps a tall window's final vertical span; and
-7. `framesNear` accepting sub-point drift but rejecting material changes.
+3. choosing the nearest side even when it requires shrinking;
+4. keeping a mirrored right-dragged window on the right while preserving its size;
+5. shrinking an oversized window only as much as required on its nearest side;
+6. using left as the exact cost tie-breaker;
+7. combining every band that overlaps a tall window's final vertical span; and
+8. `framesNear` accepting sub-point drift but rejecting material changes.
 
-The resize-first test must use this oracle:
+Live user feedback showed that resize-first ordering forced a window dragged left across the mask to the distant right side. The nearest-side-first regression must use this negative-origin display layout:
 
 ```lua
-test.test("correctedFrame prefers no resize over shorter movement", function()
+test.test("correctedFrame keeps a wide left-dragged window on the nearest safe side", function()
   local actual = geometry.correctedFrame(
-    { x = 360, y = 100, w = 500, h = 400 },
-    { x = 0, y = 0, w = 1200, h = 800 },
-    { { x = 400, y = 0, w = 300, h = 800 } }
+    { x = -700, y = 100, w = 1400, h = 700 },
+    { x = -951, y = 25, w = 3440, h = 1415 },
+    { { x = 214, y = 0, w = 755, h = 1440 } }
   )
-  test.rect(actual, { x = 700, y = 100, w = 500, h = 400 })
+  test.rect(actual, { x = -951, y = 100, w = 1165, h = 700 })
 end)
 ```
 
@@ -232,15 +233,15 @@ end
 - clamp both regions to `usableFrame`;
 - preserve width when it fits and otherwise reduce it to region width;
 - clamp `x` to the selected region; and
-- return `{ frame = ..., cost = { reduction, movement, sideRank } }` where `sideRank` is 0 for left and 1 for right.
+- return `{ frame = ..., cost = { movement, reduction, sideRank } }` where `sideRank` is 0 for left and 1 for right.
 
-`lessCost` compares tuple entries in order. Reduction is `(old.w - new.w) + (old.h - new.h)` and movement is `abs(old.x - new.x) + abs(old.y - new.y)`.
+`lessCost` compares tuple entries in order. Movement is `abs(old.x - new.x) + abs(old.y - new.y)` and reduction is `(old.w - new.w) + (old.h - new.h)`.
 
 - [ ] **Step 4: Run the geometry suite**
 
 Run: `lua tests/run.lua`
 
-Expected: every geometry case passes, including negative display origins and the resize-first oracle.
+Expected: every geometry case passes, including negative display origins and the nearest-side-first oracle.
 
 - [ ] **Step 5: Commit the increment**
 
@@ -913,7 +914,7 @@ In System Settings, allow Hammerspoon under Privacy & Security > Accessibility, 
 Verify one behavior at a time:
 
 1. a safe window does not move;
-2. an overlapping window moves using resize-first ordering;
+2. a wide overlapping window dragged left stays on the left and shrinks if necessary, while the mirrored right-dragged window stays on the right;
 3. a full-screen window is not changed while the mask remains visible;
 4. moving the window repeatedly does not oscillate;
 5. Disable removes masks and stops correction; and

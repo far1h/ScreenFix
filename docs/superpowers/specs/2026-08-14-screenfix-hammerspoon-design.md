@@ -40,7 +40,7 @@ Software cannot change physically dead, leaking, or stuck LCD pixels. The mask o
 
 ### Normal operation
 
-A small Hammerspoon menu contains Enable/Disable, Calibrate, Select Monitor, and Reload. The mask is otherwise passive. When a normal window is created, shown, moved, or resized across the mask, ScreenFix selects a safe side using the documented resize-first ordering.
+A small Hammerspoon menu contains Enable/Disable, Calibrate, Select Monitor, and Reload. The mask is otherwise passive. When a normal window is created, shown, moved, or resized across the mask, ScreenFix selects a safe side using the documented nearest-side-first ordering.
 
 The user enables Hammerspoon's Launch at login preference. No additional daemon, installer, network service, or account is required.
 
@@ -102,7 +102,7 @@ A window is eligible only when it:
 
 For an eligible window, the geometry module builds left and right candidates from the bands that overlap the window's vertical range. A left candidate ends at the leftmost relevant band edge. A right candidate begins at the rightmost relevant band edge. Both candidates are clamped to the display's usable `frame()`, which excludes the menu bar and Dock.
 
-Each candidate first preserves the window's current width and height. If it cannot fit, only the required dimension is reduced. ScreenFix selects between candidates by comparing this tuple in order: total width and height reduction, total horizontal and vertical movement, then side rank with left before right. This makes avoiding resize more important than proximity; a farther side that preserves the window's size wins over a nearer side that would shrink it. The fixed side rank resolves an otherwise exact tie.
+Each candidate first preserves the window's current width and height. If it cannot fit, only the required dimension is reduced. ScreenFix selects between candidates by comparing this tuple in order: total horizontal and vertical movement, total width and height reduction, then side rank with left before right. This nearest-side-first ordering follows live user feedback: a window dragged toward one side must stay on that side, shrinking only as needed, instead of being forced across the mask to preserve its size. Reduction resolves equal movement costs, and the fixed side rank resolves an otherwise exact tie.
 
 ScreenFix applies the chosen candidate with no animation and records a short per-window cooldown. The cooldown and a frame tolerance prevent ScreenFix from reacting to its own `setFrame` event.
 
@@ -129,9 +129,9 @@ Pure geometry tests use a small assertion runner without an external Lua test fr
 - no intersection;
 - top, middle, and lower band intersections;
 - a tall window intersecting all bands;
-- left and right selection using the resize-first ordering;
-- a farther candidate that preserves size beating a nearer candidate that requires shrinking;
-- deterministic left-side selection when resize and movement costs are identical;
+- left and right selection using the nearest-side-first ordering;
+- a nearer candidate that requires shrinking beating a farther candidate that preserves size;
+- deterministic left-side selection when movement and resize costs are identical;
 - oversized windows that require shrinking;
 - negative display origins in multi-monitor arrangements;
 - display scale and origin changes; and
@@ -144,7 +144,7 @@ Manual verification on macOS 13 Ventura covers:
 - Hammerspoon reload and login restoration;
 - monitor disconnect and reconnect;
 - display scaling and arrangement changes;
-- window creation, dragging, and resizing;
+- window creation, dragging wide windows left and right, and confirming each stays on the nearest safe side even when that side requires shrinking;
 - full-screen windows and multiple Spaces;
 - minimized, system, and non-movable windows; and
 - disabling and re-enabling from the menu.
@@ -154,7 +154,7 @@ Manual verification on macOS 13 Ventura covers:
 - Three saved black rectangles cover the damaged regions on the selected display.
 - The mask remains present across Spaces and over a full-screen application.
 - Pointer interaction passes through the normal mask.
-- A normal window overlapping the mask moves to the safe candidate selected by the documented resize-first ordering within one event cycle.
+- A normal window overlapping the mask moves to the safe candidate selected by the documented nearest-side-first ordering within one event cycle.
 - A safe window does not move.
 - A full-screen window is not resized or moved.
 - Disconnecting the display leaves no orphaned overlays and reconnecting restores the saved mask.

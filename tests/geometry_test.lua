@@ -277,30 +277,44 @@ test.test("correctedFrame preserves size on the side requiring less movement", f
     test.rect(result, { x = 700, y = 100, w = 200, h = 400 })
 end)
 
-test.test("correctedFrame prefers preserved size over shorter movement", function()
-    local oracle = geometry.correctedFrame(
-        { x = 360, y = 100, w = 500, h = 400 },
-        { x = 0, y = 0, w = 1200, h = 800 },
-        { { x = 400, y = 0, w = 300, h = 800 } }
+test.test("correctedFrame keeps a wide left-dragged window on the nearest safe side", function()
+    local result = geometry.correctedFrame(
+        { x = -700, y = 100, w = 1400, h = 700 },
+        { x = -951, y = 25, w = 3440, h = 1415 },
+        { { x = 214, y = 0, w = 755, h = 1440 } }
     )
-    local farther = geometry.correctedFrame(
+
+    test.rect(result, { x = -951, y = 100, w = 1165, h = 700 })
+end)
+
+test.test("correctedFrame keeps a wide right-dragged window on the nearest safe side", function()
+    local result = geometry.correctedFrame(
+        { x = 700, y = 100, w = 1400, h = 700 },
+        { x = -951, y = 25, w = 3440, h = 1415 },
+        { { x = 214, y = 0, w = 755, h = 1440 } }
+    )
+
+    test.rect(result, { x = 969, y = 100, w = 1400, h = 700 })
+end)
+
+test.test("correctedFrame prefers shorter movement even when it requires shrinking", function()
+    local result = geometry.correctedFrame(
         { x = 100, y = 100, w = 500, h = 400 },
         { x = 0, y = 0, w = 1200, h = 800 },
         { { x = 400, y = 0, w = 300, h = 800 } }
     )
 
-    test.rect(oracle, { x = 700, y = 100, w = 500, h = 400 })
-    test.rect(farther, { x = 700, y = 100, w = 500, h = 400 })
+    test.rect(result, { x = 0, y = 100, w = 400, h = 400 })
 end)
 
-test.test("correctedFrame shrinks an oversized window only to its safe region", function()
+test.test("correctedFrame shrinks an oversized window on the nearest safe side", function()
     local result = geometry.correctedFrame(
         { x = 300, y = -100, w = 1000, h = 1000 },
         { x = 0, y = 0, w = 1200, h = 800 },
         { { x = 400, y = 0, w = 300, h = 800 } }
     )
 
-    test.rect(result, { x = 700, y = 0, w = 500, h = 800 })
+    test.rect(result, { x = 0, y = 0, w = 400, h = 800 })
 end)
 
 test.test("correctedFrame chooses left on equal reduction and movement", function()

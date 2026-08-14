@@ -55,8 +55,8 @@ end
 
 local function candidateCost(windowFrame, candidate, sideRank)
     return {
-        (windowFrame.w - candidate.w) + (windowFrame.h - candidate.h),
         math.abs(windowFrame.x - candidate.x) + math.abs(windowFrame.y - candidate.y),
+        (windowFrame.w - candidate.w) + (windowFrame.h - candidate.h),
         sideRank,
     }
 end
