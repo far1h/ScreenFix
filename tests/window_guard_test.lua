@@ -486,3 +486,320 @@ test.test("correct blocks retries when the post-set window frame is missing", fu
     test.equal(guard.blockedUntil[42], 31)
     test.equal(#window.setFrameCalls, 1)
 end)
+
+test.test("correct rejects a missing second window id", function()
+    local screen = fake.screen("selected", "Display", {
+        x = 0,
+        y = 0,
+        w = 1200,
+        h = 800,
+    })
+    local window = fake.window({
+        id = 42,
+        frame = { x = 550, y = 100, w = 200, h = 400 },
+        screen = screen,
+    })
+    local idCalls = 0
+    window.id = function()
+        idCalls = idCalls + 1
+        if idCalls == 1 then
+            return 42
+        end
+
+        return nil
+    end
+    local guard = WindowGuard.new({
+        geometry = geometry,
+        now = function()
+            return 0
+        end,
+    })
+    guard:start(screen, {
+        { x = 400, y = 0, w = 300, h = 800 },
+    })
+
+    local ok, result, message = pcall(function()
+        return guard:correct(window)
+    end)
+
+    test.equal(message, nil)
+    test.equal(result, false)
+    test.equal(ok, true)
+    test.equal(#window.setFrameCalls, 0)
+end)
+
+test.test("correct contains errors from eligibility-stage Hammerspoon methods", function()
+    local cases = {
+        {
+            name = "window id",
+            apply = function(window)
+                window.id = function()
+                    error("window id failure", 0)
+                end
+            end,
+        },
+        {
+            name = "window frame",
+            apply = function(window)
+                window.frame = function()
+                    error("window frame failure", 0)
+                end
+            end,
+        },
+        {
+            name = "window screen",
+            apply = function(window)
+                window.screen = function()
+                    error("window screen failure", 0)
+                end
+            end,
+        },
+        {
+            name = "selected screen UUID",
+            apply = function(_, screen)
+                screen.getUUID = function()
+                    error("selected UUID failure", 0)
+                end
+            end,
+        },
+        {
+            name = "window screen UUID",
+            apply = function(window)
+                window.screen = function()
+                    return {
+                        getUUID = function()
+                            error("window UUID failure", 0)
+                        end,
+                    }
+                end
+            end,
+        },
+        {
+            name = "full-screen state",
+            apply = function(window)
+                window.isFullScreen = function()
+                    error("full-screen failure", 0)
+                end
+            end,
+        },
+        {
+            name = "minimized state",
+            apply = function(window)
+                window.isMinimized = function()
+                    error("minimized failure", 0)
+                end
+            end,
+        },
+        {
+            name = "visibility state",
+            apply = function(window)
+                window.isVisible = function()
+                    error("visibility failure", 0)
+                end
+            end,
+        },
+        {
+            name = "standard state",
+            apply = function(window)
+                window.isStandard = function()
+                    error("standard failure", 0)
+                end
+            end,
+        },
+    }
+
+    for _, case in ipairs(cases) do
+        local screen = fake.screen("selected", "Display", {
+            x = 0,
+            y = 0,
+            w = 1200,
+            h = 800,
+        })
+        local window = fake.window({
+            id = 42,
+            frame = { x = 550, y = 100, w = 200, h = 400 },
+            screen = screen,
+        })
+        case.apply(window, screen)
+        local guard = WindowGuard.new({
+            geometry = geometry,
+            now = function()
+                return 0
+            end,
+        })
+        guard:start(screen, {
+            { x = 400, y = 0, w = 300, h = 800 },
+        })
+
+        local ok, result = pcall(function()
+            return guard:correct(window)
+        end)
+
+        if not ok then
+            error(case.name .. " escaped correct: " .. tostring(result))
+        end
+        test.equal(result, false)
+        test.equal(#window.setFrameCalls, 0)
+    end
+end)
+
+test.test("correct contains an error from the second window id read", function()
+    local screen = fake.screen("selected", "Display", {
+        x = 0,
+        y = 0,
+        w = 1200,
+        h = 800,
+    })
+    local window = fake.window({
+        id = 42,
+        frame = { x = 550, y = 100, w = 200, h = 400 },
+        screen = screen,
+    })
+    local idCalls = 0
+    window.id = function()
+        idCalls = idCalls + 1
+        if idCalls == 1 then
+            return 42
+        end
+
+        error("second window id failure", 0)
+    end
+    local guard = WindowGuard.new({
+        geometry = geometry,
+        now = function()
+            return 0
+        end,
+    })
+    guard:start(screen, {
+        { x = 400, y = 0, w = 300, h = 800 },
+    })
+
+    local ok, result = pcall(function()
+        return guard:correct(window)
+    end)
+
+    if not ok then
+        error("second window id escaped correct: " .. tostring(result))
+    end
+    test.equal(result, false)
+    test.equal(#window.setFrameCalls, 0)
+end)
+
+test.test("correct contains an error from the second pre-correction frame read", function()
+    local screen = fake.screen("selected", "Display", {
+        x = 0,
+        y = 0,
+        w = 1200,
+        h = 800,
+    })
+    local initialFrame = { x = 550, y = 100, w = 200, h = 400 }
+    local window = fake.window({
+        id = 42,
+        frame = initialFrame,
+        screen = screen,
+    })
+    local frameCalls = 0
+    window.frame = function()
+        frameCalls = frameCalls + 1
+        if frameCalls == 1 then
+            return initialFrame
+        end
+
+        error("second window frame failure", 0)
+    end
+    local guard = WindowGuard.new({
+        geometry = geometry,
+        now = function()
+            return 0
+        end,
+    })
+    guard:start(screen, {
+        { x = 400, y = 0, w = 300, h = 800 },
+    })
+
+    local ok, result = pcall(function()
+        return guard:correct(window)
+    end)
+
+    if not ok then
+        error("second window frame escaped correct: " .. tostring(result))
+    end
+    test.equal(result, false)
+    test.equal(#window.setFrameCalls, 0)
+end)
+
+test.test("correct contains an error from the selected-screen frame read", function()
+    local screen = fake.screen("selected", "Display", {})
+    screen.frame = function()
+        error("selected screen frame failure", 0)
+    end
+    local window = fake.window({
+        id = 42,
+        frame = { x = 550, y = 100, w = 200, h = 400 },
+        screen = screen,
+    })
+    local guard = WindowGuard.new({
+        geometry = geometry,
+        now = function()
+            return 0
+        end,
+    })
+    guard:start(screen, {
+        { x = 400, y = 0, w = 300, h = 800 },
+    })
+
+    local ok, result = pcall(function()
+        return guard:correct(window)
+    end)
+
+    if not ok then
+        error("selected screen frame escaped correct: " .. tostring(result))
+    end
+    test.equal(result, false)
+    test.equal(#window.setFrameCalls, 0)
+end)
+
+test.test("correct blocks retries when the post-set frame read raises", function()
+    local screen = fake.screen("selected", "Display", {
+        x = 0,
+        y = 0,
+        w = 1200,
+        h = 800,
+    })
+    local initialFrame = { x = 550, y = 100, w = 200, h = 400 }
+    local window = fake.window({
+        id = 42,
+        frame = initialFrame,
+        screen = screen,
+    })
+    local frameCalls = 0
+    window.frame = function()
+        frameCalls = frameCalls + 1
+        if frameCalls <= 2 then
+            return initialFrame
+        end
+
+        error("post-set window frame failure", 0)
+    end
+    local clock = fake.clock(40)
+    local guard = WindowGuard.new({
+        geometry = geometry,
+        now = function()
+            return clock:now()
+        end,
+    })
+    guard:start(screen, {
+        { x = 400, y = 0, w = 300, h = 800 },
+    })
+
+    local ok, result = pcall(function()
+        return guard:correct(window)
+    end)
+
+    if not ok then
+        error("post-set window frame escaped correct: " .. tostring(result))
+    end
+    test.equal(result, false)
+    test.equal(guard.blockedUntil[42], 41)
+    test.equal(#window.setFrameCalls, 1)
+end)

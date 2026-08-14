@@ -54,13 +54,18 @@ function WindowGuard:isEligible(window)
 end
 
 function WindowGuard:correct(window)
-    if not self:isEligible(window) then
+    local eligibilityOk, eligible = pcall(self.isEligible, self, window)
+    if not eligibilityOk or eligible ~= true then
         return false
     end
 
-    local id = window:id()
-    local currentFrame = window:frame()
-    if currentFrame == nil then
+    local idOk, id = pcall(window.id, window)
+    if not idOk or id == nil then
+        return false
+    end
+
+    local currentFrameOk, currentFrame = pcall(window.frame, window)
+    if not currentFrameOk or currentFrame == nil then
         return false
     end
 
@@ -80,8 +85,11 @@ function WindowGuard:correct(window)
     end
 
     self.recent[id] = nil
-    local usableFrame = self.selectedScreen:frame()
-    if usableFrame == nil then
+    local usableFrameOk, usableFrame = pcall(
+        self.selectedScreen.frame,
+        self.selectedScreen
+    )
+    if not usableFrameOk or usableFrame == nil then
         return false
     end
 
@@ -102,8 +110,9 @@ function WindowGuard:correct(window)
         return nil, setError
     end
 
-    local actualFrame = window:frame()
-    if actualFrame == nil
+    local actualFrameOk, actualFrame = pcall(window.frame, window)
+    if not actualFrameOk
+        or actualFrame == nil
         or not self.deps.geometry.framesNear(actualFrame, target, 1)
     then
         self.blockedUntil[id] = now + 1
