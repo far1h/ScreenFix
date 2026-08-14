@@ -256,14 +256,57 @@ function M.windowFilter()
     local module = {
         filters = {},
         newCount = 0,
+        registries = {
+            activeInstances = {},
+            applicationActiveInstances = {},
+            spacesInstances = {},
+        },
         windowCreated = "windowCreated",
         windowMoved = "windowMoved",
         windowOnScreen = "windowOnScreen",
+        watchers = {
+            activeInstances = false,
+            applicationActiveInstances = false,
+            spacesInstances = false,
+        },
     }
+
+    local function updateWatchers()
+        for name, registry in pairs(module.registries) do
+            module.watchers[name] = next(registry) ~= nil
+        end
+    end
+
+    function module.retainedFilterCount()
+        local retained = {}
+        for _, registry in pairs(module.registries) do
+            for filter in pairs(registry) do
+                retained[filter] = true
+            end
+        end
+
+        local count = 0
+        for _ in pairs(retained) do
+            count = count + 1
+        end
+        return count
+    end
+
+    function module.watcherCount()
+        local count = 0
+        for _, active in pairs(module.watchers) do
+            if active then
+                count = count + 1
+            end
+        end
+        return count
+    end
 
     function module.new()
         module.newCount = module.newCount + 1
         local filter = {
+            deleteCount = 0,
+            lifecycleCalls = {},
             pauseCount = 0,
             paused = false,
             subscribeCalls = {},
@@ -290,6 +333,11 @@ function M.windowFilter()
                 events = events,
             }
             self.paused = false
+            module.registries.activeInstances[self] = true
+            if self.override ~= nil and self.override.currentSpace == true then
+                module.registries.spacesInstances[self] = true
+            end
+            updateWatchers()
             return self
         end
 
@@ -309,6 +357,7 @@ function M.windowFilter()
 
         function filter:unsubscribeAll()
             self.unsubscribeAllCount = self.unsubscribeAllCount + 1
+            self.lifecycleCalls[#self.lifecycleCalls + 1] = "unsubscribeAll"
             self.subscriptions = {}
             if self.unsubscribeAllError ~= nil then
                 error(self.unsubscribeAllError, 0)
@@ -318,11 +367,28 @@ function M.windowFilter()
 
         function filter:pause()
             self.pauseCount = self.pauseCount + 1
+            self.lifecycleCalls[#self.lifecycleCalls + 1] = "pause"
             self.paused = true
+            module.registries.activeInstances[self] = nil
+            updateWatchers()
             if self.pauseError ~= nil then
                 error(self.pauseError, 0)
             end
             return self
+        end
+
+        function filter:delete()
+            self.deleteCount = self.deleteCount + 1
+            self.lifecycleCalls[#self.lifecycleCalls + 1] = "delete"
+            self.deleted = true
+            self.subscriptions = {}
+            for _, registry in pairs(module.registries) do
+                registry[self] = nil
+            end
+            updateWatchers()
+            if self.deleteError ~= nil then
+                error(self.deleteError, 0)
+            end
         end
 
         module.filters[#module.filters + 1] = filter

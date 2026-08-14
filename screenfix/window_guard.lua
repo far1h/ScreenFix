@@ -121,6 +121,7 @@ function WindowGuard:stop()
 
     protectedCall(filter, "unsubscribeAll")
     protectedCall(filter, "pause")
+    protectedCall(filter, "delete")
 end
 
 function WindowGuard:isEligible(window)

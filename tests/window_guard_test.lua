@@ -379,12 +379,57 @@ test.test("stop cancels timers and tears down its lifecycle filter once", functi
     test.equal(pendingTimer.stopCount, 1)
     test.equal(filter.unsubscribeAllCount, 1)
     test.equal(filter.pauseCount, 1)
+    test.equal(filter.deleteCount, 1)
     test.equal(case.guard.filter, nil)
     test.equal(case.guard.selectedScreen, nil)
     test.equal(#case.guard.maskRects, 0)
     test.equal(next(case.guard.pending), nil)
     test.equal(next(case.guard.recent), nil)
     test.equal(next(case.guard.blockedUntil), nil)
+end)
+
+test.test("repeated start and stop releases filter registries and watchers", function()
+    local case = lifecycleCase()
+
+    for _ = 1, 3 do
+        case.guard:start(case.screen, {})
+        local filter = case.guard.filter
+
+        case.guard:stop()
+
+        test.equal(filter.lifecycleCalls[1], "unsubscribeAll")
+        test.equal(filter.lifecycleCalls[2], "pause")
+        test.equal(filter.lifecycleCalls[3], "delete")
+        test.equal(filter.deleteCount, 1)
+        test.equal(case.guard.filter, nil)
+    end
+
+    test.equal(case.filterModule.retainedFilterCount(), 0)
+    test.equal(case.filterModule.watcherCount(), 0)
+end)
+
+test.test("stop contains delete errors and remains restartable", function()
+    local case = lifecycleCase()
+    case.guard:start(case.screen, {})
+    local failedFilter = case.guard.filter
+    failedFilter.deleteError = "filter delete failure"
+
+    local stopOk = pcall(function()
+        case.guard:stop()
+    end)
+
+    test.equal(stopOk, true)
+    test.equal(failedFilter.deleteCount, 1)
+    test.equal(case.guard.filter, nil)
+    test.equal(case.filterModule.retainedFilterCount(), 0)
+    test.equal(case.filterModule.watcherCount(), 0)
+
+    local startOk = pcall(function()
+        case.guard:start(case.screen, {})
+    end)
+
+    test.equal(startOk, true)
+    test.equal(case.guard.filter, case.filterModule.filters[2])
 end)
 
 test.test("stop contains cleanup errors and still clears lifecycle state", function()
@@ -420,6 +465,7 @@ test.test("stop contains cleanup errors and still clears lifecycle state", funct
     test.equal(secondStops, 1)
     test.equal(filter.unsubscribeAllCount, 1)
     test.equal(filter.pauseCount, 1)
+    test.equal(filter.deleteCount, 1)
     test.equal(case.guard.filter, nil)
     test.equal(case.guard.selectedScreen, nil)
     test.equal(#case.guard.maskRects, 0)
