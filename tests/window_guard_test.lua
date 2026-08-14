@@ -99,6 +99,34 @@ test.test("start creates and subscribes a local lifecycle filter", function()
     test.equal(events[3], case.filterModule.windowOnScreen)
 end)
 
+test.test("start immediately debounces each pre-existing allowed window", function()
+    local case = lifecycleCase()
+    local window = fake.window({
+        id = 42,
+        frame = {},
+        screen = case.screen,
+    })
+    local corrected = {}
+    case.filterModule.allowedWindows = { window }
+    case.guard.correct = function(_, correctedWindow)
+        corrected[#corrected + 1] = correctedWindow
+    end
+
+    case.guard:start(case.screen, {})
+
+    local subscription = case.guard.filter.subscribeCalls[1]
+    test.equal(subscription.immediate, true)
+    test.equal(#case.timer.timers, 1)
+    test.equal(case.timer.timers[1].delay, 0.15)
+    test.equal(#corrected, 0)
+
+    case.timer.timers[1]:fire()
+    case.timer.timers[1]:fire()
+
+    test.equal(#corrected, 1)
+    test.equal(corrected[1], window)
+end)
+
 test.test("start is idempotent while updating its target", function()
     local case = lifecycleCase()
     local replacementScreen = {}

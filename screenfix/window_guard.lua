@@ -87,6 +87,7 @@ function WindowGuard:start(screen, maskRects)
         return
     end
 
+    self.filter = filter
     local subscribeOk = pcall(function()
         filter:subscribe(self.deps.events, function(window)
             if self.filter ~= filter then
@@ -94,16 +95,15 @@ function WindowGuard:start(screen, maskRects)
             end
 
             scheduleCorrection(self, window)
-        end)
+        end, true)
     end)
     if not subscribeOk then
+        self.filter = nil
         protectedCall(filter, "unsubscribeAll")
         protectedCall(filter, "pause")
         protectedCall(filter, "delete")
         return
     end
-
-    self.filter = filter
 end
 
 function WindowGuard:stop()

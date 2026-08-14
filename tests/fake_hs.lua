@@ -392,10 +392,11 @@ function M.windowFilter()
             return self
         end
 
-        function filter:subscribe(events, callback)
+        function filter:subscribe(events, callback, immediate)
             self.subscribeCalls[#self.subscribeCalls + 1] = {
                 callback = callback,
                 events = events,
+                immediate = immediate,
             }
             if self.subscribeError ~= nil then
                 error(self.subscribeError, 0)
@@ -408,6 +409,11 @@ function M.windowFilter()
             self.paused = false
             module.registries.activeInstances[self] = true
             updateWatchers()
+            if immediate then
+                for _, window in ipairs(module.allowedWindows or {}) do
+                    callback(window, nil, events[1])
+                end
+            end
             return self
         end
 
