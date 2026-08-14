@@ -40,7 +40,7 @@ Software cannot change physically dead, leaking, or stuck LCD pixels. The mask o
 
 ### Normal operation
 
-A small Hammerspoon menu contains Enable/Disable, Calibrate, Select Monitor, and Reload. The mask is otherwise passive. When a normal window is created, shown, moved, or resized across the mask, ScreenFix places it in the nearest safe side and changes its size only when necessary.
+A small Hammerspoon menu contains Enable/Disable, Calibrate, Select Monitor, and Reload. The mask is otherwise passive. When a normal window is created, shown, moved, or resized across the mask, ScreenFix selects a safe side using the documented resize-first ordering.
 
 The user enables Hammerspoon's Launch at login preference. No additional daemon, installer, network service, or account is required.
 
@@ -129,7 +129,7 @@ Pure geometry tests use a small assertion runner without an external Lua test fr
 - no intersection;
 - top, middle, and lower band intersections;
 - a tall window intersecting all bands;
-- nearest-left and nearest-right selection;
+- left and right selection using the resize-first ordering;
 - a farther candidate that preserves size beating a nearer candidate that requires shrinking;
 - deterministic left-side selection when resize and movement costs are identical;
 - oversized windows that require shrinking;
@@ -154,7 +154,7 @@ Manual verification on macOS 13 Ventura covers:
 - Three saved black rectangles cover the damaged regions on the selected display.
 - The mask remains present across Spaces and over a full-screen application.
 - Pointer interaction passes through the normal mask.
-- A normal window overlapping the mask moves to the nearest safe side within one event cycle.
+- A normal window overlapping the mask moves to the safe candidate selected by the documented resize-first ordering within one event cycle.
 - A safe window does not move.
 - A full-screen window is not resized or moved.
 - Disconnecting the display leaves no orphaned overlays and reconnecting restores the saved mask.
