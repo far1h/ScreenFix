@@ -662,6 +662,7 @@ local calibration = Calibration.new({
   chooser = hs.chooser,
   screens = function() return hs.screen.allScreens() end,
   mouseButtons = function() return hs.eventtap.checkMouseButtons() end,
+  reportError = function(err) hs.showError(err) end,
   geometry = geometry,
 })
 
