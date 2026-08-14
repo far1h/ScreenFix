@@ -47,10 +47,77 @@ local function withBands(value, bands)
     }
 end
 
+local function copyConfig(value)
+    local bands = {}
+    for index, band in ipairs(value.bands) do
+        bands[index] = {
+            x = band.x,
+            y = band.y,
+            w = band.w,
+            h = band.h,
+        }
+    end
+
+    return {
+        schemaVersion = value.schemaVersion,
+        enabled = value.enabled,
+        screen = {
+            uuid = value.screen.uuid,
+            name = value.screen.name,
+            width = value.screen.width,
+            height = value.screen.height,
+        },
+        bands = bands,
+    }
+end
+
+local function screenFrame(screen)
+    local frame = call(screen and screen.fullFrame, screen)
+    if type(frame) ~= "table"
+        or type(frame.x) ~= "number"
+        or type(frame.y) ~= "number"
+        or type(frame.w) ~= "number"
+        or type(frame.h) ~= "number"
+    then
+        return nil
+    end
+
+    return { x = frame.x, y = frame.y, w = frame.w, h = frame.h }
+end
+
+local function sameFrame(left, right)
+    return left ~= nil
+        and right ~= nil
+        and left.x == right.x
+        and left.y == right.y
+        and left.w == right.w
+        and left.h == right.h
+end
+
+local function isCurrentSession(controller, token, target)
+    local session = controller.calibrationSession
+    return controller.started == true
+        and session ~= nil
+        and session.token == token
+        and session.target == target
+end
+
+local function invalidateCalibration(controller, stopAdapter)
+    controller.calibrationGeneration = controller.calibrationGeneration + 1
+    controller.calibrationSession = nil
+    controller.calibrating = false
+    controller.calibrationValue = nil
+    controller.calibrationScreen = nil
+    if stopAdapter then
+        call(controller.deps.calibration.stop, controller.deps.calibration)
+    end
+end
+
 ---Creates a runtime controller from explicit Hammerspoon adapters.
 function M.new(deps)
     return setmetatable({
         deps = deps,
+        calibrationGeneration = 0,
         notified = {},
         started = false,
     }, Controller)
@@ -111,6 +178,7 @@ local function saveEnabled(controller, enabled)
     end
 
     controller.value = saved
+    invalidateCalibration(controller, true)
     controller:refresh()
     return true
 end
@@ -125,16 +193,36 @@ function Controller:disable()
     return saveEnabled(self, false)
 end
 
-local function cancelCalibration(controller)
-    controller.calibrating = false
-    controller.calibrationValue = nil
-    controller.calibrationScreen = nil
+local function cancelCalibration(controller, token, target)
+    if not isCurrentSession(controller, token, target) then
+        return false
+    end
+
+    invalidateCalibration(controller, false)
     controller:refresh()
+    return true
 end
 
 startCalibration = function(controller, value, screen)
+    if controller.started ~= true then
+        return false
+    end
+
+    if controller.calibrating then
+        invalidateCalibration(controller, true)
+    end
+
+    controller.calibrationGeneration = controller.calibrationGeneration + 1
+    local target = copyConfig(value)
+    local session = {
+        fullFrame = nil,
+        screen = screen,
+        target = target,
+        token = controller.calibrationGeneration,
+    }
+    controller.calibrationSession = session
     controller.calibrating = true
-    controller.calibrationValue = value
+    controller.calibrationValue = target
     controller.calibrationScreen = screen
     controller:refresh()
     if controller.calibrating ~= true
@@ -149,19 +237,26 @@ startCalibration = function(controller, value, screen)
         controller.deps.calibration.start,
         controller.deps.calibration,
         screen,
-        value.bands,
+        target.bands,
         function(bands)
-            local saved, saveError = controller:saveCalibration(bands)
-            if not saved then
+            local saved, saveError = controller:saveCalibration(
+                bands,
+                session.token,
+                target
+            )
+            if saved == nil then
                 error(saveError or "Unable to save calibration", 0)
             end
         end,
         function()
-            cancelCalibration(controller)
+            cancelCalibration(controller, session.token, target)
         end
     )
     if started ~= true then
-        cancelCalibration(controller)
+        if isCurrentSession(controller, session.token, target) then
+            invalidateCalibration(controller, false)
+            controller:refresh()
+        end
         callFunction(controller.deps.hs.showError, tostring(startError or "Unable to start calibration"))
         return nil, startError
     end
@@ -190,25 +285,25 @@ function Controller:calibrate()
 end
 
 ---Persists edited bands and restores normal runtime behavior.
-function Controller:saveCalibration(bands)
-    local value = self.calibrationValue or self.value
-    if value == nil then
-        return nil, "no calibration configuration"
+function Controller:saveCalibration(bands, token, target)
+    local session = self.calibrationSession
+    token = token or (session and session.token)
+    target = target or (session and session.target)
+    if not isCurrentSession(self, token, target) then
+        return false, "stale calibration session"
     end
 
     local saved, saveError = call(
         self.deps.config.save,
         self.deps.config,
-        withBands(value, bands)
+        withBands(target, bands)
     )
     if saved == nil then
         return nil, saveError
     end
 
     self.value = saved
-    self.calibrating = false
-    self.calibrationValue = nil
-    self.calibrationScreen = nil
+    invalidateCalibration(self, false)
     self:refresh()
     return true
 end
@@ -233,21 +328,37 @@ function Controller:refresh(useCachedAccessibility)
     end
 
     local screen = call(self.deps.config.findScreen, self.deps.config, value)
-    if self.calibrating and screen == nil then
-        self.calibrating = false
-        self.calibrationValue = nil
-        self.calibrationScreen = nil
-        call(self.deps.calibration.stop, self.deps.calibration)
-        if self.value ~= nil then
+    local topologyFrameError = false
+    if self.calibrating then
+        local session = self.calibrationSession
+        local currentFrame = screenFrame(screen)
+        if screen == nil or currentFrame == nil then
+            topologyFrameError = screen ~= nil
+            invalidateCalibration(self, true)
+        elseif session.fullFrame == nil then
+            session.fullFrame = currentFrame
+            session.screen = screen
+            self.calibrationScreen = screen
+        elseif not sameFrame(session and session.fullFrame, currentFrame) then
+            invalidateCalibration(self, true)
+        else
+            session.screen = screen
+            self.calibrationScreen = screen
+        end
+
+        if not self.calibrating and self.value ~= nil then
             value = self.value
             screen = call(self.deps.config.findScreen, self.deps.config, value)
         end
-    elseif self.calibrating then
-        self.calibrationScreen = screen
     end
     self.screen = screen
     if screen ~= nil then
         self.notified.disconnected = nil
+    end
+    if topologyFrameError then
+        call(self.deps.guard.stop, self.deps.guard)
+        call(self.deps.overlay.delete, self.deps.overlay)
+        return
     end
     if value.enabled ~= true and not self.calibrating then
         call(self.deps.guard.stop, self.deps.guard)
@@ -370,17 +481,38 @@ function Controller:start()
     self.accessibilityTrusted = trusted == true
     local value = call(self.deps.config.load, self.deps.config)
     self.value = value
-    call(self.deps.config.watch, self.deps.config, function()
-        pcall(function()
-            self:refresh()
+    local watch = self.deps.config.watch
+    local watchOk
+    local watchError
+    if type(watch) == "function" then
+        watchOk, watchError = pcall(watch, self.deps.config, function()
+            pcall(function()
+                self:refresh()
+            end)
         end)
-    end)
-    self.previousAccessibilityCallback = self.deps.hs.accessibilityStateCallback
-    self.accessibilityCallback = function()
-        pcall(function()
-            self:refresh()
-        end)
+    else
+        watchOk = false
+        watchError = "screen watcher is required"
     end
+    if not watchOk then
+        self:stop()
+        error(watchError, 0)
+    end
+    self.previousAccessibilityCallback = self.deps.hs.accessibilityStateCallback
+    local previousAccessibilityCallback = self.previousAccessibilityCallback
+    local accessibilityCallback
+    accessibilityCallback = function()
+        callFunction(previousAccessibilityCallback)
+        if self.started
+            and self.accessibilityCallback == accessibilityCallback
+            and self.deps.hs.accessibilityStateCallback == accessibilityCallback
+        then
+            pcall(function()
+                self:refresh()
+            end)
+        end
+    end
+    self.accessibilityCallback = accessibilityCallback
     self.deps.hs.accessibilityStateCallback = self.accessibilityCallback
 
     self:refresh(true)
@@ -405,9 +537,7 @@ function Controller:stop()
     self.menu = nil
     self.accessibilityCallback = nil
     self.previousAccessibilityCallback = nil
-    self.calibrating = false
-    self.calibrationValue = nil
-    self.calibrationScreen = nil
+    invalidateCalibration(self, false)
     self.screen = nil
 
     pcall(function()

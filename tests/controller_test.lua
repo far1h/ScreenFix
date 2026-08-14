@@ -179,6 +179,50 @@ test.test("start prompts for monitor selection without valid configuration", fun
     test.equal(case.accessibilityCalls[1], true)
 end)
 
+local function assertWatcherStartupFailure(retainsCallback)
+    local priorCallback = function()
+    end
+    local case = newCase({
+        configuration = validConfig(true),
+        accessibility = true,
+        previousAccessibilityCallback = priorCallback,
+    })
+    case.config.watch = function(_, callback)
+        case.watchCalls = case.watchCalls + 1
+        if retainsCallback then
+            case.screenCallback = callback
+        end
+        error("screen watcher startup failure", 0)
+    end
+
+    local startOk, startError = pcall(function()
+        case.controller:start()
+    end)
+
+    test.equal(startOk, false)
+    test.equal(string.find(startError, "screen watcher startup failure", 1, true) ~= nil, true)
+    test.equal(case.controller.started, false)
+    test.equal(case.stopWatchingCount, 1)
+    test.equal(case.calibrationStopCount, 1)
+    test.equal(case.guardStopCount, 1)
+    test.equal(case.overlayDeleteCount, 1)
+    test.equal(case.menubar.items[1].deleteCount, 1)
+    test.equal(case.hs.accessibilityStateCallback, priorCallback)
+    if case.screenCallback then
+        local overlayDeletes = case.overlayDeleteCount
+        test.equal(pcall(case.screenCallback), true)
+        test.equal(case.overlayDeleteCount, overlayDeletes)
+    end
+end
+
+test.test("start fails transactionally when watcher construction throws", function()
+    assertWatcherStartupFailure(false)
+end)
+
+test.test("start fails transactionally when a retained watcher cannot start", function()
+    assertWatcherStartupFailure(true)
+end)
+
 test.test("refresh renders an enabled mask without Accessibility permission", function()
     local value = validConfig(true)
     local case = newCase({ configuration = value, accessibility = false })
@@ -336,6 +380,97 @@ test.test("Accessibility callback rechecks state without prompting and refreshes
     test.equal(case.guardStopCount, 1)
 end)
 
+test.test("Accessibility callback refreshes when the previous callback throws", function()
+    local priorCalls = 0
+    local prior = function(...)
+        test.equal(select("#", ...), 0)
+        priorCalls = priorCalls + 1
+        error("prior callback failure", 0)
+    end
+    local case = newCase({
+        configuration = validConfig(true),
+        accessibility = true,
+        previousAccessibilityCallback = prior,
+    })
+    case.controller:start()
+    local refreshCalls = 0
+    case.controller.refresh = function()
+        refreshCalls = refreshCalls + 1
+    end
+
+    local callbackOk = pcall(case.hs.accessibilityStateCallback)
+
+    test.equal(callbackOk, true)
+    test.equal(priorCalls, 1)
+    test.equal(refreshCalls, 1)
+end)
+
+test.test("Accessibility callback still invokes the previous callback when refresh throws", function()
+    local priorCalls = 0
+    local prior = function(...)
+        test.equal(select("#", ...), 0)
+        priorCalls = priorCalls + 1
+    end
+    local case = newCase({
+        configuration = validConfig(true),
+        accessibility = true,
+        previousAccessibilityCallback = prior,
+    })
+    case.controller:start()
+    case.controller.refresh = function()
+        error("refresh failure", 0)
+    end
+
+    local callbackOk = pcall(case.hs.accessibilityStateCallback)
+
+    test.equal(callbackOk, true)
+    test.equal(priorCalls, 1)
+end)
+
+test.test("late Accessibility wrapper only chains the prior callback after stop", function()
+    local priorCalls = 0
+    local prior = function()
+        priorCalls = priorCalls + 1
+    end
+    local case = newCase({
+        configuration = validConfig(true),
+        accessibility = true,
+        previousAccessibilityCallback = prior,
+    })
+    case.controller:start()
+    local wrapper = case.hs.accessibilityStateCallback
+    local refreshCalls = 0
+    case.controller.refresh = function()
+        refreshCalls = refreshCalls + 1
+    end
+    case.controller:stop()
+
+    local callbackOk = pcall(wrapper)
+
+    test.equal(callbackOk, true)
+    test.equal(priorCalls, 1)
+    test.equal(refreshCalls, 0)
+    test.equal(case.hs.accessibilityStateCallback, prior)
+end)
+
+test.test("stop does not overwrite a newer Accessibility callback owner", function()
+    local prior = function()
+    end
+    local replacement = function()
+    end
+    local case = newCase({
+        configuration = validConfig(true),
+        accessibility = true,
+        previousAccessibilityCallback = prior,
+    })
+    case.controller:start()
+    case.hs.accessibilityStateCallback = replacement
+
+    case.controller:stop()
+
+    test.equal(case.hs.accessibilityStateCallback, replacement)
+end)
+
 test.test("Disable and Enable save state and immediately tear down or rebuild", function()
     local case = newCase({ configuration = validConfig(true), accessibility = true })
     case.controller:start()
@@ -355,6 +490,50 @@ test.test("Disable and Enable save state and immediately tear down or rebuild", 
     test.equal(case.controller.value.enabled, true)
     test.equal(#case.overlayShows, 2)
     test.equal(#case.guardStarts, 2)
+end)
+
+test.test("Disable closes calibration and late Save cannot re-enable it", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.controller:start()
+    case.controller:calibrate()
+    local lateSave = case.calibrationStarts[1].onSave
+
+    case.controller:disable()
+
+    test.equal(#case.saveCalls, 1)
+    test.equal(case.saveCalls[1].enabled, false)
+    test.equal(case.controller.value.enabled, false)
+    test.equal(case.calibrationStopCount, 1)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationSession, nil)
+    test.equal(case.overlayDeleteCount, 1)
+
+    lateSave(case.calibrationStarts[1].bands)
+    test.equal(#case.saveCalls, 1)
+    test.equal(case.controller.value.enabled, false)
+    test.equal(case.controller.calibrating, false)
+end)
+
+test.test("Enable closes disabled calibration and rebuilds normal runtime", function()
+    local case = newCase({ configuration = validConfig(false), accessibility = true })
+    case.controller:start()
+    case.controller:calibrate()
+    local lateSave = case.calibrationStarts[1].onSave
+
+    case.controller:enable()
+
+    test.equal(#case.saveCalls, 1)
+    test.equal(case.saveCalls[1].enabled, true)
+    test.equal(case.controller.value.enabled, true)
+    test.equal(case.calibrationStopCount, 1)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationSession, nil)
+    test.equal(#case.overlayShows, 2)
+    test.equal(#case.guardStarts, 1)
+
+    lateSave(case.calibrationStarts[1].bands)
+    test.equal(#case.saveCalls, 1)
+    test.equal(case.controller.value.enabled, true)
 end)
 
 test.test("calibration keeps the mask, pauses the guard, and restores after Save", function()
@@ -402,6 +581,96 @@ test.test("Cancel exits calibration without saving and restores the guard", func
     test.equal(#case.guardStarts, 2)
 end)
 
+test.test("late calibration Save after stop cannot write configuration", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.controller:start()
+    case.controller:calibrate()
+    local lateSave = case.calibrationStarts[1].onSave
+
+    case.controller:stop()
+    local callbackOk = pcall(lateSave, case.calibrationStarts[1].bands)
+
+    test.equal(callbackOk, true)
+    test.equal(#case.saveCalls, 0)
+    test.equal(case.controller.started, false)
+    test.equal(case.controller.calibrating, false)
+end)
+
+test.test("late monitor chooser callback after stop cannot recreate calibration state", function()
+    local case = newCase()
+    case.controller:start()
+    local lateSelection = case.selectCallback
+
+    case.controller:stop()
+    local callbackOk = pcall(lateSelection, case.screen)
+
+    test.equal(callbackOk, true)
+    test.equal(#case.calibrationStarts, 0)
+    test.equal(#case.saveCalls, 0)
+    test.equal(case.controller.started, false)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationSession, nil)
+end)
+
+test.test("old calibration Save cannot overwrite a replacement monitor session", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    local replacementScreen = fake.screen("replacement-uuid", "Replacement Display", {
+        x = 0,
+        y = 0,
+        w = 2560,
+        h = 1440,
+    })
+    local replacementValue = validConfig(true)
+    replacementValue.screen.uuid = "replacement-uuid"
+    replacementValue.screen.name = "Replacement Display"
+    replacementValue.screen.width = 2560
+    case.config.defaultForScreen = function()
+        return replacementValue
+    end
+    case.config.findScreen = function(_, value)
+        if value.screen.uuid == "replacement-uuid" then
+            return replacementScreen
+        end
+        return case.screen
+    end
+    case.controller:start()
+    case.controller:calibrate()
+    local oldSave = case.calibrationStarts[1].onSave
+    case.controller:selectMonitor()
+    case.selectCallback(replacementScreen)
+    local currentSave = case.calibrationStarts[2].onSave
+    local currentBands = case.calibrationStarts[2].bands
+
+    oldSave(case.calibrationStarts[1].bands)
+
+    test.equal(#case.saveCalls, 0)
+    test.equal(case.controller.calibrating, true)
+    test.equal(case.controller.calibrationScreen, replacementScreen)
+    test.equal(case.controller.calibrationValue.screen.uuid, "replacement-uuid")
+
+    currentSave(currentBands)
+    test.equal(#case.saveCalls, 1)
+    test.equal(case.saveCalls[1].screen.uuid, "replacement-uuid")
+end)
+
+test.test("stale calibration Cancel cannot clear a replacement session", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.controller:start()
+    case.controller:calibrate()
+    local staleCancel = case.calibrationStarts[1].onCancel
+    case.controller:calibrate()
+    local currentCancel = case.calibrationStarts[2].onCancel
+
+    staleCancel()
+
+    test.equal(case.controller.calibrating, true)
+    test.equal(case.controller.calibrationScreen, case.screen)
+
+    currentCancel()
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationScreen, nil)
+end)
+
 test.test("active calibration disconnect stops editing and reconnect rebuilds on the live screen", function()
     local case = newCase({ configuration = validConfig(true), accessibility = true })
     local currentScreen = case.screen
@@ -445,6 +714,127 @@ test.test("active calibration disconnect stops editing and reconnect rebuilds on
     test.equal(case.guardStarts[2].screen, reconnected)
     test.equal(#case.saveCalls, 0)
     test.equal(#case.notify.notifications, 1)
+end)
+
+test.test("calibration topology change cancels editing and rebuilds normal runtime", function()
+    local originalFrame = { x = -3440, y = 0, w = 3440, h = 1440 }
+    local case = newCase({
+        configuration = validConfig(true),
+        accessibility = true,
+        screen = fake.screen("damaged-uuid", "Damaged Display", originalFrame),
+    })
+    local currentScreen = case.screen
+    case.config.findScreen = function()
+        return currentScreen
+    end
+    case.controller:start()
+    case.controller:calibrate()
+    local oldSave = case.calibrationStarts[1].onSave
+    local oldToken = case.controller.calibrationSession.token
+    test.rect(case.controller.calibrationSession.fullFrame, originalFrame)
+    local changedScreen = fake.screen("damaged-uuid", "Damaged Display", {
+        x = -3200,
+        y = 80,
+        w = 3200,
+        h = 1350,
+    })
+    currentScreen = changedScreen
+
+    case.screenCallback()
+
+    test.equal(case.calibrationStopCount, 1)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationSession, nil)
+    test.equal(case.controller.calibrationScreen, nil)
+    test.equal(case.controller.screen, changedScreen)
+    test.equal(case.controller.calibrationGeneration > oldToken, true)
+    test.equal(#case.calibrationStarts, 1)
+    test.equal(#case.saveCalls, 0)
+    test.equal(#case.overlayShows, 3)
+    test.equal(case.overlayShows[3].screen, changedScreen)
+    test.equal(#case.guardStarts, 2)
+    test.equal(case.guardStarts[2].screen, changedScreen)
+
+    oldSave(case.calibrationStarts[1].bands)
+    test.equal(#case.saveCalls, 0)
+end)
+
+test.test("calibration rebinds identical-frame replacement screen without invalidation", function()
+    local frame = { x = -3440, y = 0, w = 3440, h = 1440 }
+    local case = newCase({
+        configuration = validConfig(true),
+        accessibility = true,
+        screen = fake.screen("damaged-uuid", "Damaged Display", frame),
+    })
+    local currentScreen = case.screen
+    case.config.findScreen = function()
+        return currentScreen
+    end
+    case.controller:start()
+    case.controller:calibrate()
+    local session = case.controller.calibrationSession
+    test.rect(session.fullFrame, frame)
+    local replacement = fake.screen("damaged-uuid", "Damaged Display", {
+        x = frame.x,
+        y = frame.y,
+        w = frame.w,
+        h = frame.h,
+    })
+    currentScreen = replacement
+
+    case.screenCallback()
+
+    test.equal(case.calibrationStopCount, nil)
+    test.equal(case.controller.calibrating, true)
+    test.equal(case.controller.calibrationSession, session)
+    test.equal(case.controller.calibrationScreen, replacement)
+    test.equal(case.controller.screen, replacement)
+    test.equal(#case.calibrationStarts, 1)
+    test.equal(#case.saveCalls, 0)
+    test.equal(#case.overlayShows, 3)
+    test.equal(case.overlayShows[3].screen, replacement)
+end)
+
+test.test("calibration fails closed when live fullFrame is missing or throws", function()
+    for _, mode in ipairs({ "missing", "throws" }) do
+        local case = newCase({ configuration = validConfig(true), accessibility = true })
+        local currentScreen = case.screen
+        case.config.findScreen = function()
+            return currentScreen
+        end
+        case.controller:start()
+        case.controller:calibrate()
+        currentScreen = {
+            getUUID = function()
+                return "damaged-uuid"
+            end,
+            name = function()
+                return "Damaged Display"
+            end,
+            frame = function()
+                return { x = 0, y = 0, w = 3440, h = 1400 }
+            end,
+            fullFrame = function()
+                if mode == "throws" then
+                    error("full frame failure", 0)
+                end
+                return nil
+            end,
+        }
+
+        local callbackOk = pcall(case.screenCallback)
+
+        test.equal(callbackOk, true)
+        test.equal(case.calibrationStopCount, 1)
+        test.equal(case.controller.calibrating, false)
+        test.equal(case.controller.calibrationSession, nil)
+        test.equal(case.controller.calibrationScreen, nil)
+        test.equal(case.controller.screen, currentScreen)
+        test.equal(#case.saveCalls, 0)
+        test.equal(#case.overlayShows, 2)
+        test.equal(case.overlayDeleteCount, 1)
+        test.equal(#case.guardStarts, 1)
+    end
 end)
 
 test.test("first-run calibration disconnect clears the unsaved stale overlay", function()

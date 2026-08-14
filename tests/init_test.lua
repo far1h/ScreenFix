@@ -1,4 +1,6 @@
 local test = require("tests.test_helper")
+local fake = require("tests.fake_hs")
+local RealController = require("screenfix.controller")
 
 local moduleNames = {
     "screenfix.geometry",
@@ -57,6 +59,12 @@ local function withBootstrap(options, verify)
     local hs = {
         canvas = { marker = "canvas" },
         chooser = { marker = "chooser" },
+        menubar = fake.menubar(),
+        notify = fake.notify(),
+        accessibilityState = function()
+            return true
+        end,
+        accessibilityStateCallback = options.previousAccessibilityCallback,
         dockicon = {
             hide = function()
                 captured.dockHideCount = captured.dockHideCount + 1
@@ -95,9 +103,35 @@ local function withBootstrap(options, verify)
     }
     local geometry = { marker = "geometry" }
     local screenConfig = { marker = "screen-config" }
+    function screenConfig:load()
+        return nil
+    end
+    function screenConfig:watch(callback)
+        captured.configWatchCount = (captured.configWatchCount or 0) + 1
+        captured.screenCallback = callback
+        if options.watcherError then
+            error(options.watcherError, 0)
+        end
+    end
+    function screenConfig:stopWatching()
+        captured.configStopWatchingCount = (captured.configStopWatchingCount or 0) + 1
+    end
     local overlay = { marker = "overlay" }
+    function overlay:delete()
+        captured.overlayDeleteCount = (captured.overlayDeleteCount or 0) + 1
+    end
     local guard = { marker = "guard" }
+    function guard:stop()
+        captured.guardStopCount = (captured.guardStopCount or 0) + 1
+    end
     local calibration = { marker = "calibration" }
+    function calibration:selectScreen()
+        captured.selectScreenCount = (captured.selectScreenCount or 0) + 1
+        return true
+    end
+    function calibration:stop()
+        captured.calibrationStopCount = (captured.calibrationStopCount or 0) + 1
+    end
     local runtime = {
         marker = "runtime",
         startCount = 0,
@@ -146,7 +180,14 @@ local function withBootstrap(options, verify)
                 return calibration
             end,
         },
-        ["screenfix.controller"] = {
+        ["screenfix.controller"] = options.realController and {
+            new = function(deps)
+                captured.controllerDeps = deps
+                captured.packagePath = package.path
+                captured.realRuntime = RealController.new(deps)
+                return captured.realRuntime
+            end,
+        } or {
             new = function(deps)
                 captured.controllerDeps = deps
                 captured.packagePath = package.path
@@ -283,6 +324,29 @@ test.test("init leaves no corrupt global when controller construction fails", fu
         test.equal(runOk, false)
         test.equal(string.find(runError, "constructor failure", 1, true) ~= nil, true)
         test.equal(captured.oldStopCount, 1)
+        test.equal(_G.screenFixRuntime, nil)
+    end)
+end)
+
+test.test("init rolls back a real controller when screen watcher startup fails", function()
+    local priorCallback = function()
+    end
+    withBootstrap({
+        previousAccessibilityCallback = priorCallback,
+        realController = true,
+        watcherError = "screen watcher startup failure",
+    }, function(captured, runOk, runError, hs)
+        test.equal(runOk, false)
+        test.equal(string.find(runError, "screen watcher startup failure", 1, true) ~= nil, true)
+        test.equal(captured.oldStopCount, 1)
+        test.equal(captured.configWatchCount, 1)
+        test.equal(captured.configStopWatchingCount, 1)
+        test.equal(captured.calibrationStopCount, 1)
+        test.equal(captured.guardStopCount, 1)
+        test.equal(captured.overlayDeleteCount, 1)
+        test.equal(hs.menubar.items[1].deleteCount, 1)
+        test.equal(hs.accessibilityStateCallback, priorCallback)
+        test.equal(captured.realRuntime.started, false)
         test.equal(_G.screenFixRuntime, nil)
     end)
 end)
