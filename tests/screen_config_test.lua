@@ -42,6 +42,32 @@ local function invalid(value)
     test.equal(type(message), "string")
 end
 
+local function malformedIdentityConfigs()
+    local result = {}
+
+    local missingEnabled = validConfig()
+    missingEnabled.enabled = nil
+    result[#result + 1] = missingEnabled
+
+    local emptyName = validConfig()
+    emptyName.screen.name = ""
+    result[#result + 1] = emptyName
+
+    local infiniteWidth = validConfig()
+    infiniteWidth.screen.width = math.huge
+    result[#result + 1] = infiniteWidth
+
+    local zeroHeight = validConfig()
+    zeroHeight.screen.height = 0
+    result[#result + 1] = zeroHeight
+
+    local invalidUuid = validConfig()
+    invalidUuid.screen.uuid = false
+    result[#result + 1] = invalidUuid
+
+    return result
+end
+
 test.test("defaultForScreen builds the versioned monitor configuration", function()
     local screen = fake.screen("screen-uuid", "Damaged Display", {
         x = -3440,
@@ -97,6 +123,69 @@ test.test("validate rejects invalid configuration structure", function()
     invalid(tooManyBands)
 end)
 
+test.test("validate requires enabled to be boolean", function()
+    local missing = validConfig()
+    missing.enabled = nil
+    invalid(missing)
+
+    local nonBoolean = validConfig()
+    nonBoolean.enabled = "true"
+    invalid(nonBoolean)
+
+    local disabled = validConfig()
+    disabled.enabled = false
+    test.equal(newConfig():validate(disabled), disabled)
+end)
+
+test.test("validate requires a non-empty screen name", function()
+    local invalidNames = { false, 42, "" }
+
+    for _, name in ipairs(invalidNames) do
+        local value = validConfig()
+        value.screen.name = name
+        invalid(value)
+    end
+
+    local missing = validConfig()
+    missing.screen.name = nil
+    invalid(missing)
+end)
+
+test.test("validate requires finite positive screen dimensions", function()
+    local invalidDimensions = {
+        "3440",
+        0 / 0,
+        math.huge,
+        -math.huge,
+        0,
+        -1,
+    }
+
+    for _, field in ipairs({ "width", "height" }) do
+        for _, dimension in ipairs(invalidDimensions) do
+            local value = validConfig()
+            value.screen[field] = dimension
+            invalid(value)
+        end
+
+        local missing = validConfig()
+        missing.screen[field] = nil
+        invalid(missing)
+    end
+end)
+
+test.test("validate allows a missing UUID but rejects invalid present UUIDs", function()
+    local missing = validConfig()
+    missing.screen.uuid = nil
+    test.equal(newConfig():validate(missing), missing)
+
+    for _, uuid in ipairs({ "", 42, false }) do
+        local value = validConfig()
+        value.screen.uuid = uuid
+        invalid(value)
+    end
+end)
+
 test.test("validate rejects non-finite and out-of-bounds bands", function()
     local invalidValues = {
         { field = "x", value = 0 / 0 },
@@ -149,6 +238,27 @@ test.test("save validates and writes one configuration to its settings key", fun
     test.equal(#writes, 1)
 end)
 
+test.test("save rejects malformed identity fields without writing settings", function()
+    local writeCount = 0
+    local settings = {
+        get = function()
+            return nil
+        end,
+        set = function()
+            writeCount = writeCount + 1
+        end,
+    }
+    local config = newConfig({ settings = settings })
+
+    for _, value in ipairs(malformedIdentityConfigs()) do
+        local result, message = config:save(value)
+
+        test.equal(result, nil)
+        test.equal(type(message), "string")
+        test.equal(writeCount, 0)
+    end
+end)
+
 test.test("load reads and validates the persisted configuration", function()
     local value = validConfig()
     local readKey
@@ -187,6 +297,29 @@ test.test("load leaves invalid persisted data unchanged", function()
     test.equal(type(message), "string")
     test.equal(store[ScreenConfig.KEY], "invalid")
     test.equal(writeCount, 0)
+end)
+
+test.test("load rejects malformed identity fields without mutating persisted data", function()
+    for _, value in ipairs(malformedIdentityConfigs()) do
+        local store = { [ScreenConfig.KEY] = value }
+        local writeCount = 0
+        local settings = {
+            get = function(key)
+                return store[key]
+            end,
+            set = function(key, replacement)
+                writeCount = writeCount + 1
+                store[key] = replacement
+            end,
+        }
+
+        local result, message = newConfig({ settings = settings }):load()
+
+        test.equal(result, nil)
+        test.equal(type(message), "string")
+        test.equal(store[ScreenConfig.KEY], value)
+        test.equal(writeCount, 0)
+    end
 end)
 
 test.test("findScreen prefers an exact UUID match", function()

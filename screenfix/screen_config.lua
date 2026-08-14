@@ -24,6 +24,14 @@ local function isFiniteNumber(value)
         and value ~= -math.huge
 end
 
+local function isPositiveFiniteNumber(value)
+    return isFiniteNumber(value) and value > 0
+end
+
+local function isNonEmptyString(value)
+    return type(value) == "string" and value ~= ""
+end
+
 local function isValidBand(band)
     if type(band) ~= "table" then
         return false
@@ -43,6 +51,26 @@ local function isValidBand(band)
         and band.h > 0
         and band.x + band.w <= 1
         and band.y + band.h <= 1
+end
+
+local function screenValidationError(screen)
+    if type(screen) ~= "table" then
+        return "screen is required"
+    end
+
+    if not isNonEmptyString(screen.name) then
+        return "screen name must be a non-empty string"
+    end
+
+    if not isPositiveFiniteNumber(screen.width) or not isPositiveFiniteNumber(screen.height) then
+        return "screen dimensions must be finite positive numbers"
+    end
+
+    if screen.uuid ~= nil and not isNonEmptyString(screen.uuid) then
+        return "screen UUID must be a non-empty string when present"
+    end
+
+    return nil
 end
 
 function M.new(deps)
@@ -78,8 +106,13 @@ function ScreenConfig:validate(value)
         return nil, "unsupported schema version"
     end
 
-    if type(value.screen) ~= "table" then
-        return nil, "screen is required"
+    if type(value.enabled) ~= "boolean" then
+        return nil, "enabled must be boolean"
+    end
+
+    local screenError = screenValidationError(value.screen)
+    if screenError then
+        return nil, screenError
     end
 
     if not hasThreeBands(value.bands) then
