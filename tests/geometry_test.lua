@@ -22,3 +22,79 @@ test.test("intersects requires positive overlap", function()
     test.equal(geometry.intersects(left, { x = 100, y = 0, w = 100, h = 100 }), false)
     test.equal(geometry.intersects(left, { x = 99, y = 0, w = 100, h = 100 }), true)
 end)
+
+test.test("correctedFrame returns nil when no mask intersects the window", function()
+    local result = geometry.correctedFrame(
+        { x = 0, y = 100, w = 300, h = 400 },
+        { x = 0, y = 0, w = 1200, h = 800 },
+        { { x = 400, y = 0, w = 300, h = 800 } }
+    )
+
+    test.equal(result, nil)
+end)
+
+test.test("correctedFrame preserves size on the side requiring less movement", function()
+    local result = geometry.correctedFrame(
+        { x = 550, y = 100, w = 200, h = 400 },
+        { x = 0, y = 0, w = 1200, h = 800 },
+        { { x = 400, y = 0, w = 300, h = 800 } }
+    )
+
+    test.rect(result, { x = 700, y = 100, w = 200, h = 400 })
+end)
+
+test.test("correctedFrame prefers preserved size over shorter movement", function()
+    local oracle = geometry.correctedFrame(
+        { x = 360, y = 100, w = 500, h = 400 },
+        { x = 0, y = 0, w = 1200, h = 800 },
+        { { x = 400, y = 0, w = 300, h = 800 } }
+    )
+    local farther = geometry.correctedFrame(
+        { x = 100, y = 100, w = 500, h = 400 },
+        { x = 0, y = 0, w = 1200, h = 800 },
+        { { x = 400, y = 0, w = 300, h = 800 } }
+    )
+
+    test.rect(oracle, { x = 700, y = 100, w = 500, h = 400 })
+    test.rect(farther, { x = 700, y = 100, w = 500, h = 400 })
+end)
+
+test.test("correctedFrame shrinks an oversized window only to its safe region", function()
+    local result = geometry.correctedFrame(
+        { x = 300, y = -100, w = 1000, h = 1000 },
+        { x = 0, y = 0, w = 1200, h = 800 },
+        { { x = 400, y = 0, w = 300, h = 800 } }
+    )
+
+    test.rect(result, { x = 700, y = 0, w = 500, h = 800 })
+end)
+
+test.test("correctedFrame chooses left on equal reduction and movement", function()
+    local result = geometry.correctedFrame(
+        { x = 350, y = 100, w = 300, h = 400 },
+        { x = 0, y = 0, w = 1000, h = 800 },
+        { { x = 400, y = 0, w = 200, h = 800 } }
+    )
+
+    test.rect(result, { x = 100, y = 100, w = 300, h = 400 })
+end)
+
+test.test("correctedFrame combines all mask bands in the final vertical span", function()
+    local result = geometry.correctedFrame(
+        { x = 350, y = 100, w = 500, h = 600 },
+        { x = 0, y = 0, w = 1200, h = 800 },
+        {
+            { x = 400, y = 0, w = 100, h = 300 },
+            { x = 600, y = 500, w = 100, h = 300 },
+        }
+    )
+
+    test.rect(result, { x = 700, y = 100, w = 500, h = 600 })
+end)
+
+test.test("framesNear accepts sub-point drift but rejects material change", function()
+    local frame = { x = 100, y = 200, w = 500, h = 400 }
+
+    test.equal(geometry.framesNear(frame, { x = 100.5, y = 199.5, w = 500.5, h = 399.5 }), true)
+    test.equal(geometry.framesNear(frame, { x = 101.01, y = 200, w = 500, h = 400 }), false)
+end)
