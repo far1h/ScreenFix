@@ -3,6 +3,20 @@ local WindowGuard = {}
 WindowGuard.__index = WindowGuard
 local RECENT_SECONDS = 0.25
 
+local function pruneExpiredState(guard, now)
+    for id, recent in pairs(guard.recent) do
+        if recent.expiresAt <= now then
+            guard.recent[id] = nil
+        end
+    end
+
+    for id, blockedUntil in pairs(guard.blockedUntil) do
+        if blockedUntil <= now then
+            guard.blockedUntil[id] = nil
+        end
+    end
+end
+
 function M.new(deps)
     return setmetatable({
         deps = deps,
@@ -70,6 +84,7 @@ function WindowGuard:correct(window)
     end
 
     local now = self.deps.now()
+    pruneExpiredState(self, now)
     local blockedUntil = self.blockedUntil[id]
     if blockedUntil ~= nil and blockedUntil > now then
         return false
@@ -81,6 +96,7 @@ function WindowGuard:correct(window)
         and recent.expiresAt > now
         and self.deps.geometry.framesNear(currentFrame, recent.frame, 1)
     then
+        self.recent[id] = nil
         return false
     end
 

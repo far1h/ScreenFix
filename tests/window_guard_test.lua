@@ -255,7 +255,7 @@ test.test("correct leaves a safe window unchanged", function()
     test.equal(#window.setFrameCalls, 0)
 end)
 
-test.test("correct ignores the immediate event caused by its own successful target", function()
+test.test("correct consumes the recent target when ignoring its own immediate event", function()
     local screen = fake.screen("selected", "Display", {
         x = 0,
         y = 0,
@@ -285,13 +285,14 @@ test.test("correct ignores the immediate event caused by its own successful targ
     guard:start(screen, {})
 
     guard:correct(window)
+    test.equal(guard.recent[42].frame, target)
+    test.equal(guard.recent[42].expiresAt > clock:now(), true)
     local result = guard:correct(window)
 
     test.equal(result, false)
     test.equal(correctedFrameCalls, 1)
     test.equal(#window.setFrameCalls, 1)
-    test.equal(guard.recent[42].frame, target)
-    test.equal(guard.recent[42].expiresAt > clock:now(), true)
+    test.equal(guard.recent[42], nil)
 end)
 
 test.test("correct pauses rejected-frame retries for one second", function()
@@ -802,4 +803,82 @@ test.test("correct blocks retries when the post-set frame read raises", function
     test.equal(result, false)
     test.equal(guard.blockedUntil[42], 41)
     test.equal(#window.setFrameCalls, 1)
+end)
+
+test.test("correct prunes expired state for unrelated window ids", function()
+    local screen = fake.screen("selected", "Display", {
+        x = 0,
+        y = 0,
+        w = 1200,
+        h = 800,
+    })
+    local window = fake.window({
+        id = 2000,
+        frame = { x = 0, y = 100, w = 300, h = 400 },
+        screen = screen,
+    })
+    local clock = fake.clock(10)
+    local guard = WindowGuard.new({
+        geometry = geometry,
+        now = function()
+            return clock:now()
+        end,
+    })
+    guard:start(screen, {
+        { x = 400, y = 0, w = 300, h = 800 },
+    })
+    for id = 1, 1000 do
+        guard.recent[id] = {
+            frame = { x = 700, y = 100, w = 200, h = 400 },
+            expiresAt = 10,
+        }
+        guard.blockedUntil[id] = 10
+    end
+
+    test.equal(guard:correct(window), false)
+
+    test.equal(next(guard.recent), nil)
+    test.equal(next(guard.blockedUntil), nil)
+end)
+
+test.test("correct removes expired state before a window id is reused", function()
+    local screen = fake.screen("selected", "Display", {
+        x = 0,
+        y = 0,
+        w = 1200,
+        h = 800,
+    })
+    local clock = fake.clock(10)
+    local guard = WindowGuard.new({
+        geometry = geometry,
+        now = function()
+            return clock:now()
+        end,
+    })
+    guard:start(screen, {
+        { x = 400, y = 0, w = 300, h = 800 },
+    })
+    guard.recent[42] = {
+        frame = { x = 700, y = 100, w = 200, h = 400 },
+        expiresAt = 10,
+    }
+    guard.blockedUntil[42] = 10
+    local otherWindow = fake.window({
+        id = 99,
+        frame = { x = 0, y = 100, w = 300, h = 400 },
+        screen = screen,
+    })
+
+    guard:correct(otherWindow)
+
+    test.equal(guard.recent[42], nil)
+    test.equal(guard.blockedUntil[42], nil)
+
+    local reusedWindow = fake.window({
+        id = 42,
+        frame = { x = 550, y = 100, w = 200, h = 400 },
+        screen = screen,
+    })
+    test.equal(guard:correct(reusedWindow), true)
+    test.equal(#reusedWindow.setFrameCalls, 1)
 end)
