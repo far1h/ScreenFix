@@ -100,7 +100,7 @@ function M.canvas()
     return module
 end
 
-function M.screen(uuid, name, fullFrame)
+function M.screen(uuid, name, fullFrame, usableFrame)
     return {
         getUUID = function()
             return uuid
@@ -111,7 +111,77 @@ function M.screen(uuid, name, fullFrame)
         fullFrame = function()
             return fullFrame
         end,
+        frame = function()
+            return usableFrame or fullFrame
+        end,
     }
+end
+
+function M.window(options)
+    local currentFrame = options.frame
+    local window = {
+        setFrameCalls = {},
+    }
+
+    function window:id()
+        return options.id
+    end
+
+    function window:frame()
+        return currentFrame
+    end
+
+    function window:screen()
+        return options.screen
+    end
+
+    function window:isStandard()
+        return options.isStandard ~= false
+    end
+
+    function window:isVisible()
+        return options.isVisible ~= false
+    end
+
+    function window:isMinimized()
+        return options.isMinimized == true
+    end
+
+    function window:isFullScreen()
+        return options.isFullScreen == true
+    end
+
+    function window:setFrame(frame, duration)
+        self.setFrameCalls[#self.setFrameCalls + 1] = {
+            frame = frame,
+            duration = duration,
+        }
+        if options.setFrameError ~= nil then
+            error(options.setFrameError, 0)
+        end
+        if options.acceptFrame ~= false then
+            currentFrame = frame
+        end
+        return self
+    end
+
+    return window
+end
+
+function M.clock(initialTime)
+    local clock = {
+        time = initialTime or 0,
+    }
+
+    function clock:now()
+        return self.time
+    end
+
+    function clock:advance(seconds)
+        self.time = self.time + seconds
+    end
+
+    return clock
 end
 
 function M.watcher(callback)
