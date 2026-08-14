@@ -16,6 +16,144 @@ test.test("absoluteBands maps normalized bands to a full frame", function()
     })
 end)
 
+test.test("localBands ignores the global display origin", function()
+    local bands = geometry.localBands(
+        { x = -3440, y = -200, w = 3440, h = 1440 },
+        { { x = 0.40, y = 0.25, w = 0.20, h = 0.50 } }
+    )
+
+    test.rect(bands[1], { x = 1376, y = 360, w = 688, h = 720 })
+end)
+
+test.test("editorHit finds a band's left handle", function()
+    local hit = geometry.editorHit(
+        { x = 100, y = 150 },
+        { { x = 100, y = 100, w = 200, h = 100 } },
+        10
+    )
+
+    test.equal(hit.index, 1)
+    test.equal(hit.part, "left")
+end)
+
+test.test("editorHit finds a band's right handle", function()
+    local hit = geometry.editorHit(
+        { x = 300, y = 150 },
+        { { x = 100, y = 100, w = 200, h = 100 } },
+        10
+    )
+
+    test.equal(hit.index, 1)
+    test.equal(hit.part, "right")
+end)
+
+test.test("editorHit finds a band's top handle", function()
+    local hit = geometry.editorHit(
+        { x = 200, y = 100 },
+        { { x = 100, y = 100, w = 200, h = 100 } },
+        10
+    )
+
+    test.equal(hit.index, 1)
+    test.equal(hit.part, "top")
+end)
+
+test.test("editorHit finds a band's bottom handle", function()
+    local hit = geometry.editorHit(
+        { x = 200, y = 200 },
+        { { x = 100, y = 100, w = 200, h = 100 } },
+        10
+    )
+
+    test.equal(hit.index, 1)
+    test.equal(hit.part, "bottom")
+end)
+
+test.test("editorHit finds the band body away from all handles", function()
+    local hit = geometry.editorHit(
+        { x = 200, y = 150 },
+        { { x = 100, y = 100, w = 200, h = 100 } },
+        10
+    )
+
+    test.equal(hit.index, 1)
+    test.equal(hit.part, "body")
+end)
+
+test.test("dragBand moves a body without leaving normalized bounds", function()
+    local moved = geometry.dragBand(
+        { x = 0.10, y = 0.70, w = 0.20, h = 0.20 },
+        { part = "body" },
+        { x = -200, y = 200 },
+        { x = -3440, y = -200, w = 1000, h = 1000 }
+    )
+
+    test.rect(moved, { x = 0, y = 0.80, w = 0.20, h = 0.20 })
+end)
+
+test.test("dragBand keeps a left resize at least 20 rendered points wide", function()
+    local right = 0.20 + 0.30
+    local x = right - 20 / 1000
+    local resized = geometry.dragBand(
+        { x = 0.20, y = 0.20, w = 0.30, h = 0.30 },
+        { part = "left" },
+        { x = 500, y = 0 },
+        { x = 0, y = 0, w = 1000, h = 1000 }
+    )
+
+    test.rect(resized, { x = x, y = 0.20, w = right - x, h = 0.30 })
+end)
+
+test.test("dragBand keeps a right resize at least 20 rendered points wide", function()
+    local right = 0.20 + 20 / 1000
+    local resized = geometry.dragBand(
+        { x = 0.20, y = 0.20, w = 0.30, h = 0.30 },
+        { part = "right" },
+        { x = -500, y = 0 },
+        { x = 0, y = 0, w = 1000, h = 1000 }
+    )
+
+    test.rect(resized, { x = 0.20, y = 0.20, w = right - 0.20, h = 0.30 })
+end)
+
+test.test("dragBand keeps a top resize at least 20 rendered points high", function()
+    local bottom = 0.20 + 0.30
+    local y = bottom - 20 / 1000
+    local resized = geometry.dragBand(
+        { x = 0.20, y = 0.20, w = 0.30, h = 0.30 },
+        { part = "top" },
+        { x = 0, y = 500 },
+        { x = 0, y = 0, w = 1000, h = 1000 }
+    )
+
+    test.rect(resized, { x = 0.20, y = y, w = 0.30, h = bottom - y })
+end)
+
+test.test("dragBand keeps a bottom resize at least 20 rendered points high", function()
+    local bottom = 0.20 + 20 / 1000
+    local resized = geometry.dragBand(
+        { x = 0.20, y = 0.20, w = 0.30, h = 0.30 },
+        { part = "bottom" },
+        { x = 0, y = -500 },
+        { x = 0, y = 0, w = 1000, h = 1000 }
+    )
+
+    test.rect(resized, { x = 0.20, y = 0.20, w = 0.30, h = bottom - 0.20 })
+end)
+
+test.test("dragBand returns a new table without mutating the saved band", function()
+    local saved = { x = 0.20, y = 0.20, w = 0.30, h = 0.30 }
+    local moved = geometry.dragBand(
+        saved,
+        { part = "body" },
+        { x = 100, y = 100 },
+        { x = 0, y = 0, w = 1000, h = 1000 }
+    )
+
+    test.equal(moved == saved, false)
+    test.rect(saved, { x = 0.20, y = 0.20, w = 0.30, h = 0.30 })
+end)
+
 test.test("intersects requires positive overlap", function()
     local left = { x = 0, y = 0, w = 100, h = 100 }
 

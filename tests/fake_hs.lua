@@ -47,9 +47,12 @@ function M.canvas()
         end
 
         local canvas = setmetatable({
+            canvasMouseEventsCalls = {},
             clickActivatingCalls = {},
             behaviorCalls = {},
             levelCalls = {},
+            mouseCallbackCallCount = 0,
+            mouseCallbackCalls = {},
             showCount = 0,
             hideCount = 0,
             deleteCount = 0,
@@ -65,6 +68,31 @@ function M.canvas()
         self.clickActivatingCalls[#self.clickActivatingCalls + 1] = value
         failSelectedMethod("clickActivating")
         return self
+    end
+
+    function methods:canvasMouseEvents(down, up, enterExit, move)
+        self.canvasMouseEventsCalls[#self.canvasMouseEventsCalls + 1] = {
+            down = down,
+            up = up,
+            enterExit = enterExit,
+            move = move,
+        }
+        failSelectedMethod("canvasMouseEvents")
+        return self
+    end
+
+    function methods:mouseCallback(callback)
+        self.mouseCallbackCallCount = self.mouseCallbackCallCount + 1
+        self.mouseCallbackCalls[#self.mouseCallbackCalls + 1] = callback
+        self.mouseCallbackFn = callback
+        failSelectedMethod("mouseCallback")
+        return self
+    end
+
+    function methods:triggerMouse(message, x, y, identifier)
+        if self.mouseCallbackFn then
+            return self.mouseCallbackFn(self, message, identifier or "background", x, y)
+        end
     end
 
     function methods:behavior(value)
@@ -95,6 +123,45 @@ function M.canvas()
         self.deleteCount = self.deleteCount + 1
         self.deleted = true
         failSelectedMethod("delete")
+    end
+
+    return module
+end
+
+function M.chooser()
+    local module = {
+        choosers = {},
+    }
+
+    function module.new(callback)
+        local chooser = {
+            callback = callback,
+            choicesCalls = {},
+            deleteCount = 0,
+            showCount = 0,
+        }
+
+        function chooser:choices(value)
+            self.choicesCalls[#self.choicesCalls + 1] = value
+            return self
+        end
+
+        function chooser:show()
+            self.showCount = self.showCount + 1
+            return self
+        end
+
+        function chooser:delete()
+            self.deleteCount = self.deleteCount + 1
+            self.deleted = true
+        end
+
+        function chooser:choose(row)
+            self.callback(row)
+        end
+
+        module.choosers[#module.choosers + 1] = chooser
+        return chooser
     end
 
     return module
