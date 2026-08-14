@@ -17,12 +17,18 @@ function M.intersects(a, b)
 end
 
 function M.absoluteBands(fullFrame, bands)
-    return {
-        x = fullFrame.x + bands.x * fullFrame.w,
-        y = fullFrame.y + bands.y * fullFrame.h,
-        w = bands.w * fullFrame.w,
-        h = bands.h * fullFrame.h,
-    }
+    local result = {}
+
+    for index, band in ipairs(bands) do
+        result[index] = {
+            x = fullFrame.x + band.x * fullFrame.w,
+            y = fullFrame.y + band.y * fullFrame.h,
+            w = band.w * fullFrame.w,
+            h = band.h * fullFrame.h,
+        }
+    end
+
+    return result
 end
 
 function M.copyRect(rect)
