@@ -55,7 +55,7 @@ function ScreenConfig:defaultForScreen(screen)
     return {
         schemaVersion = 1,
         enabled = true,
-        descriptor = {
+        screen = {
             uuid = screen:getUUID(),
             name = screen:name(),
             width = frame.w,
@@ -78,8 +78,8 @@ function ScreenConfig:validate(value)
         return nil, "unsupported schema version"
     end
 
-    if type(value.descriptor) ~= "table" then
-        return nil, "descriptor is required"
+    if type(value.screen) ~= "table" then
+        return nil, "screen is required"
     end
 
     if not hasThreeBands(value.bands) then
@@ -111,7 +111,7 @@ end
 
 function ScreenConfig:findScreen(value)
     local screens = self.deps.allScreens()
-    local uuid = value.descriptor.uuid
+    local uuid = value.screen.uuid
 
     if type(uuid) == "string" and uuid ~= "" then
         for _, screen in ipairs(screens) do
@@ -124,9 +124,9 @@ function ScreenConfig:findScreen(value)
     local fallback
     for _, screen in ipairs(screens) do
         local frame = screen:fullFrame()
-        if screen:name() == value.descriptor.name
-            and frame.w == value.descriptor.width
-            and frame.h == value.descriptor.height
+        if screen:name() == value.screen.name
+            and frame.w == value.screen.width
+            and frame.h == value.screen.height
         then
             if fallback then
                 return nil

@@ -19,12 +19,21 @@ local function newConfig(deps)
 end
 
 local function validConfig()
-    return newConfig():defaultForScreen(fake.screen("screen-uuid", "Damaged Display", {
-        x = 0,
-        y = 0,
-        w = 3440,
-        h = 1440,
-    }))
+    return {
+        schemaVersion = 1,
+        enabled = true,
+        screen = {
+            uuid = "screen-uuid",
+            name = "Damaged Display",
+            width = 3440,
+            height = 1440,
+        },
+        bands = {
+            { x = 0.43, y = 0.00, w = 0.16, h = 0.34 },
+            { x = 0.46, y = 0.34, w = 0.11, h = 0.39 },
+            { x = 0.48, y = 0.73, w = 0.07, h = 0.27 },
+        },
+    }
 end
 
 local function invalid(value)
@@ -44,10 +53,11 @@ test.test("defaultForScreen builds the versioned monitor configuration", functio
 
     test.equal(result.schemaVersion, 1)
     test.equal(result.enabled, true)
-    test.equal(result.descriptor.uuid, "screen-uuid")
-    test.equal(result.descriptor.name, "Damaged Display")
-    test.equal(result.descriptor.width, 3440)
-    test.equal(result.descriptor.height, 1440)
+    test.equal(result.screen.uuid, "screen-uuid")
+    test.equal(result.screen.name, "Damaged Display")
+    test.equal(result.screen.width, 3440)
+    test.equal(result.screen.height, 1440)
+    test.equal(result.descriptor, nil)
     test.equal(#result.bands, 3)
     test.rect(result.bands[1], { x = 0.43, y = 0.00, w = 0.16, h = 0.34 })
     test.rect(result.bands[2], { x = 0.46, y = 0.34, w = 0.11, h = 0.39 })
@@ -69,9 +79,14 @@ test.test("validate rejects invalid configuration structure", function()
     wrongVersion.schemaVersion = 2
     invalid(wrongVersion)
 
-    local missingDescriptor = validConfig()
-    missingDescriptor.descriptor = nil
-    invalid(missingDescriptor)
+    local missingScreen = validConfig()
+    missingScreen.screen = nil
+    invalid(missingScreen)
+
+    local descriptorAlias = validConfig()
+    descriptorAlias.descriptor = descriptorAlias.screen
+    descriptorAlias.screen = nil
+    invalid(descriptorAlias)
 
     local tooFewBands = validConfig()
     tooFewBands.bands[3] = nil
@@ -238,7 +253,7 @@ test.test("findScreen does not treat missing UUIDs as an exact match", function(
         h = 1440,
     })
     local value = validConfig()
-    value.descriptor.uuid = nil
+    value.screen.uuid = nil
     local config = newConfig({
         allScreens = function()
             return { noUuid, fallback }
