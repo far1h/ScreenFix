@@ -103,11 +103,17 @@ local function isCurrentSession(controller, token, target)
 end
 
 local function invalidateCalibration(controller, stopAdapter)
+    local session = controller.calibrationSession
     controller.calibrationGeneration = controller.calibrationGeneration + 1
     controller.calibrationSession = nil
     controller.calibrating = false
     controller.calibrationValue = nil
     controller.calibrationScreen = nil
+    if session then
+        session.token = nil
+        session.screen = nil
+        session.fullFrame = nil
+    end
     if stopAdapter then
         call(controller.deps.calibration.stop, controller.deps.calibration)
     end
@@ -302,6 +308,13 @@ end
 
 ---Starts direct calibration for the selected display.
 function Controller:calibrate()
+    if self.calibrating then
+        invalidateChooser(self)
+        invalidateCalibration(self, true)
+        self:refresh()
+        return true
+    end
+
     if self.value == nil then
         return self:selectMonitor()
     end

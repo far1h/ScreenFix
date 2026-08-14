@@ -71,7 +71,8 @@ Launch Hammerspoon, or choose **Reload Config** if it is already running. The `S
 3. Choose **Save**. ScreenFix remembers the display and calibration, switches to
    click-through masks, and starts window protection when Accessibility is available.
 
-Choose **Cancel** to discard calibration changes.
+Choose **Calibrate** again from the `SF` menu, or choose the gray **Cancel**
+control, to exit and discard calibration changes.
 
 ## Menu and startup
 

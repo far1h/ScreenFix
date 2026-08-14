@@ -807,6 +807,47 @@ test.test("Cancel exits calibration without saving and restores the guard", func
     test.equal(#case.guardStarts, 2)
 end)
 
+test.test("checked Calibrate toggles editing off and revokes late callbacks", function()
+    local value = validConfig(true)
+    local case = newCase({ configuration = value, accessibility = true })
+    case.controller:start()
+    local menu = case.menubar.items[1].menu
+
+    menuItem(menu(), "Calibrate").fn()
+    local canceledSession = case.controller.calibrationSession
+    local lateSave = case.calibrationStarts[1].onSave
+    local lateCancel = case.calibrationStarts[1].onCancel
+    case.controller:selectMonitor()
+    local lateSelection = case.selectCallback
+
+    menuItem(menu(), "Calibrate").fn()
+
+    test.equal(#case.calibrationStarts, 1)
+    test.equal(case.calibrationStopCount, 1)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationSession, nil)
+    test.equal(canceledSession.token, nil)
+    test.equal(canceledSession.screen, nil)
+    test.equal(canceledSession.fullFrame, nil)
+    test.equal(case.controller.calibrationValue, nil)
+    test.equal(case.controller.calibrationScreen, nil)
+    test.equal(case.controller.screen, case.screen)
+    test.equal(#case.saveCalls, 0)
+    test.equal(#case.overlayShows, 3)
+    test.equal(#case.guardStarts, 2)
+    test.equal(menuItem(menu(), "Calibrate").checked, false)
+
+    lateSave(case.calibrationStarts[1].bands)
+    lateCancel()
+    lateSelection(case.screen)
+
+    test.equal(#case.saveCalls, 0)
+    test.equal(case.defaultForScreenCalls, 0)
+    test.equal(#case.calibrationStarts, 1)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationSession, nil)
+end)
+
 test.test("late calibration Save after stop cannot write configuration", function()
     local case = newCase({ configuration = validConfig(true), accessibility = true })
     case.controller:start()
@@ -885,7 +926,8 @@ test.test("stale calibration Cancel cannot clear a replacement session", functio
     case.controller:start()
     case.controller:calibrate()
     local staleCancel = case.calibrationStarts[1].onCancel
-    case.controller:calibrate()
+    case.controller:selectMonitor()
+    case.selectCallback(case.screen)
     local currentCancel = case.calibrationStarts[2].onCancel
 
     staleCancel()
