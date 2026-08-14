@@ -102,7 +102,9 @@ A window is eligible only when it:
 
 For an eligible window, the geometry module builds left and right candidates from the bands that overlap the window's vertical range. A left candidate ends at the leftmost relevant band edge. A right candidate begins at the rightmost relevant band edge. Both candidates are clamped to the display's usable `frame()`, which excludes the menu bar and Dock.
 
-Each candidate first preserves the window's current width and height. If it cannot fit, only the required dimension is reduced. ScreenFix chooses the candidate requiring the least movement and resizing, applies it with no animation, and records a short per-window cooldown. The cooldown and a frame tolerance prevent ScreenFix from reacting to its own `setFrame` event.
+Each candidate first preserves the window's current width and height. If it cannot fit, only the required dimension is reduced. ScreenFix selects between candidates by comparing this tuple in order: total width and height reduction, total horizontal and vertical movement, then side rank with left before right. This makes avoiding resize more important than proximity; a farther side that preserves the window's size wins over a nearer side that would shrink it. The fixed side rank resolves an otherwise exact tie.
+
+ScreenFix applies the chosen candidate with no animation and records a short per-window cooldown. The cooldown and a frame tolerance prevent ScreenFix from reacting to its own `setFrame` event.
 
 If an application refuses the requested frame, ScreenFix leaves it alone and suppresses immediate retries. Other windows remain protected.
 
@@ -128,6 +130,8 @@ Pure geometry tests use a small assertion runner without an external Lua test fr
 - top, middle, and lower band intersections;
 - a tall window intersecting all bands;
 - nearest-left and nearest-right selection;
+- a farther candidate that preserves size beating a nearer candidate that requires shrinking;
+- deterministic left-side selection when resize and movement costs are identical;
 - oversized windows that require shrinking;
 - negative display origins in multi-monitor arrangements;
 - display scale and origin changes; and
