@@ -25,6 +25,45 @@ local function eligibilityCase(overrides)
     return guard, fake.window(options)
 end
 
+local function lifecycleCase()
+    local filterModule = fake.windowFilter()
+    local timer = fake.timer()
+    local factoryCalls = 0
+    local deps = {
+        events = {
+            filterModule.windowCreated,
+            filterModule.windowMoved,
+            filterModule.windowOnScreen,
+        },
+        filterFactory = function()
+            factoryCalls = factoryCalls + 1
+            return filterModule.new():setOverrideFilter({
+                visible = true,
+                fullscreen = false,
+                currentSpace = true,
+            })
+        end,
+        timer = timer,
+    }
+    local screen = fake.screen("selected", "Display", {
+        x = 0,
+        y = 0,
+        w = 1200,
+        h = 800,
+    })
+    local guard = WindowGuard.new(deps)
+
+    return {
+        factoryCalls = function()
+            return factoryCalls
+        end,
+        filterModule = filterModule,
+        guard = guard,
+        screen = screen,
+        timer = timer,
+    }
+end
+
 test.test("window guard module loads", function()
     test.equal(type(WindowGuard), "table")
 end)
@@ -42,6 +81,267 @@ test.test("start stores the selected screen and mask rectangles", function()
     test.equal(guard.maskRects, maskRects)
 end)
 
+test.test("start creates and subscribes a local lifecycle filter", function()
+    local case = lifecycleCase()
+
+    case.guard:start(case.screen, {})
+
+    test.equal(case.factoryCalls(), 1)
+    test.equal(case.filterModule.newCount, 1)
+    test.equal(case.guard.filter, case.filterModule.filters[1])
+    test.equal(case.guard.filter.override.visible, true)
+    test.equal(case.guard.filter.override.fullscreen, false)
+    test.equal(case.guard.filter.override.currentSpace, true)
+    test.equal(#case.guard.filter.subscribeCalls, 1)
+    local events = case.guard.filter.subscribeCalls[1].events
+    test.equal(events[1], case.filterModule.windowCreated)
+    test.equal(events[2], case.filterModule.windowMoved)
+    test.equal(events[3], case.filterModule.windowOnScreen)
+end)
+
+test.test("start is idempotent while updating its target", function()
+    local case = lifecycleCase()
+    local replacementScreen = {}
+    local replacementMasks = { {} }
+
+    case.guard:start(case.screen, {})
+    case.guard:start(replacementScreen, replacementMasks)
+
+    test.equal(case.factoryCalls(), 1)
+    test.equal(#case.guard.filter.subscribeCalls, 1)
+    test.equal(case.guard.selectedScreen, replacementScreen)
+    test.equal(case.guard.maskRects, replacementMasks)
+end)
+
+test.test("start contains factory errors and remains restartable", function()
+    local case = lifecycleCase()
+    local originalFactory = case.guard.deps.filterFactory
+    case.guard.deps.filterFactory = function()
+        error("filter factory failure", 0)
+    end
+
+    local ok = pcall(function()
+        case.guard:start(case.screen, {})
+    end)
+
+    test.equal(ok, true)
+    test.equal(case.guard.filter, nil)
+
+    case.guard.deps.filterFactory = originalFactory
+    case.guard:start(case.screen, {})
+
+    test.equal(case.factoryCalls(), 1)
+    test.equal(case.guard.filter, case.filterModule.filters[1])
+end)
+
+test.test("start cleans a filter whose subscription raises", function()
+    local case = lifecycleCase()
+    local originalFactory = case.guard.deps.filterFactory
+    case.guard.deps.filterFactory = function()
+        local filter = case.filterModule.new()
+        filter.subscribeError = "subscription failure"
+        return filter
+    end
+
+    local ok = pcall(function()
+        case.guard:start(case.screen, {})
+    end)
+    local failedFilter = case.filterModule.filters[1]
+
+    test.equal(ok, true)
+    test.equal(case.guard.filter, nil)
+    test.equal(failedFilter.unsubscribeAllCount, 1)
+    test.equal(failedFilter.pauseCount, 1)
+
+    case.guard.deps.filterFactory = originalFactory
+    case.guard:start(case.screen, {})
+
+    test.equal(case.guard.filter, case.filterModule.filters[2])
+end)
+
+test.test("lifecycle events debounce each window id for 0.15 seconds", function()
+    local case = lifecycleCase()
+    local window = fake.window({
+        id = 42,
+        frame = {},
+        screen = case.screen,
+    })
+    local corrected = {}
+    case.guard.correct = function(_, correctedWindow)
+        corrected[#corrected + 1] = correctedWindow
+    end
+    case.guard:start(case.screen, {})
+    local filter = case.guard.filter
+
+    filter:emit(case.filterModule.windowCreated, window)
+    local firstTimer = case.timer.timers[1]
+    filter:emit(case.filterModule.windowMoved, window)
+    local secondTimer = case.timer.timers[2]
+    filter:emit(case.filterModule.windowOnScreen, window)
+    local thirdTimer = case.timer.timers[3]
+
+    test.equal(#case.timer.doAfterCalls, 3)
+    test.equal(case.timer.doAfterCalls[1].delay, 0.15)
+    test.equal(firstTimer.stopCount, 1)
+    test.equal(secondTimer.stopCount, 1)
+    test.equal(case.guard.pending[42], thirdTimer)
+
+    firstTimer:fire()
+    secondTimer:fire()
+    thirdTimer:fire()
+
+    test.equal(#corrected, 1)
+    test.equal(corrected[1], window)
+    test.equal(case.guard.pending[42], nil)
+end)
+
+test.test("debounce removes pending state before correcting", function()
+    local case = lifecycleCase()
+    local window = fake.window({
+        id = 42,
+        frame = {},
+        screen = case.screen,
+    })
+    local corrected = 0
+    case.guard.correct = function(guard)
+        corrected = corrected + 1
+        test.equal(guard.pending[42], nil)
+    end
+    case.guard:start(case.screen, {})
+
+    case.guard.filter:emit(case.filterModule.windowMoved, window)
+    case.timer.timers[1]:fire()
+
+    test.equal(corrected, 1)
+end)
+
+test.test("lifecycle events ignore missing and unreadable window ids", function()
+    local case = lifecycleCase()
+    local missingIdWindow = fake.window({
+        id = false,
+        frame = {},
+        screen = case.screen,
+    })
+    missingIdWindow.id = function()
+        return nil
+    end
+    local failingIdWindow = fake.window({
+        id = 42,
+        frame = {},
+        screen = case.screen,
+    })
+    failingIdWindow.id = function()
+        error("window id failure", 0)
+    end
+    case.guard:start(case.screen, {})
+
+    local ok = pcall(function()
+        case.guard.filter:emit(case.filterModule.windowMoved, nil)
+        case.guard.filter:emit(case.filterModule.windowMoved, missingIdWindow)
+        case.guard.filter:emit(case.filterModule.windowMoved, failingIdWindow)
+    end)
+
+    test.equal(ok, true)
+    test.equal(#case.timer.doAfterCalls, 0)
+    test.equal(next(case.guard.pending), nil)
+end)
+
+test.test("debounce replaces a timer when cancelling it raises", function()
+    local case = lifecycleCase()
+    local window = fake.window({
+        id = 42,
+        frame = {},
+        screen = case.screen,
+    })
+    case.guard:start(case.screen, {})
+    case.guard.filter:emit(case.filterModule.windowMoved, window)
+    local firstTimer = case.timer.timers[1]
+    firstTimer.stopError = "timer stop failure"
+
+    local ok = pcall(function()
+        case.guard.filter:emit(case.filterModule.windowMoved, window)
+    end)
+
+    test.equal(ok, true)
+    test.equal(firstTimer.stopCount, 1)
+    test.equal(#case.timer.timers, 2)
+    test.equal(case.guard.pending[42], case.timer.timers[2])
+end)
+
+test.test("debounce contains scheduling errors without retaining a timer", function()
+    local case = lifecycleCase()
+    local window = fake.window({
+        id = 42,
+        frame = {},
+        screen = case.screen,
+    })
+    case.guard:start(case.screen, {})
+    case.guard.filter:emit(case.filterModule.windowMoved, window)
+    local firstTimer = case.timer.timers[1]
+    case.timer.doAfterError = "timer scheduling failure"
+
+    local ok = pcall(function()
+        case.guard.filter:emit(case.filterModule.windowMoved, window)
+    end)
+
+    test.equal(ok, true)
+    test.equal(firstTimer.stopCount, 1)
+    test.equal(#case.timer.timers, 1)
+    test.equal(case.guard.pending[42], nil)
+end)
+
+test.test("a replaced timer callback cannot clear or correct newer work", function()
+    local case = lifecycleCase()
+    local window = fake.window({
+        id = 42,
+        frame = {},
+        screen = case.screen,
+    })
+    local corrected = 0
+    case.guard.correct = function()
+        corrected = corrected + 1
+    end
+    case.guard:start(case.screen, {})
+    case.guard.filter:emit(case.filterModule.windowMoved, window)
+    local firstTimer = case.timer.timers[1]
+    case.guard.filter:emit(case.filterModule.windowMoved, window)
+    local secondTimer = case.timer.timers[2]
+
+    firstTimer.callback()
+
+    test.equal(corrected, 0)
+    test.equal(case.guard.pending[42], secondTimer)
+
+    secondTimer:fire()
+
+    test.equal(corrected, 1)
+    test.equal(case.guard.pending[42], nil)
+end)
+
+test.test("a stopped filter callback cannot schedule work after restart", function()
+    local case = lifecycleCase()
+    local window = fake.window({
+        id = 42,
+        frame = {},
+        screen = case.screen,
+    })
+    case.guard:start(case.screen, {})
+    local oldFilter = case.guard.filter
+    local oldCallback = oldFilter.subscribeCalls[1].callback
+    case.guard:stop()
+    case.guard:start(case.screen, {})
+
+    oldCallback(window)
+
+    test.equal(#case.timer.timers, 0)
+    test.equal(next(case.guard.pending), nil)
+
+    case.guard.filter:emit(case.filterModule.windowMoved, window)
+
+    test.equal(#case.timer.timers, 1)
+    test.equal(case.guard.pending[42], case.timer.timers[1])
+end)
+
 test.test("stop idempotently clears target and cooldown state", function()
     local guard = WindowGuard.new({})
     guard:start({}, { {} })
@@ -57,6 +357,75 @@ test.test("stop idempotently clears target and cooldown state", function()
     test.equal(next(guard.pending), nil)
     test.equal(next(guard.recent), nil)
     test.equal(next(guard.blockedUntil), nil)
+end)
+
+test.test("stop cancels timers and tears down its lifecycle filter once", function()
+    local case = lifecycleCase()
+    local window = fake.window({
+        id = 42,
+        frame = {},
+        screen = case.screen,
+    })
+    case.guard:start(case.screen, { {} })
+    local filter = case.guard.filter
+    filter:emit(case.filterModule.windowMoved, window)
+    local pendingTimer = case.timer.timers[1]
+    case.guard.recent[42] = true
+    case.guard.blockedUntil[42] = 10
+
+    case.guard:stop()
+    case.guard:stop()
+
+    test.equal(pendingTimer.stopCount, 1)
+    test.equal(filter.unsubscribeAllCount, 1)
+    test.equal(filter.pauseCount, 1)
+    test.equal(case.guard.filter, nil)
+    test.equal(case.guard.selectedScreen, nil)
+    test.equal(#case.guard.maskRects, 0)
+    test.equal(next(case.guard.pending), nil)
+    test.equal(next(case.guard.recent), nil)
+    test.equal(next(case.guard.blockedUntil), nil)
+end)
+
+test.test("stop contains cleanup errors and still clears lifecycle state", function()
+    local case = lifecycleCase()
+    case.guard:start(case.screen, { {} })
+    local filter = case.guard.filter
+    filter.unsubscribeAllError = "unsubscribe failure"
+    filter.pauseError = "pause failure"
+    local firstStops = 0
+    local secondStops = 0
+    case.guard.pending.first = {
+        stop = function()
+            firstStops = firstStops + 1
+            error("first stop failure", 0)
+        end,
+    }
+    case.guard.pending.second = {
+        stop = function()
+            secondStops = secondStops + 1
+            error("second stop failure", 0)
+        end,
+    }
+    case.guard.recent[42] = true
+    case.guard.blockedUntil[42] = 10
+
+    local ok = pcall(function()
+        case.guard:stop()
+        case.guard:stop()
+    end)
+
+    test.equal(ok, true)
+    test.equal(firstStops, 1)
+    test.equal(secondStops, 1)
+    test.equal(filter.unsubscribeAllCount, 1)
+    test.equal(filter.pauseCount, 1)
+    test.equal(case.guard.filter, nil)
+    test.equal(case.guard.selectedScreen, nil)
+    test.equal(#case.guard.maskRects, 0)
+    test.equal(next(case.guard.pending), nil)
+    test.equal(next(case.guard.recent), nil)
+    test.equal(next(case.guard.blockedUntil), nil)
 end)
 
 test.test("isEligible accepts a normal visible window on the selected screen", function()

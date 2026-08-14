@@ -204,4 +204,132 @@ function M.watcher(callback)
     return watcher
 end
 
+function M.timer()
+    local module = {
+        doAfterCalls = {},
+        timers = {},
+    }
+
+    function module.doAfter(delay, callback)
+        if module.doAfterError ~= nil then
+            error(module.doAfterError, 0)
+        end
+
+        local timer = {
+            callback = callback,
+            delay = delay,
+            fired = false,
+            stopCount = 0,
+            stopped = false,
+        }
+
+        function timer:fire()
+            if self.stopped or self.fired then
+                return
+            end
+
+            self.fired = true
+            self.callback()
+        end
+
+        function timer:stop()
+            self.stopCount = self.stopCount + 1
+            self.stopped = true
+            if self.stopError ~= nil then
+                error(self.stopError, 0)
+            end
+            return self
+        end
+
+        module.doAfterCalls[#module.doAfterCalls + 1] = {
+            callback = callback,
+            delay = delay,
+        }
+        module.timers[#module.timers + 1] = timer
+        return timer
+    end
+
+    return module
+end
+
+function M.windowFilter()
+    local module = {
+        filters = {},
+        newCount = 0,
+        windowCreated = "windowCreated",
+        windowMoved = "windowMoved",
+        windowOnScreen = "windowOnScreen",
+    }
+
+    function module.new()
+        module.newCount = module.newCount + 1
+        local filter = {
+            pauseCount = 0,
+            paused = false,
+            subscribeCalls = {},
+            subscriptions = {},
+            unsubscribeAllCount = 0,
+        }
+
+        function filter:setOverrideFilter(override)
+            self.override = override
+            return self
+        end
+
+        function filter:subscribe(events, callback)
+            self.subscribeCalls[#self.subscribeCalls + 1] = {
+                callback = callback,
+                events = events,
+            }
+            if self.subscribeError ~= nil then
+                error(self.subscribeError, 0)
+            end
+
+            self.subscriptions[#self.subscriptions + 1] = {
+                callback = callback,
+                events = events,
+            }
+            self.paused = false
+            return self
+        end
+
+        function filter:emit(event, window)
+            if self.paused then
+                return
+            end
+
+            for _, subscription in ipairs(self.subscriptions) do
+                for _, subscribedEvent in ipairs(subscription.events) do
+                    if event == subscribedEvent then
+                        subscription.callback(window, nil, event)
+                    end
+                end
+            end
+        end
+
+        function filter:unsubscribeAll()
+            self.unsubscribeAllCount = self.unsubscribeAllCount + 1
+            self.subscriptions = {}
+            if self.unsubscribeAllError ~= nil then
+                error(self.unsubscribeAllError, 0)
+            end
+            return self
+        end
+
+        function filter:pause()
+            self.pauseCount = self.pauseCount + 1
+            self.paused = true
+            if self.pauseError ~= nil then
+                error(self.pauseError, 0)
+            end
+            return self
+        end
+
+        module.filters[#module.filters + 1] = filter
+        return filter
+    end
+
+    return module
+end
+
 return M

@@ -1,6 +1,7 @@
 local M = {}
 local WindowGuard = {}
 WindowGuard.__index = WindowGuard
+local DEBOUNCE_SECONDS = 0.15
 local RECENT_SECONDS = 0.25
 
 local function pruneExpiredState(guard, now)
@@ -14,6 +15,50 @@ local function pruneExpiredState(guard, now)
         if blockedUntil <= now then
             guard.blockedUntil[id] = nil
         end
+    end
+end
+
+local function protectedCall(object, methodName)
+    if object == nil then
+        return
+    end
+
+    local methodOk, method = pcall(function()
+        return object[methodName]
+    end)
+    if methodOk and type(method) == "function" then
+        pcall(method, object)
+    end
+end
+
+local function scheduleCorrection(guard, window)
+    local idOk, id = pcall(function()
+        return window:id()
+    end)
+    if not idOk or id == nil then
+        return
+    end
+
+    local previousTimer = guard.pending[id]
+    if previousTimer ~= nil then
+        protectedCall(previousTimer, "stop")
+    end
+    guard.pending[id] = nil
+
+    local timer
+    local timerOk
+    timerOk, timer = pcall(function()
+        return guard.deps.timer.doAfter(DEBOUNCE_SECONDS, function()
+            if guard.pending[id] ~= timer then
+                return
+            end
+
+            guard.pending[id] = nil
+            guard:correct(window)
+        end)
+    end)
+    if timerOk and timer ~= nil then
+        guard.pending[id] = timer
     end
 end
 
@@ -32,14 +77,50 @@ end
 function WindowGuard:start(screen, maskRects)
     self.selectedScreen = screen
     self.maskRects = maskRects
+
+    if self.filter ~= nil or type(self.deps.filterFactory) ~= "function" then
+        return
+    end
+
+    local factoryOk, filter = pcall(self.deps.filterFactory)
+    if not factoryOk or filter == nil then
+        return
+    end
+
+    local subscribeOk = pcall(function()
+        filter:subscribe(self.deps.events, function(window)
+            if self.filter ~= filter then
+                return
+            end
+
+            scheduleCorrection(self, window)
+        end)
+    end)
+    if not subscribeOk then
+        protectedCall(filter, "unsubscribeAll")
+        protectedCall(filter, "pause")
+        return
+    end
+
+    self.filter = filter
 end
 
 function WindowGuard:stop()
+    local filter = self.filter
+    local pending = self.pending
+    self.filter = nil
     self.selectedScreen = nil
     self.maskRects = {}
     self.pending = {}
     self.recent = {}
     self.blockedUntil = {}
+
+    for _, timer in pairs(pending or {}) do
+        protectedCall(timer, "stop")
+    end
+
+    protectedCall(filter, "unsubscribeAll")
+    protectedCall(filter, "pause")
 end
 
 function WindowGuard:isEligible(window)
