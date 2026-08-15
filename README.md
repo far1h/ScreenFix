@@ -1,8 +1,8 @@
 # ScreenFix
 
 ScreenFix masks a damaged vertical display region and keeps ordinary windows in the
-usable space on either side. The current implementation runs through Hammerspoon;
-standalone Windows and macOS packages are under development.
+usable space on either side. It includes the complete Hammerspoon version and a native
+macOS Phase 1 app; the standalone Windows package is under development.
 
 ![A MacBook display with a damaged vertical band](assets/screenfix-damaged-display.png)
 
@@ -28,6 +28,7 @@ region; physically black or colored pixels may remain visible.
 .
 ├── init.lua                         Loads the modules and owns one ScreenFix runtime.
 ├── assets/results/                  Shows calibration and the saved result.
+├── native/macos/                    Builds the Hammerspoon-free Apple Silicon app.
 ├── screenfix/
 │   ├── calibration.lua             Provides monitor selection and the three-band editor.
 │   ├── controller.lua              Coordinates lifecycle, menu actions, and runtime state.
@@ -44,20 +45,19 @@ region; physically black or colored pixels may remain visible.
 
 ## Install the native macOS app
 
-> The standalone Apple Silicon app is not built yet. These steps apply when a release
-> includes `ScreenFix-macos-arm64.zip`.
-
-1. Download and open `ScreenFix-macos-arm64.zip`.
+1. Extract `ScreenFix-macos-arm64.zip`.
 2. Drag **ScreenFix.app** into **Applications**.
-3. Open ScreenFix. For an unsigned test build, Control-click the app, choose **Open**,
-   then confirm once. A signed and notarized release opens normally.
-4. When prompted, allow ScreenFix in **System Settings > Privacy & Security >
-   Accessibility**. This permission is needed to move or resize other apps' windows;
-   the black masks work without it.
-5. Choose the ScreenFix menu-bar icon, select the damaged monitor, calibrate the three
-   bands, and choose **Save**.
+3. Control-click **ScreenFix.app**, choose **Open**, and confirm once for the ad-hoc test
+   build.
+4. Choose the ScreenFix menu-bar icon, then choose **Select Monitor** and the damaged
+   display.
+5. Use **Disable/Enable**, **Reset to Defaults**, **Reload**, or **Quit** as needed.
 
-The native app does not require Hammerspoon or a source checkout.
+Phase 1 needs neither Hammerspoon nor Accessibility permission. It applies the fixed
+three-band default spanning exactly 1215–1920 on a 3440-wide display. Calibration and
+window movement arrive in Phase 2. This local build supports macOS 13 or later on Apple
+Silicon, not Intel Macs. Warning-free public distribution requires an Apple Developer ID
+and notarization.
 
 ## Hammerspoon version requirements
 
@@ -141,7 +141,13 @@ Removing the link does not delete the project directory.
 
 ## Collaborating
 
-Run the complete test suite from the project root with Lua 5.4 or later:
+Build the native Apple Silicon app and zip from the project root:
+
+```bash
+native/macos/scripts/package-arm64.sh
+```
+
+Run the complete Hammerspoon test suite with Lua 5.4 or later:
 
 ```bash
 lua tests/run.lua
