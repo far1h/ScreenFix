@@ -70,6 +70,7 @@ private final class FakeWindowAccess: WindowGuardWindowAccess {
     var excluded = Set<AXWindowIdentity>()
     var sizeSettable: [AXWindowIdentity: Bool] = [:]
     var factsErrors: [AXWindowIdentity: Error] = [:]
+    var frameErrors: [AXWindowIdentity: Error] = [:]
     var setErrors: [AXWindowIdentity: Error] = [:]
     var ignoreWrites = Set<AXWindowIdentity>()
     var ownerIsRegular = true
@@ -134,7 +135,7 @@ private final class FakeWindowAccess: WindowGuardWindowAccess {
 
     func frame(for identity: AXWindowIdentity) throws -> RectD {
         log.append("\(identity.pid)-frame")
-        if let error = factsErrors[identity] { throw error }
+        if let error = frameErrors[identity] { throw error }
         guard let frame = frames[identity] else { throw AXClientError.missingValue }
         return frame
     }
@@ -389,6 +390,51 @@ let windowGuardTests: [TestCase] = [
         fixture.controller.handle(guardEvent(identity))
         fixture.scheduler.entries[2].callback()
         try expectEqual(fixture.access.log.first, "42-facts")
+    },
+    TestCase(name: "WindowGuard contains write errors and suppresses an immediate retry") {
+        let fixture = guardFixture()
+        let identity = guardIdentity(42)
+        fixture.source.lanes[42] = FakeGuardLane()
+        fixture.access.frames[identity] = RectD(x: 550, y: 100, width: 200, height: 400)
+        fixture.access.setErrors[identity] = AXClientError.api(.cannotComplete)
+        fixture.controller.start(target: guardTarget())
+
+        fixture.controller.handle(guardEvent(identity))
+        fixture.scheduler.entries[0].callback()
+        try expectEqual(fixture.access.log, ["42-facts", "42-set-position"])
+        fixture.access.setErrors.removeValue(forKey: identity)
+        fixture.access.clearLog()
+        fixture.setNow(0.5)
+        fixture.controller.handle(guardEvent(identity))
+        fixture.scheduler.entries[1].callback()
+
+        try expectEqual(fixture.access.log, [])
+    },
+    TestCase(name: "WindowGuard contains missing readback and clears recent state on destroy") {
+        let fixture = guardFixture()
+        let identity = guardIdentity(42)
+        fixture.source.lanes[42] = FakeGuardLane()
+        fixture.access.frames[identity] = RectD(x: 550, y: 100, width: 200, height: 400)
+        fixture.access.frameErrors[identity] = AXClientError.missingValue
+        fixture.controller.start(target: guardTarget())
+
+        fixture.controller.handle(guardEvent(identity))
+        fixture.scheduler.entries[0].callback()
+        try expectEqual(
+            fixture.access.log,
+            ["42-facts", "42-set-position", "42-frame"]
+        )
+        fixture.access.frameErrors.removeValue(forKey: identity)
+        fixture.setNow(1.1)
+        fixture.controller.handle(guardEvent(identity))
+        fixture.scheduler.entries[1].callback()
+        fixture.controller.handle(guardEvent(identity, .destroyed))
+        fixture.access.frames[identity] = RectD(x: 550, y: 100, width: 200, height: 400)
+        fixture.access.clearLog()
+        fixture.controller.handle(guardEvent(identity))
+        fixture.scheduler.entries[2].callback()
+
+        try expect(fixture.access.log.contains("42-set-position"))
     },
     TestCase(name: "WindowGuard contains one app failure while another lane succeeds") {
         let fixture = guardFixture()
