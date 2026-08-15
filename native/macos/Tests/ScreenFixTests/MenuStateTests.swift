@@ -59,11 +59,8 @@ let menuStateTests = [
         )
         try expect(state.status?.hasPrefix("Paused: config error:") == true)
     },
-    TestCase(name: "MenuState Phase 1 unavailable controls stay disabled") {
+    TestCase(name: "MenuState permanent controls stay enabled") {
         let state = MenuState.make(configuration: menuConfig(enabled: true), displayConnected: true, runtimeError: nil)
-        try expect(!state.calibrateEnabled)
-        try expect(!state.calibrateChecked)
-        try expect(!state.windowGuardEnabled)
         try expect(state.selectMonitorEnabled)
         try expect(state.reloadEnabled)
         try expect(state.quitEnabled)

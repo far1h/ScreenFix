@@ -102,9 +102,6 @@ public struct MenuState: Equatable {
     public let enabledActionEnabled: Bool
     public let enabledActionChecked: Bool
     public let resetEnabled: Bool
-    public let calibrateEnabled: Bool
-    public let calibrateChecked: Bool
-    public let windowGuardEnabled: Bool
     public let selectMonitorEnabled: Bool
     public let reloadEnabled: Bool
     public let quitEnabled: Bool
@@ -129,9 +126,6 @@ public struct MenuState: Equatable {
             enabledActionEnabled: configuration != nil,
             enabledActionChecked: enabled,
             resetEnabled: configuration != nil && displayConnected,
-            calibrateEnabled: false,
-            calibrateChecked: false,
-            windowGuardEnabled: false,
             selectMonitorEnabled: true,
             reloadEnabled: true,
             quitEnabled: true
@@ -177,21 +171,10 @@ public final class MenuModelBuilder {
             items.append(MenuItemModel(identifier: "paused-status", title: status, isEnabled: false))
         }
         items.append(MenuItemModel(
-            identifier: "window-guard-phase2",
-            title: "Window guard: unavailable in Phase 1",
-            isEnabled: state.windowGuardEnabled
-        ))
-        items.append(MenuItemModel(
             identifier: "enabled-action",
             title: state.enabledActionTitle,
             isEnabled: state.enabledActionEnabled,
             isChecked: state.enabledActionChecked
-        ))
-        items.append(MenuItemModel(
-            identifier: "calibrate-phase2",
-            title: "Calibrate (Phase 2)",
-            isEnabled: state.calibrateEnabled,
-            isChecked: state.calibrateChecked
         ))
         let displays = displayProvider()
         let children = displays.enumerated().map { index, display in

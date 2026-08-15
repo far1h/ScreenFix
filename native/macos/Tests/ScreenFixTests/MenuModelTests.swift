@@ -1,3 +1,5 @@
+import AppKit
+import ScreenFixApp
 import ScreenFixCore
 
 private func menuConnected(_ id: String?, name: String) -> ConnectedDisplay {
@@ -5,17 +7,19 @@ private func menuConnected(_ id: String?, name: String) -> ConnectedDisplay {
 }
 
 let menuModelTests = [
-    TestCase(name: "MenuModel has exact Phase 1 order and disabled unavailable rows") {
+    TestCase(name: "MenuModel status icon uses a proportionate visible size") {
+        try expectEqual(StatusIconMetrics.imageSize, NSSize(width: 24, height: 15))
+    },
+    TestCase(name: "MenuModel hides unfinished features and keeps exact app order") {
         let state = MenuState.make(configuration: nil, displayConnected: false, runtimeError: nil)
         let builder = MenuModelBuilder(displayProvider: { [] })
         let model = builder.build(state: state, savedStableId: nil)
 
         try expectEqual(model.map(\.identifier), [
-            "paused-status", "window-guard-phase2", "enabled-action", "calibrate-phase2",
-            "select-monitor", "reset-defaults", "reload", "separator", "quit",
+            "paused-status", "enabled-action", "select-monitor", "reset-defaults",
+            "reload", "separator", "quit",
         ])
-        try expect(model.first(where: { $0.identifier == "calibrate-phase2" })?.isEnabled == false)
-        try expect(model.first(where: { $0.identifier == "window-guard-phase2" })?.isEnabled == false)
+        try expect(!model.contains(where: { $0.identifier.contains("phase2") }))
     },
     TestCase(name: "MenuModel refreshes displays on every build") {
         var calls = 0

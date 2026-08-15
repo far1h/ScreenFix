@@ -36,6 +36,8 @@ test "$(plutil -extract LSUIElement raw "$APP_PATH/Contents/Info.plist")" = "tru
 test "$(plutil -extract LSMultipleInstancesProhibited raw "$APP_PATH/Contents/Info.plist")" = "true"
 test -x "$APP_PATH/Contents/MacOS/ScreenFix"
 test -f "$APP_PATH/Contents/Resources/ScreenFixMenuIcon.png"
+test "$(sips -g pixelWidth "$APP_PATH/Contents/Resources/ScreenFixMenuIcon.png" 2>/dev/null | awk '/pixelWidth/ {print $2}')" = "36"
+test "$(sips -g pixelHeight "$APP_PATH/Contents/Resources/ScreenFixMenuIcon.png" 2>/dev/null | awk '/pixelHeight/ {print $2}')" = "22"
 test "$(lipo -archs "$APP_PATH/Contents/MacOS/ScreenFix")" = "arm64"
 file "$APP_PATH/Contents/MacOS/ScreenFix" | grep -q 'Mach-O 64-bit executable arm64'
 vtool -show-build "$APP_PATH/Contents/MacOS/ScreenFix" | grep -q 'platform MACOS'

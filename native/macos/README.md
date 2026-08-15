@@ -33,7 +33,7 @@ click-through black masks. The permanent defaults span exactly 1215–1920 on a
 Reload, and Quit.
 
 Phase 1 does not request Accessibility permission. Calibration and automatic window
-movement are visibly disabled and are planned for Phase 2.
+movement are not included yet; the menu shows only controls that currently work.
 
 ## Current Command Line Tools limitation
 

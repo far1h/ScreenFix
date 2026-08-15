@@ -1,6 +1,10 @@
 import AppKit
 import ScreenFixCore
 
+public enum StatusIconMetrics {
+    public static let imageSize = NSSize(width: 24, height: 15)
+}
+
 final class MenuBarController: NSObject, NSMenuDelegate {
     private let runtime: RuntimeController
     private let catalog: DisplayCatalog
@@ -18,7 +22,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if let url = Bundle.main.url(forResource: "ScreenFixMenuIcon", withExtension: "png"),
            let image = NSImage(contentsOf: url) {
             image.isTemplate = true
-            image.size = NSSize(width: 18, height: 18)
+            image.size = StatusIconMetrics.imageSize
             item.button?.image = image
         } else {
             item.button?.title = "SF"
