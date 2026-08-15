@@ -5,7 +5,16 @@ public interface IUiDelay
     IDisposable Schedule(TimeSpan delay, Action callback);
 }
 
-public sealed class GuardScheduler(IUiDelay delay) : IDisposable
+public interface IGuardScheduler : IDisposable
+{
+    void Start(long generation);
+
+    void Signal(long key, Action<long> correction);
+
+    void Stop();
+}
+
+public sealed class GuardScheduler(IUiDelay delay) : IGuardScheduler
 {
     private readonly Dictionary<long, PendingWork> pending = [];
     private bool active;

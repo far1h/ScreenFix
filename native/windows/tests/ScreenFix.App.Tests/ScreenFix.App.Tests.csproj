@@ -23,6 +23,7 @@
     <Compile Include="../../src/ScreenFix.App/Guard/GuardScheduler.cs" Link="Guard/GuardScheduler.cs" />
     <Compile Include="../../src/ScreenFix.App/Guard/WinEventHookSet.cs" Link="Guard/WinEventHookSet.cs" />
     <Compile Include="../../src/ScreenFix.App/Guard/WindowCorrector.cs" Link="Guard/WindowCorrector.cs" />
+    <Compile Include="../../src/ScreenFix.App/Guard/WindowGuard.cs" Link="Guard/WindowGuard.cs" />
     <Compile Include="../../src/ScreenFix.App/Guard/WindowNativeQuery.cs" Link="Guard/WindowNativeQuery.cs" />
     <Compile Include="../../src/ScreenFix.App/Guard/WindowsWindowInspector.cs" Link="Guard/WindowsWindowInspector.cs" />
     <Compile Include="../../src/ScreenFix.App/Lifecycle/ApplicationLifetime.cs" Link="Lifecycle/ApplicationLifetime.cs" />
