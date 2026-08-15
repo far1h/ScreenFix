@@ -23,6 +23,15 @@ if ($executable.Name -cne "ScreenFix.exe") {
     throw "package file must be named ScreenFix.exe"
 }
 
+if ($executable.Length -eq 0) {
+    throw "executable is empty"
+}
+
+$fileHash = Get-FileHash -LiteralPath $executable.FullName -Algorithm SHA256
+if ([string]::IsNullOrWhiteSpace($fileHash.Hash)) {
+    throw "executable SHA-256 could not be computed"
+}
+
 $bytes = [IO.File]::ReadAllBytes($executable.FullName)
 if ($bytes.Length -lt 2) {
     throw "executable is too small for DOS signature"
@@ -71,4 +80,15 @@ $optionalHeaderMagic = [int]$bytes[$optionalHeaderOffset] `
     -bor ([int]$bytes[$optionalHeaderOffset + 1] -shl 8)
 if ($optionalHeaderMagic -ne 0x20b) {
     throw ("executable optional header is not PE32+: 0x{0:x4}" -f $optionalHeaderMagic)
+}
+
+$subsystemOffset = 68
+if ($optionalHeaderSize -lt $subsystemOffset + 2) {
+    throw "executable optional header does not contain a subsystem"
+}
+
+$subsystem = [int]$bytes[$optionalHeaderOffset + $subsystemOffset] `
+    -bor ([int]$bytes[$optionalHeaderOffset + $subsystemOffset + 1] -shl 8)
+if ($subsystem -ne 2) {
+    throw "executable subsystem is not Windows GUI: $subsystem"
 }

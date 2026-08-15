@@ -1,8 +1,8 @@
 # ScreenFix
 
 ScreenFix masks a damaged vertical display region and keeps ordinary windows in the
-usable space on either side. It includes the complete Hammerspoon version and a native
-macOS Phase 1 app; the standalone Windows package is under development.
+usable space on either side. It includes a complete Hammerspoon version and standalone
+native apps for macOS and Windows.
 
 ![A MacBook display with a damaged vertical band](assets/screenfix-damaged-display.png)
 
@@ -29,6 +29,7 @@ region; physically black or colored pixels may remain visible.
 ├── init.lua                         Loads the modules and owns one ScreenFix runtime.
 ├── assets/results/                  Shows calibration and the saved result.
 ├── native/macos/                    Builds the Hammerspoon-free Apple Silicon app.
+├── native/windows/                  Builds the self-contained Windows x64 app.
 ├── screenfix/
 │   ├── calibration.lua             Provides monitor selection and the three-band editor.
 │   ├── controller.lua              Coordinates lifecycle, menu actions, and runtime state.
@@ -42,6 +43,21 @@ region; physically black or colored pixels may remain visible.
     ├── fake_hs.lua                 Supplies focused Hammerspoon test doubles.
     └── *_test.lua                  Tests each production module and the entry point.
 ```
+
+## Install the native Windows app
+
+1. Download `ScreenFix-windows-x64.zip` or `ScreenFix.exe`.
+2. Extract the ZIP if needed.
+3. Double-click **ScreenFix.exe**.
+4. Open the tray icon, choose **Select Monitor**, calibrate the masks, then choose
+   **Save**.
+5. Windows may show SmartScreen for an unsigned local build. Choose **More info** only
+   when the file came from the trusted project release.
+
+Windows x64 means ordinary 64-bit Intel or AMD Windows, not Windows on ARM. The package
+is self-contained, so a separate .NET runtime is not required. ScreenFix runs at normal
+integrity and cannot move windows launched as administrator; masks and calibration keep
+working when an elevated window cannot be corrected.
 
 ## Install the native macOS app
 
