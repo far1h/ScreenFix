@@ -18,6 +18,7 @@ internal sealed class CalibrationForm : Form
     private readonly CalibrationLayoutSpec layout;
     private readonly RectD logicalFrame;
     private readonly CalibrationSession session;
+    private readonly CalibrationCommandAdapter commands;
     private bool intentionallyChangingCapture;
 
     public CalibrationForm(
@@ -39,6 +40,7 @@ internal sealed class CalibrationForm : Form
             physicalBounds.Width * 96d / dpi,
             physicalBounds.Height * 96d / dpi);
         session = new CalibrationSession(bands, logicalFrame);
+        commands = new CalibrationCommandAdapter(session, ReleaseCapture);
 
         AutoScaleMode = AutoScaleMode.None;
         BackColor = Color.Fuchsia;
@@ -112,15 +114,13 @@ internal sealed class CalibrationForm : Form
         var point = ToLogical(eventArgs.Location);
         if (eventArgs.Button == MouseButtons.Left && Contains(layout.SaveButton, point))
         {
-            session.Save();
-            callbacks.Save(generation, session.WorkingBands.ToArray());
+            commands.Save(bands => callbacks.Save(generation, bands));
             return;
         }
 
         if (eventArgs.Button == MouseButtons.Left && Contains(layout.CancelButton, point))
         {
-            session.Cancel();
-            callbacks.Cancel(generation);
+            commands.Cancel(() => callbacks.Cancel(generation));
             return;
         }
 
@@ -191,6 +191,14 @@ internal sealed class CalibrationForm : Form
         finally
         {
             intentionallyChangingCapture = false;
+        }
+    }
+
+    private void ReleaseCapture()
+    {
+        if (Capture)
+        {
+            SetCapture(false);
         }
     }
 
