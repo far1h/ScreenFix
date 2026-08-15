@@ -111,6 +111,7 @@ public struct MenuState: Equatable {
     public static func make(
         configuration: ScreenFixConfiguration?,
         displayConnected: Bool,
+        accessibilityTrusted: Bool = true,
         calibrating: Bool = false,
         runtimeError: String?
     ) -> MenuState {
@@ -120,6 +121,8 @@ public struct MenuState: Equatable {
             ordinaryStatus = "Paused: select a monitor"
         } else if !displayConnected {
             ordinaryStatus = "Paused: saved display is disconnected"
+        } else if enabled && !calibrating && !accessibilityTrusted {
+            ordinaryStatus = "Window correction paused: Allow Accessibility in System Settings"
         } else {
             ordinaryStatus = nil
         }
