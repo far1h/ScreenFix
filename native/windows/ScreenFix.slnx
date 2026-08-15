@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ScreenFix.App/ScreenFix.App.csproj" />
+    <Project Path="src/ScreenFix.Core/ScreenFix.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ScreenFix.App.Tests/ScreenFix.App.Tests.csproj" />
+    <Project Path="tests/ScreenFix.Core.Tests/ScreenFix.Core.Tests.csproj" />
+  </Folder>
+</Solution>

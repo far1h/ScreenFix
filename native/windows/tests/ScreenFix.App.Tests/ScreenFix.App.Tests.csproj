@@ -1,0 +1,37 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../../src/ScreenFix.App/Calibration/CalibrationCommandAdapter.cs" Link="Calibration/CalibrationCommandAdapter.cs" />
+    <Compile Include="../../src/ScreenFix.App/Lifecycle/ApplicationLifetime.cs" Link="Lifecycle/ApplicationLifetime.cs" />
+    <Compile Include="../../src/ScreenFix.App/Lifecycle/ResourceOwner.cs" Link="Lifecycle/ResourceOwner.cs" />
+    <Compile Include="../../src/ScreenFix.App/Lifecycle/SingleInstanceGate.cs" Link="Lifecycle/SingleInstanceGate.cs" />
+    <Compile Include="../../src/ScreenFix.App/Notifications/SystemMessageCoordinator.cs" Link="Notifications/SystemMessageCoordinator.cs" />
+    <Compile Include="../../src/ScreenFix.App/Overlays/MaskOverlaySet.cs" Link="Overlays/MaskOverlaySet.cs" />
+    <Compile Include="../../src/ScreenFix.App/Runtime/RuntimeContracts.cs" Link="Runtime/RuntimeContracts.cs" />
+    <Compile Include="../../src/ScreenFix.App/Runtime/RuntimeController.cs" Link="Runtime/RuntimeController.cs" />
+    <Compile Include="../../src/ScreenFix.App/Runtime/RuntimeState.cs" Link="Runtime/RuntimeState.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/ScreenFix.Core/ScreenFix.Core.csproj" />
+  </ItemGroup>
+
+</Project>
