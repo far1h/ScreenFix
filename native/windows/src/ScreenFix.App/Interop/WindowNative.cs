@@ -4,7 +4,10 @@ using ScreenFix.Core.Geometry;
 
 namespace ScreenFix.App.Interop;
 
-internal sealed partial class WindowNative : IWindowNativeQuery, IWinEventNativeApi
+internal sealed partial class WindowNative :
+    IWindowNativeQuery,
+    IWindowNativeWriter,
+    IWinEventNativeApi
 {
     private const uint AncestorRoot = 2;
     private const uint OwnerWindow = 4;
@@ -19,6 +22,8 @@ internal sealed partial class WindowNative : IWindowNativeQuery, IWinEventNative
     bool IWindowNativeQuery.IsIconic(nint window) => IsIconic(window);
 
     bool IWindowNativeQuery.IsZoomed(nint window) => IsZoomed(window);
+
+    bool IWindowNativeWriter.IsWindow(nint window) => IsWindow(window);
 
     public bool TryGetStyles(nint window, out WindowStyleData styles)
     {
@@ -102,6 +107,45 @@ internal sealed partial class WindowNative : IWindowNativeQuery, IWinEventNative
         return MonitorFromRect(in rectangle, MonitorDefaultToNull);
     }
 
+    public bool TryGetPlacement(
+        nint window,
+        out WindowPlacementData placement)
+    {
+        var native = new NativeWindowPlacement
+        {
+            Length = (uint)Marshal.SizeOf<NativeWindowPlacement>(),
+        };
+        if (GetWindowPlacementNative(window, ref native) == 0)
+        {
+            placement = default;
+            return false;
+        }
+
+        placement = ToPlacementData(native);
+        return true;
+    }
+
+    public bool TrySetPlacement(
+        nint window,
+        WindowPlacementData placement)
+    {
+        var native = ToNativePlacement(placement);
+        return SetWindowPlacementNative(window, in native) != 0;
+    }
+
+    public bool TrySetFrame(
+        nint window,
+        NativeWindowFrame frame,
+        uint flags) =>
+        User32.SetWindowPos(
+            window,
+            insertAfter: 0,
+            frame.X,
+            frame.Y,
+            frame.Width,
+            frame.Height,
+            flags) != 0;
+
     public nint SetHook(
         uint eventMinimum,
         uint eventMaximum,
@@ -147,6 +191,55 @@ internal sealed partial class WindowNative : IWindowNativeQuery, IWinEventNative
         rectangle.Top,
         rectangle.Right - rectangle.Left,
         rectangle.Bottom - rectangle.Top);
+
+    private static WindowPlacementData ToPlacementData(
+        NativeWindowPlacement placement) => new(
+        placement.Flags,
+        placement.ShowCommand,
+        new NativeWindowPoint(
+            placement.MinimizedPosition.X,
+            placement.MinimizedPosition.Y),
+        new NativeWindowPoint(
+            placement.MaximizedPosition.X,
+            placement.MaximizedPosition.Y),
+        new NativeWindowRectangle(
+            placement.NormalPosition.Left,
+            placement.NormalPosition.Top,
+            placement.NormalPosition.Right,
+            placement.NormalPosition.Bottom),
+        new NativeWindowRectangle(
+            placement.DeviceRectangle.Left,
+            placement.DeviceRectangle.Top,
+            placement.DeviceRectangle.Right,
+            placement.DeviceRectangle.Bottom));
+
+    private static NativeWindowPlacement ToNativePlacement(
+        WindowPlacementData placement) => new()
+        {
+            Length = (uint)Marshal.SizeOf<NativeWindowPlacement>(),
+            Flags = placement.Flags,
+            ShowCommand = placement.ShowCommand,
+            MinimizedPosition = new NativePoint(
+                placement.MinimizedPosition.X,
+                placement.MinimizedPosition.Y),
+            MaximizedPosition = new NativePoint(
+                placement.MaximizedPosition.X,
+                placement.MaximizedPosition.Y),
+            NormalPosition = new NativeRect
+            {
+                Left = placement.NormalPosition.Left,
+                Top = placement.NormalPosition.Top,
+                Right = placement.NormalPosition.Right,
+                Bottom = placement.NormalPosition.Bottom,
+            },
+            DeviceRectangle = new NativeRect
+            {
+                Left = placement.DeviceRectangle.Left,
+                Top = placement.DeviceRectangle.Top,
+                Right = placement.DeviceRectangle.Right,
+                Bottom = placement.DeviceRectangle.Bottom,
+            },
+        };
 
     private static bool TryToNativeRect(RectD frame, out NativeRect rectangle)
     {
@@ -205,6 +298,16 @@ internal sealed partial class WindowNative : IWindowNativeQuery, IWinEventNative
 
     [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
     private static partial nint GetWindowLongPtr(nint window, int index);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetWindowPlacement", SetLastError = true)]
+    private static partial int GetWindowPlacementNative(
+        nint window,
+        ref NativeWindowPlacement placement);
+
+    [LibraryImport("user32.dll", EntryPoint = "SetWindowPlacement", SetLastError = true)]
+    private static partial int SetWindowPlacementNative(
+        nint window,
+        in NativeWindowPlacement placement);
 
     [LibraryImport("user32.dll", SetLastError = true)]
     private static partial uint GetWindowThreadProcessId(nint window, out uint processId);
