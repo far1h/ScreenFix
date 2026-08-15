@@ -364,12 +364,22 @@ public sealed class RuntimeController : ISystemMessageTarget
 
     private void BeginEditing(ScreenFixConfig candidateConfiguration)
     {
+        var display = DisplayMatcher.Find(
+            candidateConfiguration.Display,
+            topology.Enumerate());
+        if (display is null)
+        {
+            notices.Show("Selected display is disconnected or ambiguous");
+            Reconcile();
+            return;
+        }
+
         generation++;
         var editorGeneration = generation;
         var result = calibration.Start(
             new CalibrationStartRequest(
                 editorGeneration,
-                ResolveCandidateDisplay(candidateConfiguration.Display),
+                display,
                 candidateConfiguration.Bands.ToArray()),
             new CalibrationHostCallbacks(
                 OnCalibrationSaved,
@@ -385,12 +395,6 @@ public sealed class RuntimeController : ISystemMessageTarget
         pendingConfiguration = candidateConfiguration;
         overlays.Clear();
         RefreshMenu();
-    }
-
-    private ConnectedDisplay ResolveCandidateDisplay(DisplayIdentity identity)
-    {
-        var display = DisplayMatcher.Find(identity, topology.Enumerate());
-        return display ?? throw new InvalidOperationException("Selected display is disconnected");
     }
 
     private void OnCalibrationSaved(

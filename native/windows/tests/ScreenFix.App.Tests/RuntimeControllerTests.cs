@@ -153,6 +153,45 @@ public sealed class RuntimeControllerTests
     }
 
     [Fact]
+    public void SelectMonitor_HotUnplugBeforeChoiceReturns_DoesNotThrowOrStartEditor()
+    {
+        var display = Connected(DefaultConfig().Display);
+        var harness = new Harness(new ConfigLoadResult(null, true, null), [display]);
+        harness.Controller.Start();
+        harness.Controller.SelectMonitor();
+        harness.Topology.Displays = [];
+
+        var error = Record.Exception(() => harness.Picker.Select(display));
+
+        Assert.Null(error);
+        Assert.False(harness.Calibration.IsEditing);
+        Assert.Equal(0, harness.Config.SaveCount);
+        Assert.Single(harness.Notices.Messages);
+        Assert.Equal("Paused: Select a monitor", harness.StatusLabel);
+    }
+
+    [Fact]
+    public void SelectMonitor_AmbiguousIdentityBeforeChoiceReturns_DoesNotGuess()
+    {
+        var display = Connected(DefaultConfig().Display);
+        var harness = new Harness(new ConfigLoadResult(null, true, null), [display]);
+        harness.Controller.Start();
+        harness.Controller.SelectMonitor();
+        harness.Topology.Displays =
+        [
+            display,
+            display with { FullBounds = new RectD(3440, 0, 3440, 1440) },
+        ];
+
+        var error = Record.Exception(() => harness.Picker.Select(display));
+
+        Assert.Null(error);
+        Assert.False(harness.Calibration.IsEditing);
+        Assert.Equal(0, harness.Config.SaveCount);
+        Assert.Single(harness.Notices.Messages);
+    }
+
+    [Fact]
     public void Calibrate_CheckedCommandCancelsAndRestoresProtection()
     {
         var config = DefaultConfig();
