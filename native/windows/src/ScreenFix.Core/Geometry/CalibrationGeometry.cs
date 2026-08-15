@@ -16,7 +16,6 @@ public readonly record struct EditorHit(int Index, DragPart Part);
 public static class CalibrationGeometry
 {
     private const double PointToleranceFactor = 3.552713678800501e-15;
-    private const double SnapMinimumSize = 20;
 
     public static EditorHit? HitTest(
         PointD point,
@@ -104,12 +103,14 @@ public static class CalibrationGeometry
         DragPart part,
         IReadOnlyList<RectD> bands,
         RectD fullFrame,
-        double threshold)
+        double threshold,
+        double minimumSize)
     {
         ArgumentNullException.ThrowIfNull(bands);
         RequireNormalizedRect(rawBand, nameof(rawBand));
         RequireFullFrame(fullFrame);
         RequireFinite(threshold, nameof(threshold));
+        RequirePositiveFinite(minimumSize, nameof(minimumSize));
         if (threshold < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(threshold));
@@ -131,7 +132,8 @@ public static class CalibrationGeometry
                 BuildTargets(horizontal: true, [0], bands, activeIndex),
                 threshold,
                 fullFrame,
-                DragPart.Left),
+                DragPart.Left,
+                minimumSize),
             DragPart.Right => SnapAxis(
                 rawBand,
                 horizontal: true,
@@ -140,7 +142,8 @@ public static class CalibrationGeometry
                 BuildTargets(horizontal: true, [1], bands, activeIndex),
                 threshold,
                 fullFrame,
-                DragPart.Right),
+                DragPart.Right,
+                minimumSize),
             DragPart.Top => SnapAxis(
                 rawBand,
                 horizontal: false,
@@ -149,7 +152,8 @@ public static class CalibrationGeometry
                 BuildTargets(horizontal: false, [0], bands, activeIndex),
                 threshold,
                 fullFrame,
-                DragPart.Top),
+                DragPart.Top,
+                minimumSize),
             DragPart.Bottom => SnapAxis(
                 rawBand,
                 horizontal: false,
@@ -158,7 +162,8 @@ public static class CalibrationGeometry
                 BuildTargets(horizontal: false, [1], bands, activeIndex),
                 threshold,
                 fullFrame,
-                DragPart.Bottom),
+                DragPart.Bottom,
+                minimumSize),
             _ => throw new ArgumentOutOfRangeException(nameof(part)),
         };
     }
@@ -178,6 +183,7 @@ public static class CalibrationGeometry
             BuildTargets(horizontal: true, [0, 1], bands, activeIndex),
             threshold,
             fullFrame,
+            null,
             null);
 
         return SnapAxis(
@@ -188,6 +194,7 @@ public static class CalibrationGeometry
             BuildTargets(horizontal: false, [0, 1], bands, activeIndex),
             threshold,
             fullFrame,
+            null,
             null);
     }
 
@@ -199,7 +206,8 @@ public static class CalibrationGeometry
         IReadOnlyList<double> targets,
         double threshold,
         RectD fullFrame,
-        DragPart? resizePart)
+        DragPart? resizePart,
+        double? minimumSize)
     {
         var pointScale = horizontal ? fullFrame.Width : fullFrame.Height;
         var tolerance = pointScale * PointToleranceFactor;
@@ -230,7 +238,7 @@ public static class CalibrationGeometry
             var candidate = CorrectedRect(rect, horizontal, trailing, target, resizePart);
 
             if (distance <= threshold + tolerance &&
-                IsSnapCandidate(candidate, fullFrame, tolerance) &&
+                IsSnapCandidate(candidate, fullFrame, tolerance, minimumSize) &&
                 (bestDistance is null || distance < bestDistance.Value - tolerance))
             {
                 best = candidate;
@@ -336,10 +344,15 @@ public static class CalibrationGeometry
         return new RectD(band.X, band.Y, band.Width, bottom - band.Y);
     }
 
-    private static bool IsSnapCandidate(RectD rect, RectD fullFrame, double tolerance) =>
+    private static bool IsSnapCandidate(
+        RectD rect,
+        RectD fullFrame,
+        double tolerance,
+        double? minimumSize) =>
         IsNormalizedRect(rect) &&
-        (rect.Width * fullFrame.Width) + tolerance >= SnapMinimumSize &&
-        (rect.Height * fullFrame.Height) + tolerance >= SnapMinimumSize;
+        (minimumSize is null ||
+            ((rect.Width * fullFrame.Width) + tolerance >= minimumSize.Value &&
+             (rect.Height * fullFrame.Height) + tolerance >= minimumSize.Value));
 
     private static bool IsNormalizedRect(RectD rect) =>
         IsFiniteRect(rect) &&

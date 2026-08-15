@@ -115,7 +115,7 @@ public sealed class CalibrationGeometryTests
     {
         var raw = new RectD(x, y, width, height);
 
-        var result = CalibrationGeometry.SnapBand(raw, 0, DragPart.Body, [raw], FullFrame, 12);
+        var result = CalibrationGeometry.SnapBand(raw, 0, DragPart.Body, [raw], FullFrame, 12, 20);
 
         AssertRect(new RectD(expectedX, expectedY, width, height), result);
     }
@@ -138,7 +138,7 @@ public sealed class CalibrationGeometryTests
         var raw = new RectD(x, y, width, height);
         RectD[] bands = [raw, new RectD(peerX, peerY, 0.2, 0.2)];
 
-        var result = CalibrationGeometry.SnapBand(raw, 0, DragPart.Body, bands, FullFrame, 12);
+        var result = CalibrationGeometry.SnapBand(raw, 0, DragPart.Body, bands, FullFrame, 12, 20);
 
         AssertRect(new RectD(expectedX, expectedY, width, height), result);
     }
@@ -162,7 +162,7 @@ public sealed class CalibrationGeometryTests
         var raw = new RectD(x, y, width, height);
         RectD[] bands = [raw, new RectD(0.3, 0.3, 0.2, 0.2)];
 
-        var result = CalibrationGeometry.SnapBand(raw, 0, part, bands, FullFrame, 12);
+        var result = CalibrationGeometry.SnapBand(raw, 0, part, bands, FullFrame, 12, 20);
 
         AssertRect(new RectD(expectedX, expectedY, expectedWidth, expectedHeight), result);
     }
@@ -172,7 +172,7 @@ public sealed class CalibrationGeometryTests
     {
         var raw = new RectD(0.12, 0.4, 0.2, 0.2);
 
-        var result = CalibrationGeometry.SnapBand(raw, 0, DragPart.Body, [raw], FullFrame, 12);
+        var result = CalibrationGeometry.SnapBand(raw, 0, DragPart.Body, [raw], FullFrame, 12, 20);
 
         AssertRect(new RectD(0, 0.4, 0.2, 0.2), result);
     }
@@ -182,7 +182,29 @@ public sealed class CalibrationGeometryTests
     {
         var raw = new RectD(0.12001, 0.4, 0.2, 0.2);
 
-        var result = CalibrationGeometry.SnapBand(raw, 0, DragPart.Body, [raw], FullFrame, 12);
+        var result = CalibrationGeometry.SnapBand(raw, 0, DragPart.Body, [raw], FullFrame, 12, 20);
+
+        AssertRect(raw, result);
+    }
+
+    [Fact]
+    public void SnapBand_BodySnapsValidBandNarrowerThanResizeMinimum()
+    {
+        var raw = new RectD(0.05, 0.4, 0.1, 0.1);
+
+        var result = CalibrationGeometry.SnapBand(raw, 0, DragPart.Body, [raw], FullFrame, 12, 20);
+
+        AssertRect(new RectD(0, 0.4, 0.1, 0.1), result);
+    }
+
+    [Fact]
+    public void SnapBand_ResizeUsesDpiScaledMinimumSize()
+    {
+        var fullFrame = new RectD(0, 0, 200, 200);
+        var raw = new RectD(0.2, 0.4, 0.25, 0.2);
+        RectD[] bands = [raw, new RectD(0.35, 0, 0.4, 0.2)];
+
+        var result = CalibrationGeometry.SnapBand(raw, 0, DragPart.Right, bands, fullFrame, 24, 40);
 
         AssertRect(raw, result);
     }
@@ -193,7 +215,7 @@ public sealed class CalibrationGeometryTests
         var raw = new RectD(0.1, 0.4, 0.2, 0.2);
         RectD[] bands = [raw, new RectD(0.2, 0, 0.2, 0.2)];
 
-        var result = CalibrationGeometry.SnapBand(raw, 0, DragPart.Body, bands, FullFrame, 12);
+        var result = CalibrationGeometry.SnapBand(raw, 0, DragPart.Body, bands, FullFrame, 12, 20);
 
         AssertRect(new RectD(0, 0.4, 0.2, 0.2), result);
     }
@@ -209,7 +231,7 @@ public sealed class CalibrationGeometryTests
             raw,
         ];
 
-        var result = CalibrationGeometry.SnapBand(raw, 2, DragPart.Body, bands, FullFrame, 12);
+        var result = CalibrationGeometry.SnapBand(raw, 2, DragPart.Body, bands, FullFrame, 12, 20);
 
         AssertRect(new RectD(0.3, 0.4, 0.2, 0.2), result);
     }
@@ -233,7 +255,8 @@ public sealed class CalibrationGeometryTests
             DragPart.Body,
             [new RectD(0, 0, 0.5, 0.5)],
             FullFrame,
-            12));
+            12,
+            20));
     }
 
     private static void AssertRect(RectD expected, RectD actual)
