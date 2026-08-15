@@ -18,4 +18,9 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="../../src/ScreenFix.App/Lifecycle/ResourceOwner.cs" Link="Lifecycle/ResourceOwner.cs" />
+    <Compile Include="../../src/ScreenFix.App/Lifecycle/SingleInstanceGate.cs" Link="Lifecycle/SingleInstanceGate.cs" />
+  </ItemGroup>
+
 </Project>
