@@ -11,6 +11,7 @@ enum Main {
                 + windowCorrectionTests
                 + displayAssignmentTests
                 + windowEligibilityTests
+                + accessibilityTrustTests
                 + configValidatorTests
                 + displaySelectorTests
                 + configStoreTests
