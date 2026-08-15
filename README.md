@@ -4,7 +4,7 @@ ScreenFix masks a damaged vertical display region and keeps ordinary windows in 
 usable space on either side. The current implementation runs through Hammerspoon;
 standalone Windows and macOS packages are under development.
 
-![A MacBook display with a damaged vertical band](D75077A6-60A3-41E7-998E-AA33DABA7046.PNG)
+![A MacBook display with a damaged vertical band](assets/screenfix-damaged-display.png)
 
 *The very practical reason ScreenFix exists.*
 
