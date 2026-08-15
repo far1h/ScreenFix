@@ -1,9 +1,17 @@
+using System.Text.Json.Serialization;
+
 namespace ScreenFix.Core.Geometry;
 
-public readonly record struct RectD(double X, double Y, double Width, double Height)
+public readonly record struct RectD(
+    [property: JsonRequired, JsonPropertyName("x")] double X,
+    [property: JsonRequired, JsonPropertyName("y")] double Y,
+    [property: JsonRequired, JsonPropertyName("w")] double Width,
+    [property: JsonRequired, JsonPropertyName("h")] double Height)
 {
+    [JsonIgnore]
     public double Right => X + Width;
 
+    [JsonIgnore]
     public double Bottom => Y + Height;
 
     public bool Intersects(RectD other) =>

@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using ScreenFix.Core.Configuration;
 
 namespace ScreenFix.Core.Tests;
@@ -50,6 +52,17 @@ public sealed class JsonConfigStoreTests : IDisposable
     }
 
     [Fact]
+    public void Save_UsesExactBandPropertyNames()
+    {
+        new JsonConfigStore(path).Save(ValidConfiguration());
+
+        using var document = JsonDocument.Parse(File.ReadAllText(path, Encoding.UTF8));
+        var band = document.RootElement.GetProperty("bands")[0];
+
+        Assert.Equal(["x", "y", "w", "h"], band.EnumerateObject().Select(item => item.Name));
+    }
+
+    [Fact]
     public void Save_LeavesNoTemporaryFile()
     {
         new JsonConfigStore(path).Save(ValidConfiguration());
@@ -87,6 +100,35 @@ public sealed class JsonConfigStoreTests : IDisposable
         Assert.Null(result.Value);
         Assert.Equal("schema version must be 1", result.Error);
         Assert.Equal(original, File.ReadAllBytes(path));
+    }
+
+    [Theory]
+    [InlineData("enabled")]
+    [InlineData("band-x")]
+    public void Load_RejectsMissingRequiredFields(string field)
+    {
+        var store = new JsonConfigStore(path);
+        store.Save(ValidConfiguration());
+        var root = JsonNode.Parse(File.ReadAllText(path, Encoding.UTF8))!.AsObject();
+        if (field == "enabled")
+        {
+            root.Remove("enabled");
+        }
+        else
+        {
+            root["bands"]!.AsArray()[0]!.AsObject().Remove("x");
+        }
+
+        File.WriteAllText(
+            path,
+            root.ToJsonString(),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var result = store.Load();
+
+        Assert.False(result.IsMissing);
+        Assert.Null(result.Value);
+        Assert.Equal("configuration JSON is invalid", result.Error);
     }
 
     [Fact]

@@ -1,11 +1,16 @@
+using System.Text.Json.Serialization;
 using ScreenFix.Core.Geometry;
 
 namespace ScreenFix.Core.Configuration;
 
-public sealed record DisplayIdentity(string StableId, string Name, double Width, double Height);
+public sealed record DisplayIdentity(
+    [property: JsonRequired, JsonPropertyName("stableId")] string StableId,
+    [property: JsonRequired, JsonPropertyName("name")] string Name,
+    [property: JsonRequired, JsonPropertyName("width")] double Width,
+    [property: JsonRequired, JsonPropertyName("height")] double Height);
 
 public sealed record ScreenFixConfig(
-    int SchemaVersion,
-    bool Enabled,
-    DisplayIdentity Display,
-    IReadOnlyList<RectD> Bands);
+    [property: JsonRequired, JsonPropertyName("schemaVersion")] int SchemaVersion,
+    [property: JsonRequired, JsonPropertyName("enabled")] bool Enabled,
+    [property: JsonRequired, JsonPropertyName("display")] DisplayIdentity Display,
+    [property: JsonRequired, JsonPropertyName("bands")] IReadOnlyList<RectD> Bands);
