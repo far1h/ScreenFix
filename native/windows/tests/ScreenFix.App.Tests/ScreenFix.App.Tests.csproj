@@ -22,6 +22,9 @@
     <Compile Include="../../src/ScreenFix.App/Lifecycle/ResourceOwner.cs" Link="Lifecycle/ResourceOwner.cs" />
     <Compile Include="../../src/ScreenFix.App/Lifecycle/SingleInstanceGate.cs" Link="Lifecycle/SingleInstanceGate.cs" />
     <Compile Include="../../src/ScreenFix.App/Overlays/MaskOverlaySet.cs" Link="Overlays/MaskOverlaySet.cs" />
+    <Compile Include="../../src/ScreenFix.App/Runtime/RuntimeContracts.cs" Link="Runtime/RuntimeContracts.cs" />
+    <Compile Include="../../src/ScreenFix.App/Runtime/RuntimeController.cs" Link="Runtime/RuntimeController.cs" />
+    <Compile Include="../../src/ScreenFix.App/Runtime/RuntimeState.cs" Link="Runtime/RuntimeState.cs" />
   </ItemGroup>
 
   <ItemGroup>

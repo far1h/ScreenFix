@@ -17,45 +17,79 @@ public sealed record MenuRow(
     bool IsSeparator,
     MenuCommand? Command);
 
+public sealed record MenuStateInput(
+    bool Enabled,
+    bool HasSavedDisplay,
+    bool DisplayConnected,
+    bool Calibrating,
+    bool InvalidConfiguration,
+    bool MaskRenderingFailed);
+
 public static class MenuState
 {
-    public static IReadOnlyList<MenuRow> Build(
-        bool enabled,
-        bool calibrating,
-        bool displayConnected,
-        string? pausedReason,
-        bool implementationReady)
+    public static IReadOnlyList<MenuRow> Build(MenuStateInput state)
     {
         var rows = new List<MenuRow>();
-        if (!string.IsNullOrWhiteSpace(pausedReason))
+        var pausedReason = PausedReason(state);
+        if (pausedReason is not null)
         {
-            rows.Add(new MenuRow($"Paused: {pausedReason}", false, false, false, null));
+            rows.Add(new MenuRow(pausedReason, false, false, false, null));
         }
 
         rows.Add(Action(
-            enabled ? "Disable" : "Enable",
+            state.Enabled ? "Disable" : "Enable",
             MenuCommand.ToggleEnabled,
-            enabled,
-            implementationReady));
+            state.Enabled,
+            true));
         rows.Add(Action(
             "Calibrate",
             MenuCommand.Calibrate,
-            calibrating,
-            implementationReady && displayConnected));
+            state.Calibrating,
+            state.HasSavedDisplay && state.DisplayConnected));
         rows.Add(Action(
             "Select Monitor",
             MenuCommand.SelectMonitor,
             false,
-            implementationReady));
+            true));
         rows.Add(Action(
             "Reset to Defaults",
             MenuCommand.ResetDefaults,
             false,
-            implementationReady && displayConnected));
-        rows.Add(Action("Reload", MenuCommand.Reload, false, implementationReady));
+            state.HasSavedDisplay && state.DisplayConnected));
+        rows.Add(Action("Reload", MenuCommand.Reload, false, true));
         rows.Add(new MenuRow(string.Empty, false, false, true, null));
         rows.Add(Action("Quit", MenuCommand.Quit, false, true));
         return rows;
+    }
+
+    private static string? PausedReason(MenuStateInput state)
+    {
+        if (state.InvalidConfiguration)
+        {
+            return "Paused: Invalid configuration";
+        }
+
+        if (state.MaskRenderingFailed)
+        {
+            return "Paused: Mask rendering failed";
+        }
+
+        if (state.Enabled && state.HasSavedDisplay && !state.DisplayConnected)
+        {
+            return "Paused: Selected display is disconnected";
+        }
+
+        if (!state.HasSavedDisplay)
+        {
+            return "Paused: Select a monitor";
+        }
+
+        if (state.Enabled && state.DisplayConnected && !state.Calibrating)
+        {
+            return "Paused: Window correction is not available in this build";
+        }
+
+        return null;
     }
 
     private static MenuRow Action(

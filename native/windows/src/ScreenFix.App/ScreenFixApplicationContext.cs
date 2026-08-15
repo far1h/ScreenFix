@@ -64,12 +64,13 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
     private ContextMenuStrip BuildMenu()
     {
         var menu = new ContextMenuStrip();
-        var rows = MenuState.Build(
-            enabled: false,
-            calibrating: false,
-            displayConnected: false,
-            pausedReason: null,
-            implementationReady: false);
+        var rows = MenuState.Build(new MenuStateInput(
+            Enabled: false,
+            HasSavedDisplay: false,
+            DisplayConnected: false,
+            Calibrating: false,
+            InvalidConfiguration: false,
+            MaskRenderingFailed: false));
 
         foreach (var row in rows)
         {
