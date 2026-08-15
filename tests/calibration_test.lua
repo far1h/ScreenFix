@@ -1806,6 +1806,176 @@ test.test("successful replacement retires old input and rejects its captured cal
     test.equal(calibration.workingBands[1] == before, false)
 end)
 
+local retirementReentrancyCases = {
+    {
+        name = "replacement reports superseded when prior tap stop stops it",
+        boundary = "tap",
+        action = "stop",
+    },
+    {
+        name = "replacement reports superseded when prior canvas deletion stops it",
+        boundary = "canvas",
+        action = "stop",
+    },
+    {
+        name = "replacement reports superseded when prior tap stop starts newer input",
+        boundary = "tap",
+        action = "replace",
+    },
+    {
+        name = "replacement reports superseded when prior canvas deletion starts newer input",
+        boundary = "canvas",
+        action = "replace",
+    },
+}
+
+for _, retirementCase in ipairs(retirementReentrancyCases) do
+    local case = retirementCase
+    test.test(case.name, function()
+        local canvas = fake.canvas()
+        local eventtap = fake.eventtap()
+        local calibration = newCalibration({
+            canvas = canvas,
+            chooser = fake.chooser(),
+            eventtap = eventtap,
+            screens = function()
+                return {}
+            end,
+            mouseButtons = function()
+                return {}
+            end,
+            geometry = geometry,
+        })
+        local screen = fake.screen(
+            "display",
+            "Display",
+            { x = 0, y = 0, w = 1000, h = 800 }
+        )
+        calibration:start(screen, validBands(), function() end, function() end)
+        local oldCanvas = canvas.canvases[1]
+        local oldTap = eventtap.taps[1]
+        local newerStarted
+        local newerError
+        local newerSession
+
+        local function reenter()
+            eventtap.stopHook = nil
+            canvas.deleteHook = nil
+            if case.action == "stop" then
+                calibration:stop()
+                return
+            end
+
+            newerStarted, newerError = calibration:start(
+                screen,
+                validBands(),
+                function() end,
+                function() end
+            )
+            newerSession = calibration.session
+        end
+
+        if case.boundary == "tap" then
+            eventtap.stopHook = function(tap)
+                if tap == oldTap then
+                    reenter()
+                end
+            end
+        else
+            canvas.deleteHook = function(editor)
+                if editor == oldCanvas then
+                    reenter()
+                end
+            end
+        end
+
+        local started, startError = calibration:start(
+            screen,
+            validBands(),
+            function() end,
+            function() end
+        )
+
+        test.equal(started, nil)
+        test.equal(startError, "calibration start superseded")
+        test.equal(oldTap.stopCount, 1)
+        test.equal(oldCanvas.deleteCount, 1)
+        test.equal(eventtap.taps[2].stopCount, 1)
+        test.equal(canvas.canvases[2].deleteCount, 1)
+
+        if case.action == "stop" then
+            test.equal(calibration.session, nil)
+            test.equal(calibration.sessionToken, nil)
+            test.equal(calibration.editorCanvas, nil)
+            test.equal(calibration.eventTap, nil)
+            return
+        end
+
+        test.equal(newerStarted, true)
+        test.equal(newerError, nil)
+        test.equal(calibration.session, newerSession)
+        test.equal(calibration.editorCanvas, canvas.canvases[3])
+        test.equal(calibration.eventTap, eventtap.taps[3])
+        test.equal(canvas.canvases[3].deleteCount, 0)
+        test.equal(eventtap.taps[3].stopCount, 0)
+        test.equal(eventtap.taps[3]:isEnabled(), true)
+        assertActiveMovement(
+            calibration,
+            canvas.canvases[3],
+            eventtap.taps[3],
+            eventtap.event.types
+        )
+    end)
+end
+
+test.test("replacement cleans its attached candidate after retirement invalidates it", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    calibration:start(screen, validBands(), function() end, function() end)
+    local oldTap = eventtap.taps[1]
+    local saveResult
+    local saveError
+    eventtap.stopHook = function(tap)
+        if tap == oldTap then
+            eventtap.stopHook = nil
+            saveResult, saveError = calibration:save()
+        end
+    end
+
+    local started, startError = calibration:start(
+        screen,
+        validBands(),
+        function()
+            error("candidate save failure", 0)
+        end,
+        function() end
+    )
+
+    test.equal(saveResult, nil)
+    test.equal(saveError, "candidate save failure")
+    test.equal(started, nil)
+    test.equal(startError, "calibration start superseded")
+    test.equal(calibration.session, nil)
+    test.equal(calibration.sessionToken, nil)
+    test.equal(calibration.editorCanvas, nil)
+    test.equal(calibration.eventTap, nil)
+    test.equal(canvas.canvases[2].deleteCount, 1)
+    test.equal(eventtap.taps[2].stopCount, 1)
+end)
+
 test.test("replacement commit survives prior tap-stop and canvas-delete failures", function()
     local canvas = fake.canvas()
     local eventtap = fake.eventtap()

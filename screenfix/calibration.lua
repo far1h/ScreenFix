@@ -549,7 +549,21 @@ function Calibration:start(screen, bands, onSave, onCancel, commitGuard)
         deleteEditor(previousSession.editorCanvas)
     end
 
-    return true
+    if self.session == candidate
+        and self.sessionToken == candidateToken
+        and self.lifecycleGeneration == candidateGeneration
+    then
+        return true
+    end
+
+    if self.session == candidate then
+        self.sessionToken = nil
+        clearSession(self)
+        stopEventTap(candidate.eventTap)
+        deleteEditor(candidate.editorCanvas)
+    end
+
+    return nil, "calibration start superseded"
 end
 
 return M
