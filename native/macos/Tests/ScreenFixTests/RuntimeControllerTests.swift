@@ -10,6 +10,7 @@ private final class FakeRuntimeStore: RuntimeConfigurationStore {
     var configuration: ScreenFixConfiguration?
     var loadError: Error?
     var saveError: Error?
+    var onSave: ((ScreenFixConfiguration) throws -> Void)?
     let log: NSMutableArray
 
     init(configuration: ScreenFixConfiguration?, log: NSMutableArray) {
@@ -25,6 +26,7 @@ private final class FakeRuntimeStore: RuntimeConfigurationStore {
 
     func save(_ configuration: ScreenFixConfiguration) throws {
         log.add("save")
+        try onSave?(configuration)
         if let saveError { throw saveError }
         self.configuration = configuration
     }
@@ -371,6 +373,39 @@ let runtimeControllerTests = [
         value.runtime.setEnabled(true)
         try expectEqual(value.masks.committedCount, 3)
         try expectEqual(runtimeEvents(value).filter { $0 == "prepare" }.count, 1)
+    },
+    TestCase(name: "RuntimeController Disable save failure preserves enabled masks") {
+        let value = fixture(configuration: runtimeConfig("a"), screens: [runtimeDisplay("a")])
+        value.runtime.start()
+        let before = value.runtime.snapshot
+        value.store.saveError = FakeRuntimeError.requested
+        value.log.removeAllObjects()
+
+        value.runtime.setEnabled(false)
+        let after = value.runtime.snapshot
+
+        try expectEqual(after.configuration, before.configuration)
+        try expectEqual(after.displayConnected, before.displayConnected)
+        try expectEqual(after.menuState.enabledActionTitle, "Disable")
+        try expect(after.menuState.enabledActionChecked)
+        try expect(after.menuState.status?.hasPrefix("Paused: config error:") == true)
+        try expectEqual(value.masks.committedCount, 3)
+        try expectEqual(runtimeEvents(value), ["save"])
+    },
+    TestCase(name: "RuntimeController Disable save boundary cannot mutate after reentrant stop") {
+        let value = fixture(configuration: runtimeConfig("a"), screens: [runtimeDisplay("a")])
+        value.runtime.start()
+        value.log.removeAllObjects()
+        value.store.onSave = { _ in
+            value.runtime.stop()
+            throw FakeRuntimeError.requested
+        }
+
+        value.runtime.setEnabled(false)
+
+        try expectEqual(value.runtime.snapshot.configuration?.enabled, true)
+        try expectEqual(value.runtime.snapshot.menuState.status, nil)
+        try expectEqual(runtimeEvents(value), ["save", "unsubscribe", "remove-masks"])
     },
     TestCase(name: "RuntimeController callbacks reconcile and stale callback is inert after stop") {
         let value = fixture(configuration: runtimeConfig("a"), screens: [runtimeDisplay("a")])

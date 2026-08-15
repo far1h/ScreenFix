@@ -171,13 +171,16 @@ public final class RuntimeController {
         )
 
         if !enabled {
-            maskOwner.removeAll()
+            let activeGeneration = generation
             do {
                 try store.save(desired)
+                guard started, generation == activeGeneration else { return }
                 configuration = desired
+                maskOwner.removeAll()
                 refreshConnection()
                 runtimeError = nil
             } catch {
+                guard started, generation == activeGeneration else { return }
                 reportConfiguration(error)
             }
             stateDidChange()
