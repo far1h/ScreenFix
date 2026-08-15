@@ -397,6 +397,20 @@ test.test("snapBand includes exactly 12 points but excludes 12.01 points", funct
     test.equal(outside.x, 0.01201)
 end)
 
+test.test("snapBand excludes a correction just beyond 12 points", function()
+    local raw = { x = 0.0120000000005, y = 0.20, w = 0.30, h = 0.40 }
+    local snapped = geometry.snapBand(
+        raw,
+        1,
+        "body",
+        {},
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.rect(snapped, raw)
+end)
+
 test.test("snapBand aligns x with a vertically stacked peer and excludes the active band", function()
     local peer = { x = 0.40, y = 0.10, w = 0.20, h = 0.20 }
     local active = { x = 0.39, y = 0.70, w = 0.20, h = 0.20 }
@@ -660,6 +674,20 @@ test.test("snapBand allows a resize result exactly 20 points wide", function()
     )
 
     test.equal(snapped.w, 0.025 + (0.52 - (0.50 + 0.025)))
+end)
+
+test.test("snapBand rejects a resize result just below 20 points wide", function()
+    local raw = { x = 0.50, y = 0.20, w = 0.025, h = 0.20 }
+    local snapped = geometry.snapBand(
+        raw,
+        2,
+        "right",
+        { { x = 0.5199999999995, y = 0.70, w = 0.10, h = 0.10 } },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.rect(snapped, raw)
 end)
 
 test.test("snapBand ignores malformed peers and continues to later targets", function()

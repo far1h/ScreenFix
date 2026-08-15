@@ -1,5 +1,4 @@
 local M = {}
-local SNAP_EPSILON = 1e-12
 local SNAP_PARTS = {
     body = true,
     bottom = true,
@@ -118,10 +117,19 @@ local function isPositiveInteger(value)
     return isFiniteNumber(value) and value >= 1 and value % 1 == 0
 end
 
-local function isSnapCandidate(rect, fullFrame)
+local function isSnapCandidate(rect, fullFrame, resizedAxis, resizedSizePoints)
+    local widthPoints = rect.w * fullFrame.w
+    local heightPoints = rect.h * fullFrame.h
+
+    if resizedAxis == "x" then
+        widthPoints = resizedSizePoints
+    elseif resizedAxis == "y" then
+        heightPoints = resizedSizePoints
+    end
+
     return withinUnitBounds(rect)
-        and rect.w + SNAP_EPSILON >= 20 / fullFrame.w
-        and rect.h + SNAP_EPSILON >= 20 / fullFrame.h
+        and widthPoints >= 20
+        and heightPoints >= 20
 end
 
 local function correctedRect(rect, axis, edge, correction)
@@ -141,24 +149,38 @@ local function correctedRect(rect, axis, edge, correction)
     return result
 end
 
-local function snapAxis(rect, axis, edges, targets, threshold, fullFrame, resizeEdge)
+local function snapAxis(rect, axis, edges, targets, thresholdPoints, fullFrame, resizeEdge)
     local position = axis == "x" and "x" or "y"
     local size = axis == "x" and "w" or "h"
+    local pointScale = fullFrame[size]
     local best
     local bestDistance
 
     for _, target in ipairs(targets) do
         for _, edge in ipairs(edges) do
             local edgePosition = rect[position]
+            local edgePositionPoints = rect[position] * pointScale
             if edge == "trailing" then
                 edgePosition = edgePosition + rect[size]
+                edgePositionPoints = edgePositionPoints + rect[size] * pointScale
             end
+            local correctionPoints = target * pointScale - edgePositionPoints
             local correction = target - edgePosition
             local distance = math.abs(correction)
+            local distancePoints = math.abs(correctionPoints)
             local candidate = correctedRect(rect, axis, resizeEdge or "body", correction)
+            local resizedSizePoints
 
-            if distance <= threshold + SNAP_EPSILON
-                and isSnapCandidate(candidate, fullFrame)
+            if resizeEdge == "leading" then
+                resizedSizePoints = rect[position] * pointScale
+                    + rect[size] * pointScale
+                    - target * pointScale
+            elseif resizeEdge == "trailing" then
+                resizedSizePoints = target * pointScale - rect[position] * pointScale
+            end
+
+            if distancePoints <= thresholdPoints
+                and isSnapCandidate(candidate, fullFrame, resizeEdge and axis, resizedSizePoints)
                 and (not bestDistance or distance < bestDistance)
             then
                 best = candidate
@@ -337,7 +359,7 @@ function M.snapBand(rawBand, activeIndex, part, bands, fullFrame, thresholdPoint
             "x",
             { "leading", "trailing" },
             xTargets,
-            thresholdPoints / fullFrame.w,
+            thresholdPoints,
             fullFrame
         )
         result = snapAxis(
@@ -345,21 +367,21 @@ function M.snapBand(rawBand, activeIndex, part, bands, fullFrame, thresholdPoint
             "y",
             { "leading", "trailing" },
             yTargets,
-            thresholdPoints / fullFrame.h,
+            thresholdPoints,
             fullFrame
         )
     elseif part == "left" then
         local targets = axisTargets("x", { 0 }, bands, activeIndex)
-        result = snapAxis(result, "x", { "leading" }, targets, thresholdPoints / fullFrame.w, fullFrame, "leading")
+        result = snapAxis(result, "x", { "leading" }, targets, thresholdPoints, fullFrame, "leading")
     elseif part == "right" then
         local targets = axisTargets("x", { 1 }, bands, activeIndex)
-        result = snapAxis(result, "x", { "trailing" }, targets, thresholdPoints / fullFrame.w, fullFrame, "trailing")
+        result = snapAxis(result, "x", { "trailing" }, targets, thresholdPoints, fullFrame, "trailing")
     elseif part == "top" then
         local targets = axisTargets("y", { 0 }, bands, activeIndex)
-        result = snapAxis(result, "y", { "leading" }, targets, thresholdPoints / fullFrame.h, fullFrame, "leading")
+        result = snapAxis(result, "y", { "leading" }, targets, thresholdPoints, fullFrame, "leading")
     elseif part == "bottom" then
         local targets = axisTargets("y", { 1 }, bands, activeIndex)
-        result = snapAxis(result, "y", { "trailing" }, targets, thresholdPoints / fullFrame.h, fullFrame, "trailing")
+        result = snapAxis(result, "y", { "trailing" }, targets, thresholdPoints, fullFrame, "trailing")
     end
 
     return result
