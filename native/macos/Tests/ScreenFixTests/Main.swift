@@ -9,6 +9,8 @@ enum Main {
                 + calibrationPanelTests
                 + maskGeometryTests
                 + windowCorrectionTests
+                + displayAssignmentTests
+                + windowEligibilityTests
                 + configValidatorTests
                 + displaySelectorTests
                 + configStoreTests
