@@ -18,15 +18,38 @@ lifecycle behavior.
 - Use a consistent 9-point button corner radius.
 - Render button labels at 16 points with the existing centered, high-contrast treatment.
 - Use `#16A34A` for Save and an opaque charcoal equivalent to `#353A42` for Cancel.
-- Render the instruction as a 42-point-high dark translucent badge with a 10-point
-  corner radius and a subtle light border.
-- Give the instruction badge enough width and smaller 15-point type so
-  `Drag red bands or white edges` is fully visible.
+- On a normal display, render the instruction background at local
+  `{ x = 24, y = 24, w = 330, h = 42 }`. Use black at `0.88` alpha, a one-point
+  white stroke at `0.28` alpha, and a 10-point corner radius.
+- Render an 8 by 8-point `#FF643B` accent dot at local
+  `{ x = 40, y = 41, w = 8, h = 8 }`.
+- Render `Drag red bands or white edges` left-aligned at 15 points in local frame
+  `{ x = 58, y = 24, w = 280, h = 42 }`. This leaves 16 points of right padding and
+  enough text width to prevent the clipping shown in the screenshot.
 - Keep the existing translucent red bands, orange outlines, and white resize handles.
 
-On an unusually narrow display, calculate smaller equal button widths and a bounded
-instruction width so every control remains inside the local canvas. Normal displays use
-the exact measurements above.
+The supported calibration canvas is at least 260 by 180 points. Reject a smaller canvas
+with `display is too small for calibration controls` before allocating an editor.
+
+For every supported width, keep the 24-point horizontal insets and 12-point button gap.
+Calculate each button width as
+`min(104, floor((fullFrame.w - 48 - 12) / 2))`; this is at least 100 points at the
+minimum supported width. Keep the 42-point button height and set local `y` to
+`fullFrame.h - 24 - 42`.
+
+At widths below 378 points, use a narrow instruction background at
+`{ x = 24, y = 24, w = fullFrame.w - 48, h = 58 }`, keep the accent dot centered
+vertically, and render the full instruction in a left-aligned 13-point text frame at
+`{ x = 58, y = 24, w = fullFrame.w - 98, h = 58 }`, allowing it to wrap. At widths
+of 378 points or greater, use the exact normal-display frames above.
+
+As a narrow negative-origin oracle, a display with absolute frame
+`{ x = -500, y = -200, w = 260, h = 180 }` uses local Save frame
+`{ x = 24, y = 114, w = 100, h = 42 }`, local Cancel frame
+`{ x = 136, y = 114, w = 100, h = 42 }`, instruction background
+`{ x = 24, y = 24, w = 212, h = 58 }`, accent dot
+`{ x = 40, y = 49, w = 8, h = 8 }`, and instruction text
+`{ x = 58, y = 24, w = 162, h = 58 }`.
 
 ## Interaction and lifecycle
 
@@ -50,12 +73,17 @@ Windows/macOS releases are separate follow-up workstreams.
 
 Automated tests will prove:
 
-- exact control frames, gap, insets, radii, colors, and label sizes on a normal display;
-- instruction text and frame fit without clipping;
-- all controls remain inside a narrow, negative-origin display;
+- exact control frames, gap, insets, radii, colors, and label sizes on a 3440 by 1440
+  normal display;
+- exact instruction background, stroke, dot, text frame, and type size on normal and
+  narrow displays;
+- the 260 by 180 negative-origin oracle above remains fully inside local bounds;
+- smaller displays fail before allocating an editor;
 - Save and Cancel hit testing still uses the rendered frames;
 - visual elements do not claim mouse tracking;
-- candidate construction failures preserve the prior live editor;
+- a replacement failure while assigning or configuring a new control or instruction
+  element deletes the candidate and stops its input while preserving the prior canvas,
+  event tap, frames, callbacks, and ownership;
 - the complete existing Lua suite remains green.
 
 Manual Hammerspoon verification will confirm the polished controls on the selected
