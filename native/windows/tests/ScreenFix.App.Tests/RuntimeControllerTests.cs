@@ -192,6 +192,22 @@ public sealed class RuntimeControllerTests
     }
 
     [Fact]
+    public void SelectMonitor_PathDisappearsBeforeChoiceReturns_DoesNotUseNameFallback()
+    {
+        var display = Connected(DefaultConfig().Display);
+        var harness = new Harness(new ConfigLoadResult(null, true, null), [display]);
+        harness.Controller.Start();
+        harness.Controller.SelectMonitor();
+        harness.Topology.Displays = [display with { StableId = null }];
+
+        harness.Picker.Select(display);
+
+        Assert.False(harness.Calibration.IsEditing);
+        Assert.Equal(0, harness.Config.SaveCount);
+        Assert.Single(harness.Notices.Messages);
+    }
+
+    [Fact]
     public void Calibrate_CheckedCommandCancelsAndRestoresProtection()
     {
         var config = DefaultConfig();
