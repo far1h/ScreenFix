@@ -102,8 +102,13 @@ private enum AXObserverRegistryError: Error {
 }
 
 private struct AXRegistration {
+    let pid: pid_t
     let element: AXUIElement
     let notification: CFString
+
+    func matches(_ identity: AXWindowIdentity) -> Bool {
+        pid == identity.pid && CFEqual(element, identity.element)
+    }
 }
 
 private final class AXApplicationSession {
@@ -288,6 +293,7 @@ public final class AXObserverRegistry: WindowGuardEventSource {
             do {
                 try self.register(
                     Self.applicationNotifications,
+                    pid: pid,
                     element: applicationElement,
                     observer: observer,
                     registrations: &registrations
@@ -299,6 +305,7 @@ public final class AXObserverRegistry: WindowGuardEventSource {
                 for window in windows {
                     try self.register(
                         Self.windowNotifications,
+                        pid: pid,
                         element: window,
                         observer: observer,
                         registrations: &registrations
@@ -387,6 +394,7 @@ public final class AXObserverRegistry: WindowGuardEventSource {
 
     private func register(
         _ notifications: [CFString],
+        pid: pid_t,
         element: AXUIElement,
         observer: AXObserverToken,
         registrations: inout [AXRegistration]
@@ -395,7 +403,11 @@ public final class AXObserverRegistry: WindowGuardEventSource {
             try client.prepare(element)
             let result = observer.addNotification(notification, element: element)
             if result == .success {
-                registrations.append(AXRegistration(element: element, notification: notification))
+                registrations.append(AXRegistration(
+                    pid: pid,
+                    element: element,
+                    notification: notification
+                ))
             } else if result != .notificationUnsupported {
                 throw AXObserverRegistryError.registration(result)
             }
@@ -436,7 +448,9 @@ public final class AXObserverRegistry: WindowGuardEventSource {
         case kAXWindowDeminiaturizedNotification:
             emit(pid: pid, element: element, kind: .deminiaturized)
         case kAXUIElementDestroyedNotification:
-            session.windows.remove(AXWindowIdentity(pid: pid, element: element))
+            let identity = AXWindowIdentity(pid: pid, element: element)
+            session.windows.remove(identity)
+            session.registrations.removeAll { $0.matches(identity) }
             emit(pid: pid, element: element, kind: .destroyed)
         default:
             break
@@ -459,6 +473,7 @@ public final class AXObserverRegistry: WindowGuardEventSource {
                 for window in windows where !known.contains(AXWindowIdentity(pid: pid, element: window)) {
                     try self.register(
                         Self.windowNotifications,
+                        pid: pid,
                         element: window,
                         observer: session.observer,
                         registrations: &registrations
@@ -528,6 +543,7 @@ public final class AXObserverRegistry: WindowGuardEventSource {
                 if !known.contains(AXWindowIdentity(pid: pid, element: window)) {
                     try self.register(
                         Self.windowNotifications,
+                        pid: pid,
                         element: window,
                         observer: session.observer,
                         registrations: &registrations

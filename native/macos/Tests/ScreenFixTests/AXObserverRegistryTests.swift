@@ -258,6 +258,49 @@ let axObserverRegistryTests: [TestCase] = [
 
         try expectEqual(environment.events.map(\.kind), [.seeded, .moved, .created, .focused, .destroyed])
     },
+    TestCase(name: "AXObserverRegistry stop never touches a destroyed window again") {
+        let environment = ObserverEnvironment()
+        let destroyed = environment.window(142)
+        let live = environment.window(242)
+        environment.apps = [environment.app(42)]
+        environment.client.windows[42] = [destroyed, live]
+        let registry = environment.registry()
+        registry.start()
+        guard let token = environment.tokens[42] else { throw TestFailure(description: "missing token") }
+        token.callback(destroyed, kAXUIElementDestroyedNotification as CFString)
+        environment.log.removeAllObjects()
+
+        registry.stop()
+
+        let calls = environment.log.compactMap { $0 as? String }
+        try expectEqual(calls.contains { $0 == "prepare-142" }, false)
+        try expectEqual(calls.contains { $0.hasPrefix("remove-142-") }, false)
+        try expect(calls.contains { $0.hasPrefix("prepare-242") })
+        try expect(calls.contains { $0.hasPrefix("remove-242-") })
+    },
+    TestCase(name: "AXObserverRegistry termination keeps destroyed registrations bounded") {
+        let environment = ObserverEnvironment()
+        let first = environment.window(142)
+        let second = environment.window(242)
+        environment.apps = [environment.app(42)]
+        environment.client.windows[42] = [first, second]
+        let registry = environment.registry()
+        registry.start()
+        guard let token = environment.tokens[42] else { throw TestFailure(description: "missing token") }
+        token.callback(first, kAXUIElementDestroyedNotification as CFString)
+        token.callback(second, kAXUIElementDestroyedNotification as CFString)
+        environment.log.removeAllObjects()
+
+        environment.workspaceCallback?(
+            AXApplicationEvent(kind: .terminated, application: environment.app(42, terminated: true))
+        )
+
+        let calls = environment.log.compactMap { $0 as? String }
+        try expectEqual(calls.contains { $0.hasPrefix("prepare-142") }, false)
+        try expectEqual(calls.contains { $0.hasPrefix("remove-142-") }, false)
+        try expectEqual(calls.contains { $0.hasPrefix("prepare-242") }, false)
+        try expectEqual(calls.contains { $0.hasPrefix("remove-242-") }, false)
+    },
     TestCase(name: "AXObserverRegistry stale callbacks are inert after idempotent stop") {
         let environment = ObserverEnvironment()
         environment.apps = [environment.app(42)]
