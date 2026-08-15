@@ -207,12 +207,7 @@ public final class RuntimeController {
         let screens = catalog.connectedDisplays()
         guard let screen = screens.first(where: { candidate in
             candidate.display.stableId?.caseInsensitiveCompare(stableId) == .orderedSame
-        }), let selectedId = screen.display.stableId else {
-            displayConnected = false
-            runtimeError = "Paused: saved display is disconnected"
-            stateDidChange()
-            return
-        }
+        }), let selectedId = screen.display.stableId else { return }
         let identity = DisplayIdentity(
             stableId: selectedId,
             name: screen.display.name,

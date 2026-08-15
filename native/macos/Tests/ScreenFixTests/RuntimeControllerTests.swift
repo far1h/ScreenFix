@@ -231,6 +231,21 @@ let runtimeControllerTests = [
         ])
         try expect(value.runtime.snapshot.menuState.status?.hasPrefix("Paused: config error:") == true)
     },
+    TestCase(name: "RuntimeController stale monitor choice preserves the live transaction") {
+        let value = fixture(configuration: runtimeConfig("a"), screens: [runtimeDisplay("a")])
+        value.runtime.start()
+        let before = value.runtime.snapshot
+        value.log.removeAllObjects()
+
+        value.runtime.selectDisplay(stableId: "disconnected-menu-choice")
+        let after = value.runtime.snapshot
+
+        try expectEqual(after.configuration, before.configuration)
+        try expectEqual(after.displayConnected, before.displayConnected)
+        try expectEqual(after.menuState, before.menuState)
+        try expectEqual(value.masks.committedCount, 3)
+        try expectEqual(runtimeEvents(value), ["displays"])
+    },
     TestCase(name: "RuntimeController enabled reset transacts and disabled reset only saves") {
         let enabled = fixture(configuration: runtimeConfig("a"), screens: [runtimeDisplay("a")])
         enabled.runtime.start()
