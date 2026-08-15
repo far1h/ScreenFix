@@ -9,7 +9,6 @@ public sealed class SystemMessageCoordinatorTests
     [InlineData(SystemMessage.SettingChange, SystemMessageCoordinator.SetWorkArea, ExpectedCall.Reconcile)]
     [InlineData(SystemMessage.PowerBroadcast, SystemMessageCoordinator.PowerSuspend, ExpectedCall.Suspend)]
     [InlineData(SystemMessage.PowerBroadcast, SystemMessageCoordinator.PowerResumeAutomatic, ExpectedCall.Resume)]
-    [InlineData(SystemMessage.DpiChanged, 0, ExpectedCall.CancelEditorForDpi)]
     public void Handle_RoutesSupportedMessageOnNextUiTurn(
         int message,
         int value,
@@ -24,6 +23,19 @@ public sealed class SystemMessageCoordinatorTests
         Assert.Empty(target.Calls);
         dispatcher.RunAll();
         Assert.Equal([expected], target.Calls);
+    }
+
+    [Fact]
+    public void Handle_HiddenWindowDpiMessageDoesNotUseLifetimeTokenAsEditorToken()
+    {
+        var target = new FakeTarget();
+        var dispatcher = new FakeDispatcher();
+        var coordinator = new SystemMessageCoordinator(target, dispatcher, generation: 7);
+
+        coordinator.Handle(SystemMessage.DpiChanged, 0, callbackGeneration: 7);
+        dispatcher.RunAll();
+
+        Assert.Empty(target.Calls);
     }
 
     [Fact]

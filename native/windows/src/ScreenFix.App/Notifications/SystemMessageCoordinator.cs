@@ -36,6 +36,7 @@ public sealed class SystemMessageCoordinator
     private bool suspendQueued;
     private bool resumeQueued;
     private bool dpiQueued;
+    private long queuedDpiEditorGeneration;
     private PowerState powerState;
 
     public SystemMessageCoordinator(
@@ -71,9 +72,6 @@ public sealed class SystemMessageCoordinator
             case SystemMessage.PowerBroadcast when value == PowerResumeAutomatic:
                 QueueResume(callbackGeneration);
                 break;
-            case SystemMessage.DpiChanged:
-                QueueDpiChange(callbackGeneration, callbackGeneration);
-                break;
         }
     }
 
@@ -92,6 +90,7 @@ public sealed class SystemMessageCoordinator
         suspendQueued = false;
         resumeQueued = false;
         dpiQueued = false;
+        queuedDpiEditorGeneration = 0;
         powerState = PowerState.Unknown;
     }
 
@@ -159,6 +158,7 @@ public sealed class SystemMessageCoordinator
 
     private void QueueDpiChange(long callbackGeneration, long editorGeneration)
     {
+        queuedDpiEditorGeneration = editorGeneration;
         if (dpiQueued)
         {
             return;
@@ -173,7 +173,9 @@ public sealed class SystemMessageCoordinator
             }
 
             dpiQueued = false;
-            target.CancelEditorForDpiChange(editorGeneration);
+            var latestEditorGeneration = queuedDpiEditorGeneration;
+            queuedDpiEditorGeneration = 0;
+            target.CancelEditorForDpiChange(latestEditorGeneration);
         });
     }
 

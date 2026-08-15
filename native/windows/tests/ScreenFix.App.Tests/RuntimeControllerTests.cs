@@ -465,6 +465,30 @@ public sealed class RuntimeControllerTests
     }
 
     [Fact]
+    public void DeferredDpiChangesFromOldAndReplacementEditors_CancelReplacement()
+    {
+        var config = DefaultConfig();
+        var harness = new Harness(
+            new ConfigLoadResult(config, false, null),
+            [Connected(config.Display)]);
+        var dispatcher = new DeferredDispatcher();
+        var coordinator = new SystemMessageCoordinator(harness.Controller, dispatcher, generation: 1);
+        harness.Controller.Start();
+        harness.Controller.Calibrate();
+        var oldEditorGeneration = harness.Calibration.Request!.Generation;
+        coordinator.HandleEditorDpiChanged(oldEditorGeneration, callbackGeneration: 1);
+
+        harness.Controller.Calibrate();
+        harness.Controller.Calibrate();
+        var replacementGeneration = harness.Calibration.Request!.Generation;
+        coordinator.HandleEditorDpiChanged(replacementGeneration, callbackGeneration: 1);
+        dispatcher.RunAll();
+
+        Assert.False(harness.Calibration.IsEditing);
+        Assert.Equal(3, harness.Overlays.Replacements.Count);
+    }
+
+    [Fact]
     public void SuspendAndResume_CloseTransientResourcesThenRestoreMasksOnce()
     {
         var config = DefaultConfig();
