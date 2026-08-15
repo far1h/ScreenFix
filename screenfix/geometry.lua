@@ -1,4 +1,12 @@
 local M = {}
+local SNAP_EPSILON = 1e-12
+local SNAP_PARTS = {
+    body = true,
+    bottom = true,
+    left = true,
+    right = true,
+    top = true,
+}
 
 local function copyRect(rect)
     return {
@@ -69,6 +77,134 @@ local function lessCost(left, right)
     end
 
     return false
+end
+
+local function isFiniteNumber(value)
+    return type(value) == "number"
+        and value == value
+        and value ~= math.huge
+        and value ~= -math.huge
+end
+
+local function hasFiniteRect(rect)
+    return type(rect) == "table"
+        and isFiniteNumber(rect.x)
+        and isFiniteNumber(rect.y)
+        and isFiniteNumber(rect.w)
+        and isFiniteNumber(rect.h)
+end
+
+local function withinUnitBounds(rect)
+    return rect.x >= 0
+        and rect.y >= 0
+        and rect.w >= 0
+        and rect.h >= 0
+        and rect.x + rect.w <= 1
+        and rect.y + rect.h <= 1
+end
+
+local function isNormalizedRect(rect)
+    return hasFiniteRect(rect)
+        and rect.w > 0
+        and rect.h > 0
+        and withinUnitBounds(rect)
+end
+
+local function isValidFullFrame(fullFrame)
+    return hasFiniteRect(fullFrame) and fullFrame.w > 0 and fullFrame.h > 0
+end
+
+local function isPositiveInteger(value)
+    return isFiniteNumber(value) and value >= 1 and value % 1 == 0
+end
+
+local function isSnapCandidate(rect, fullFrame)
+    return withinUnitBounds(rect)
+        and rect.w + SNAP_EPSILON >= 20 / fullFrame.w
+        and rect.h + SNAP_EPSILON >= 20 / fullFrame.h
+end
+
+local function correctedRect(rect, axis, edge, correction)
+    local result = copyRect(rect)
+    local position = axis == "x" and "x" or "y"
+    local size = axis == "x" and "w" or "h"
+
+    if edge == "body" then
+        result[position] = result[position] + correction
+    elseif edge == "leading" then
+        result[position] = result[position] + correction
+        result[size] = result[size] - correction
+    else
+        result[size] = result[size] + correction
+    end
+
+    return result
+end
+
+local function snapAxis(rect, axis, edges, targets, threshold, fullFrame, resizeEdge)
+    local position = axis == "x" and "x" or "y"
+    local size = axis == "x" and "w" or "h"
+    local best
+    local bestDistance
+
+    for _, target in ipairs(targets) do
+        for _, edge in ipairs(edges) do
+            local edgePosition = rect[position]
+            if edge == "trailing" then
+                edgePosition = edgePosition + rect[size]
+            end
+            local correction = target - edgePosition
+            local distance = math.abs(correction)
+            local candidate = correctedRect(rect, axis, resizeEdge or "body", correction)
+
+            if distance <= threshold + SNAP_EPSILON
+                and isSnapCandidate(candidate, fullFrame)
+                and (not bestDistance or distance < bestDistance)
+            then
+                best = candidate
+                bestDistance = distance
+            end
+        end
+    end
+
+    return best or rect
+end
+
+local function axisTargets(axis, screenTargets, bands, activeIndex)
+    local position = axis == "x" and "x" or "y"
+    local size = axis == "x" and "w" or "h"
+    local targets = {}
+
+    for _, target in ipairs(screenTargets) do
+        targets[#targets + 1] = target
+    end
+    local peerIndices = {}
+    for index in pairs(bands) do
+        if isPositiveInteger(index) then
+            peerIndices[#peerIndices + 1] = index
+        end
+    end
+    table.sort(peerIndices)
+
+    for _, index in ipairs(peerIndices) do
+        local band = bands[index]
+        if index ~= activeIndex and isNormalizedRect(band) then
+            targets[#targets + 1] = band[position]
+            targets[#targets + 1] = band[position] + band[size]
+        end
+    end
+
+    return targets
+end
+
+local function validSnapInputs(rawBand, activeIndex, part, bands, fullFrame, thresholdPoints)
+    return isNormalizedRect(rawBand)
+        and isPositiveInteger(activeIndex)
+        and SNAP_PARTS[part] == true
+        and type(bands) == "table"
+        and isValidFullFrame(fullFrame)
+        and isFiniteNumber(thresholdPoints)
+        and thresholdPoints >= 0
 end
 
 function M.intersects(a, b)
@@ -181,6 +317,49 @@ function M.dragBand(normalizedBand, drag, localDelta, fullFrame)
             1
         )
         result.h = bottom - result.y
+    end
+
+    return result
+end
+
+function M.snapBand(rawBand, activeIndex, part, bands, fullFrame, thresholdPoints)
+    local result = type(rawBand) == "table" and copyRect(rawBand) or {}
+
+    if not validSnapInputs(rawBand, activeIndex, part, bands, fullFrame, thresholdPoints) then
+        return result
+    end
+
+    if part == "body" then
+        local xTargets = axisTargets("x", { 0, 1 }, bands, activeIndex)
+        local yTargets = axisTargets("y", { 0, 1 }, bands, activeIndex)
+        result = snapAxis(
+            result,
+            "x",
+            { "leading", "trailing" },
+            xTargets,
+            thresholdPoints / fullFrame.w,
+            fullFrame
+        )
+        result = snapAxis(
+            result,
+            "y",
+            { "leading", "trailing" },
+            yTargets,
+            thresholdPoints / fullFrame.h,
+            fullFrame
+        )
+    elseif part == "left" then
+        local targets = axisTargets("x", { 0 }, bands, activeIndex)
+        result = snapAxis(result, "x", { "leading" }, targets, thresholdPoints / fullFrame.w, fullFrame, "leading")
+    elseif part == "right" then
+        local targets = axisTargets("x", { 1 }, bands, activeIndex)
+        result = snapAxis(result, "x", { "trailing" }, targets, thresholdPoints / fullFrame.w, fullFrame, "trailing")
+    elseif part == "top" then
+        local targets = axisTargets("y", { 0 }, bands, activeIndex)
+        result = snapAxis(result, "y", { "leading" }, targets, thresholdPoints / fullFrame.h, fullFrame, "leading")
+    elseif part == "bottom" then
+        local targets = axisTargets("y", { 1 }, bands, activeIndex)
+        result = snapAxis(result, "y", { "trailing" }, targets, thresholdPoints / fullFrame.h, fullFrame, "trailing")
     end
 
     return result

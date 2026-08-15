@@ -250,6 +250,509 @@ test.test("dragBand returns a new table without mutating the saved band", functi
     test.rect(saved, { x = 0.20, y = 0.20, w = 0.30, h = 0.30 })
 end)
 
+test.test("snapBand moves a body to the screen start while preserving size", function()
+    local snapped = geometry.snapBand(
+        { x = 0.012, y = 0.012, w = 0.30, h = 0.40 },
+        1,
+        "body",
+        { { x = 0.012, y = 0.012, w = 0.30, h = 0.40 } },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.rect(snapped, { x = 0, y = 0, w = 0.30, h = 0.40 })
+end)
+
+test.test("snapBand moves a body to the screen end while preserving size", function()
+    local snapped = geometry.snapBand(
+        { x = 0.688, y = 0.588, w = 0.30, h = 0.40 },
+        1,
+        "body",
+        { { x = 0.688, y = 0.588, w = 0.30, h = 0.40 } },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.rect(snapped, { x = 0.70, y = 0.60, w = 0.30, h = 0.40 })
+end)
+
+test.test("snapBand snaps resize handles only to their legal screen boundary", function()
+    local fullFrame = { x = 0, y = 0, w = 1000, h = 1000 }
+
+    test.rect(
+        geometry.snapBand(
+            { x = 0.012, y = 0.20, w = 0.30, h = 0.40 },
+            1,
+            "left",
+            {},
+            fullFrame,
+            12
+        ),
+        { x = 0, y = 0.20, w = 0.012 + 0.30, h = 0.40 }
+    )
+    test.rect(
+        geometry.snapBand(
+            { x = 0.20, y = 0.20, w = 0.788, h = 0.40 },
+            1,
+            "right",
+            {},
+            fullFrame,
+            12
+        ),
+        { x = 0.20, y = 0.20, w = 0.80, h = 0.40 }
+    )
+    test.rect(
+        geometry.snapBand(
+            { x = 0.20, y = 0.012, w = 0.30, h = 0.40 },
+            1,
+            "top",
+            {},
+            fullFrame,
+            12
+        ),
+        { x = 0.20, y = 0, w = 0.30, h = 0.012 + 0.40 }
+    )
+    test.rect(
+        geometry.snapBand(
+            { x = 0.20, y = 0.20, w = 0.30, h = 0.788 },
+            1,
+            "bottom",
+            {},
+            fullFrame,
+            12
+        ),
+        { x = 0.20, y = 0.20, w = 0.30, h = 0.80 }
+    )
+end)
+
+test.test("snapBand rejects the opposite screen boundary for resize handles", function()
+    local fullFrame = { x = 0, y = 0, w = 1000, h = 1000 }
+
+    test.rect(
+        geometry.snapBand(
+            { x = 0.988, y = 0.20, w = 0.012, h = 0.40 },
+            1,
+            "left",
+            {},
+            fullFrame,
+            12
+        ),
+        { x = 0.988, y = 0.20, w = 0.012, h = 0.40 }
+    )
+    test.rect(
+        geometry.snapBand(
+            { x = 0, y = 0.20, w = 0.012, h = 0.40 },
+            1,
+            "right",
+            {},
+            fullFrame,
+            12
+        ),
+        { x = 0, y = 0.20, w = 0.012, h = 0.40 }
+    )
+    test.rect(
+        geometry.snapBand(
+            { x = 0.20, y = 0.988, w = 0.30, h = 0.012 },
+            1,
+            "top",
+            {},
+            fullFrame,
+            12
+        ),
+        { x = 0.20, y = 0.988, w = 0.30, h = 0.012 }
+    )
+    test.rect(
+        geometry.snapBand(
+            { x = 0.20, y = 0, w = 0.30, h = 0.012 },
+            1,
+            "bottom",
+            {},
+            fullFrame,
+            12
+        ),
+        { x = 0.20, y = 0, w = 0.30, h = 0.012 }
+    )
+end)
+
+test.test("snapBand includes exactly 12 points but excludes 12.01 points", function()
+    local fullFrame = { x = 0, y = 0, w = 1000, h = 1000 }
+    local exact = geometry.snapBand(
+        { x = 0.012, y = 0.20, w = 0.30, h = 0.40 },
+        1,
+        "body",
+        {},
+        fullFrame,
+        12
+    )
+    local outside = geometry.snapBand(
+        { x = 0.01201, y = 0.20, w = 0.30, h = 0.40 },
+        1,
+        "body",
+        {},
+        fullFrame,
+        12
+    )
+
+    test.equal(exact.x, 0)
+    test.equal(outside.x, 0.01201)
+end)
+
+test.test("snapBand aligns x with a vertically stacked peer and excludes the active band", function()
+    local peer = { x = 0.40, y = 0.10, w = 0.20, h = 0.20 }
+    local active = { x = 0.39, y = 0.70, w = 0.20, h = 0.20 }
+    local snapped = geometry.snapBand(
+        active,
+        2,
+        "body",
+        { peer, active },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.rect(snapped, { x = 0.40, y = 0.70, w = 0.20, h = 0.20 })
+end)
+
+test.test("snapBand aligns y with a side-by-side peer", function()
+    local peer = { x = 0.10, y = 0.40, w = 0.20, h = 0.20 }
+    local active = { x = 0.70, y = 0.39, w = 0.20, h = 0.20 }
+    local snapped = geometry.snapBand(
+        active,
+        2,
+        "body",
+        { peer, active },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.rect(snapped, { x = 0.70, y = 0.40, w = 0.20, h = 0.20 })
+end)
+
+test.test("snapBand aligns every resize handle with peer starts and ends", function()
+    local peer = { x = 0.40, y = 0.40, w = 0.20, h = 0.20 }
+    local fullFrame = { x = 0, y = 0, w = 1000, h = 1000 }
+
+    test.rect(
+        geometry.snapBand(
+            { x = 0.612, y = 0.20, w = 0.188, h = 0.20 },
+            2,
+            "left",
+            { peer },
+            fullFrame,
+            12
+        ),
+        {
+            x = peer.x + peer.w,
+            y = 0.20,
+            w = 0.188 - ((peer.x + peer.w) - 0.612),
+            h = 0.20,
+        }
+    )
+    test.rect(
+        geometry.snapBand(
+            { x = 0.20, y = 0.20, w = 0.188, h = 0.20 },
+            2,
+            "right",
+            { peer },
+            fullFrame,
+            12
+        ),
+        { x = 0.20, y = 0.20, w = 0.20, h = 0.20 }
+    )
+    test.rect(
+        geometry.snapBand(
+            { x = 0.20, y = 0.612, w = 0.20, h = 0.188 },
+            2,
+            "top",
+            { peer },
+            fullFrame,
+            12
+        ),
+        {
+            x = 0.20,
+            y = peer.y + peer.h,
+            w = 0.20,
+            h = 0.188 - ((peer.y + peer.h) - 0.612),
+        }
+    )
+    test.rect(
+        geometry.snapBand(
+            { x = 0.20, y = 0.20, w = 0.20, h = 0.188 },
+            2,
+            "bottom",
+            { peer },
+            fullFrame,
+            12
+        ),
+        { x = 0.20, y = 0.20, w = 0.20, h = 0.20 }
+    )
+end)
+
+test.test("snapBand chooses the closest peer correction", function()
+    local snapped = geometry.snapBand(
+        { x = 0.30, y = 0.30, w = 0.20, h = 0.20 },
+        3,
+        "body",
+        {
+            { x = 0.10, y = 0.10, w = 0.188, h = 0.10 },
+            { x = 0.305, y = 0.70, w = 0.10, h = 0.10 },
+            { x = 0.30, y = 0.30, w = 0.20, h = 0.20 },
+        },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.equal(snapped.x, 0.305)
+end)
+
+test.test("snapBand prefers screen start to screen end on an equal correction", function()
+    local snapped = geometry.snapBand(
+        { x = 0.012, y = 0.20, w = 0.976, h = 0.20 },
+        1,
+        "body",
+        {},
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.equal(snapped.x, 0)
+end)
+
+test.test("snapBand prefers a screen target to a peer target on an equal correction", function()
+    local active = { x = 0.012, y = 0.20, w = 0.20, h = 0.20 }
+    local snapped = geometry.snapBand(
+        active,
+        2,
+        "body",
+        {
+            { x = 0.024, y = 0.70, w = 0.10, h = 0.10 },
+            active,
+        },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.equal(snapped.x, 0)
+end)
+
+test.test("snapBand prefers the lower peer index on an equal correction", function()
+    local active = { x = 0.41, y = 0.30, w = 0.10, h = 0.20 }
+    local snapped = geometry.snapBand(
+        active,
+        3,
+        "body",
+        {
+            { x = 0.20, y = 0.10, w = 0.20, h = 0.10 },
+            { x = 0.42, y = 0.70, w = 0.20, h = 0.10 },
+            active,
+        },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.equal(snapped.x, 0.40)
+end)
+
+test.test("snapBand prefers a peer start to its end on an equal correction", function()
+    local active = { x = 0.41, y = 0.30, w = 0.20, h = 0.20 }
+    local snapped = geometry.snapBand(
+        active,
+        2,
+        "body",
+        {
+            { x = 0.40, y = 0.70, w = 0.02, h = 0.10 },
+            active,
+        },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.equal(snapped.x, 0.40)
+end)
+
+test.test("snapBand prefers the active leading edge on an equal correction", function()
+    local active = { x = 0.39, y = 0.30, w = 0.02, h = 0.20 }
+    local snapped = geometry.snapBand(
+        active,
+        2,
+        "body",
+        {
+            { x = 0.40, y = 0.70, w = 0.30, h = 0.10 },
+            active,
+        },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.equal(snapped.x, 0.40)
+end)
+
+test.test("snapBand discards an out-of-bounds peer resize target", function()
+    local snapped = geometry.snapBand(
+        { x = 0.10, y = 0.20, w = 0.20, h = 0.20 },
+        2,
+        "right",
+        {
+            { x = 0, y = 0.70, w = 0.09, h = 0.10 },
+        },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        800
+    )
+
+    test.rect(snapped, {
+        x = 0.10,
+        y = 0.20,
+        w = 0.20 + (1 - (0.10 + 0.20)),
+        h = 0.20,
+    })
+end)
+
+test.test("snapBand rejects peer resizes below 20 points on either axis", function()
+    local fullFrame = { x = 0, y = 0, w = 1000, h = 500 }
+    local narrow = { x = 0.50, y = 0.20, w = 0.025, h = 0.20 }
+    local short = { x = 0.20, y = 0.40, w = 0.20, h = 0.05 }
+
+    test.rect(
+        geometry.snapBand(
+            narrow,
+            2,
+            "right",
+            { { x = 0.517, y = 0.70, w = 0.10, h = 0.10 } },
+            fullFrame,
+            12
+        ),
+        narrow
+    )
+    test.rect(
+        geometry.snapBand(
+            short,
+            2,
+            "bottom",
+            { { x = 0.70, y = 0.43, w = 0.10, h = 0.10 } },
+            fullFrame,
+            12
+        ),
+        short
+    )
+end)
+
+test.test("snapBand rejects every target when another dimension is below 20 points", function()
+    local raw = { x = 0.012, y = 0.20, w = 0.20, h = 0.019 }
+    local snapped = geometry.snapBand(
+        raw,
+        1,
+        "body",
+        {},
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.rect(snapped, raw)
+end)
+
+test.test("snapBand allows a resize result exactly 20 points wide", function()
+    local snapped = geometry.snapBand(
+        { x = 0.50, y = 0.20, w = 0.025, h = 0.20 },
+        2,
+        "right",
+        { { x = 0.52, y = 0.70, w = 0.10, h = 0.10 } },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.equal(snapped.w, 0.025 + (0.52 - (0.50 + 0.025)))
+end)
+
+test.test("snapBand ignores malformed peers and continues to later targets", function()
+    local active = { x = 0.39, y = 0.30, w = 0.20, h = 0.20 }
+    local snapped = geometry.snapBand(
+        active,
+        4,
+        "body",
+        {
+            {},
+            "invalid",
+            { x = 0.40, y = 0.70, w = 0.20, h = 0.10 },
+            active,
+        },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.equal(snapped.x, 0.40)
+end)
+
+test.test("snapBand ignores absent peer indexes and preserves index ordering", function()
+    local active = { x = 0.39, y = 0.30, w = 0.20, h = 0.20 }
+    local snapped = geometry.snapBand(
+        active,
+        4,
+        "body",
+        {
+            [1] = { x = 0.10, y = 0.10, w = 0.10, h = 0.10 },
+            [3] = { x = 0.40, y = 0.70, w = 0.20, h = 0.10 },
+            [4] = active,
+        },
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.equal(snapped.x, 0.40)
+end)
+
+test.test("snapBand returns a fresh rectangle without mutating inputs", function()
+    local peer = { x = 0.40, y = 0.70, w = 0.20, h = 0.10 }
+    local raw = { x = 0.39, y = 0.30, w = 0.20, h = 0.20 }
+    local bands = { peer, raw }
+    local snapped = geometry.snapBand(
+        raw,
+        2,
+        "body",
+        bands,
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.equal(snapped == raw, false)
+    test.equal(bands[1] == peer, true)
+    test.equal(bands[2] == raw, true)
+    test.rect(peer, { x = 0.40, y = 0.70, w = 0.20, h = 0.10 })
+    test.rect(raw, { x = 0.39, y = 0.30, w = 0.20, h = 0.20 })
+end)
+
+test.test("snapBand fails closed to fresh copies for invalid arguments", function()
+    local raw = { x = 0.012, y = 0.20, w = 0.20, h = 0.20 }
+    local fullFrame = { x = 0, y = 0, w = 1000, h = 1000 }
+    local results = {
+        geometry.snapBand(raw, 1, "body", {}, nil, 12),
+        geometry.snapBand(raw, 1, "body", {}, { x = 0, y = 0, w = 0, h = 1000 }, 12),
+        geometry.snapBand(raw, 1, "body", {}, { w = 1000, h = 1000 }, 12),
+        geometry.snapBand(raw, 0, "body", {}, fullFrame, 12),
+        geometry.snapBand(raw, 1, "body", "invalid", fullFrame, 12),
+        geometry.snapBand(raw, 1, "corner", {}, fullFrame, 12),
+        geometry.snapBand(raw, 1, "body", {}, fullFrame, math.huge),
+    }
+
+    for _, result in ipairs(results) do
+        test.equal(result == raw, false)
+        test.rect(result, raw)
+    end
+end)
+
+test.test("snapBand fails closed for a malformed raw band", function()
+    local raw = { x = -0.005, y = 0.20, w = "wide", h = 0.20 }
+    local result = geometry.snapBand(
+        raw,
+        1,
+        "body",
+        {},
+        { x = 0, y = 0, w = 1000, h = 1000 },
+        12
+    )
+
+    test.equal(result == raw, false)
+    test.rect(result, raw)
+end)
+
 test.test("intersects requires positive overlap", function()
     local left = { x = 0, y = 0, w = 100, h = 100 }
 
