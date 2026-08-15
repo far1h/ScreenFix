@@ -14,6 +14,7 @@ enum Main {
                 + accessibilityTrustTests
                 + axClientTests
                 + axObserverRegistryTests
+                + windowGuardTests
                 + configValidatorTests
                 + displaySelectorTests
                 + configStoreTests

@@ -134,7 +134,7 @@ private final class AXApplicationSession {
     }
 }
 
-public final class AXObserverRegistry {
+public final class AXObserverRegistry: WindowGuardEventSource {
     public typealias WorkspaceSubscribe = (@escaping (AXApplicationEvent) -> Void) -> AXWorkspaceObservation?
     public typealias ObserverFactory = (
         pid_t,
@@ -227,6 +227,10 @@ public final class AXObserverRegistry {
         revisions.removeAll()
         observation?.cancel()
         retired.forEach(retire)
+    }
+
+    public func lane(for pid: pid_t) -> AXWorkLane? {
+        sessions[pid]?.lane
     }
 
     private func handle(_ event: AXApplicationEvent, generation activeGeneration: Int) {
