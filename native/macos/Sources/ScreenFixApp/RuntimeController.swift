@@ -175,6 +175,7 @@ public struct RuntimeSnapshot {
 private enum RuntimeOperationError: Error {
     case configuration(Error)
     case mask(Error)
+    case superseded
 }
 
 private enum RuntimeCalibrationCommitError: Error {
@@ -218,6 +219,7 @@ public final class RuntimeController {
     private var sleeping = false
     private var terminated = false
     private var permissionRevoked = false
+    private var guardTransitionInProgress = false
     private var calibrationCommitInProgress = false
     private var deferredRuntimeMutations: [() -> Void] = []
 
@@ -301,8 +303,10 @@ public final class RuntimeController {
         )
         do {
             configuration = try store.load()
+            guard started, generation == activeGeneration else { return }
             reconcileLoadedConfiguration(configuration)
         } catch {
+            guard started, generation == activeGeneration else { return }
             configuration = nil
             displayConnected = false
             maskOwner.removeAll()
@@ -328,18 +332,27 @@ public final class RuntimeController {
 
         if !enabled {
             let activeGeneration = generation
+            guardTransitionInProgress = true
             stopWindowGuard()
             do {
                 try store.save(desired)
-                guard started, generation == activeGeneration else { return }
+                guard started, generation == activeGeneration else {
+                    guardTransitionInProgress = false
+                    return
+                }
                 configuration = desired
                 availableGuardTarget = nil
+                guardTransitionInProgress = false
                 stopAccessibilityTrust()
                 maskOwner.removeAll()
                 refreshConnection()
                 runtimeError = nil
             } catch {
-                guard started, generation == activeGeneration else { return }
+                guard started, generation == activeGeneration else {
+                    guardTransitionInProgress = false
+                    return
+                }
+                guardTransitionInProgress = false
                 reportConfiguration(error)
                 restoreAvailableWindowGuard()
             }
@@ -349,14 +362,17 @@ public final class RuntimeController {
 
         let screens = catalog.connectedDisplays()
         guard let screen = selectedScreen(for: desired.display, from: screens) else {
+            let activeGeneration = generation
             do {
                 try store.save(desired)
+                guard started, generation == activeGeneration else { return }
                 configuration = desired
                 displayConnected = false
                 availableGuardTarget = nil
                 stopAccessibilityTrust()
                 runtimeError = nil
             } catch {
+                guard started, generation == activeGeneration else { return }
                 reportConfiguration(error)
             }
             stateDidChange()
@@ -436,12 +452,15 @@ public final class RuntimeController {
         if desired.enabled {
             replace(with: desired, on: screen, screens: screens, persist: true)
         } else {
+            let activeGeneration = generation
             do {
                 try store.save(desired)
+                guard started, generation == activeGeneration else { return }
                 configuration = desired
                 displayConnected = true
                 runtimeError = nil
             } catch {
+                guard started, generation == activeGeneration else { return }
                 reportConfiguration(error)
             }
         }
@@ -452,10 +471,13 @@ public final class RuntimeController {
         if deferDuringCalibrationCommit({ runtime in runtime.reload() }) { return }
         guard started else { return }
         guard cancelCalibrationAndRestore() else { return }
+        let activeGeneration = generation
         do {
             let loaded = try store.load()
+            guard started, generation == activeGeneration else { return }
             reconcileLoadedConfiguration(loaded)
         } catch {
+            guard started, generation == activeGeneration else { return }
             reportConfiguration(error)
         }
         stateDidChange()
@@ -527,6 +549,7 @@ public final class RuntimeController {
         calibrationOwner.stop()
         maskOwner.removeAll()
         sleeping = false
+        guardTransitionInProgress = false
         stopping = false
         stateDidChange()
     }
@@ -883,6 +906,7 @@ public final class RuntimeController {
     private var correctionIsNeeded: Bool {
         started
             && !sleeping
+            && !guardTransitionInProgress
             && calibrationSession == nil
             && configuration?.enabled == true
             && displayConnected
@@ -1004,6 +1028,7 @@ public final class RuntimeController {
         screens: [ConnectedScreen],
         persist: Bool
     ) {
+        let activeGeneration = generation
         let frames = MaskGeometry.localFrames(
             bands: desired.bands,
             displayWidth: Double(screen.fullFrame.width),
@@ -1011,12 +1036,22 @@ public final class RuntimeController {
         )
         do {
             try maskOwner.replace(frames: frames, screenFrame: screen.fullFrame) {
+                guard self.started, self.generation == activeGeneration else {
+                    throw RuntimeOperationError.superseded
+                }
                 guard persist else { return }
                 do {
                     try self.store.save(desired)
                 } catch {
                     throw RuntimeOperationError.configuration(error)
                 }
+                guard self.started, self.generation == activeGeneration else {
+                    throw RuntimeOperationError.superseded
+                }
+            }
+            guard started, generation == activeGeneration else {
+                maskOwner.removeAll()
+                return
             }
             configuration = desired
             displayConnected = true
@@ -1028,6 +1063,8 @@ public final class RuntimeController {
             }
         } catch RuntimeOperationError.configuration(let error) {
             reportConfiguration(error)
+        } catch RuntimeOperationError.superseded {
+            return
         } catch {
             runtimeError = "Paused: mask error: \(error)"
         }

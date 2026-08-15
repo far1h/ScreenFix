@@ -11,6 +11,8 @@ private final class RuntimeWindowGuardStore: RuntimeConfigurationStore {
     var configuration: ScreenFixConfiguration?
     var loadError: Error?
     var saveError: Error?
+    var onLoad: (() -> Void)?
+    var onSave: (() -> Void)?
     let log: NSMutableArray
 
     init(configuration: ScreenFixConfiguration?, log: NSMutableArray) {
@@ -20,12 +22,14 @@ private final class RuntimeWindowGuardStore: RuntimeConfigurationStore {
 
     func load() throws -> ScreenFixConfiguration? {
         log.add("load")
+        onLoad?()
         if let loadError { throw loadError }
         return configuration
     }
 
     func save(_ configuration: ScreenFixConfiguration) throws {
         log.add("save")
+        onSave?()
         if let saveError { throw saveError }
         self.configuration = configuration
     }
@@ -498,6 +502,28 @@ let runtimeWindowGuardTests = [
         try expectEqual(value.runtime.snapshot.configuration?.enabled, true)
         try expect(value.masks.hasMasks)
     },
+    TestCase(name: "RuntimeWindowGuard Disable blocks reentrant trust restart until save returns") {
+        let value = runtimeWindowGuardFixture(
+            configuration: runtimeWindowGuardConfig("a"),
+            screens: [runtimeWindowGuardScreen(
+                "a",
+                topLeftFrame: RectD(x: 0, y: 0, width: 1000, height: 800)
+            )]
+        )
+        value.runtime.start()
+        var guardWasActiveDuringSave = false
+        value.store.onSave = {
+            value.runtime.accessibilityTrustDidChange(true)
+            guardWasActiveDuringSave = value.guardOwner.target != nil
+        }
+        value.store.saveError = RuntimeWindowGuardTestError.requested
+
+        value.runtime.setEnabled(false)
+
+        try expect(!guardWasActiveDuringSave)
+        try expectEqual(value.guardOwner.target?.selectedDisplayID, "a")
+        try expectEqual(value.guardOwner.starts.count, 2)
+    },
     TestCase(name: "RuntimeWindowGuard successful Disable stops before save and masks") {
         let value = runtimeWindowGuardFixture(
             configuration: runtimeWindowGuardConfig("a"),
@@ -561,6 +587,65 @@ let runtimeWindowGuardTests = [
         try expect(value.masks.hasMasks)
         try expect(!events.contains("guard-start-a"))
         try expect(!events.contains("guard-stop"))
+    },
+    TestCase(name: "RuntimeWindowGuard reentrant stop cannot commit reset masks or guard") {
+        let value = runtimeWindowGuardFixture(
+            configuration: runtimeWindowGuardConfig("a"),
+            screens: [runtimeWindowGuardScreen(
+                "a",
+                topLeftFrame: RectD(x: 0, y: 0, width: 1000, height: 800)
+            )]
+        )
+        value.runtime.start()
+        value.store.onSave = { value.runtime.stop() }
+
+        value.runtime.resetToDefaults()
+
+        try expect(!value.masks.hasMasks)
+        try expectEqual(value.guardOwner.target, nil)
+    },
+    TestCase(name: "RuntimeWindowGuard reentrant stop makes reload result stale") {
+        let value = runtimeWindowGuardFixture(
+            configuration: runtimeWindowGuardConfig("a"),
+            screens: [runtimeWindowGuardScreen(
+                "a",
+                topLeftFrame: RectD(x: 0, y: 0, width: 1000, height: 800)
+            )]
+        )
+        value.runtime.start()
+        value.store.onLoad = { value.runtime.stop() }
+
+        value.runtime.reload()
+
+        try expect(!value.masks.hasMasks)
+        try expectEqual(value.guardOwner.target, nil)
+    },
+    TestCase(name: "RuntimeWindowGuard reentrant stop cannot mutate disabled reset state") {
+        let base = runtimeWindowGuardConfig("a", enabled: false)
+        let custom = ScreenFixConfiguration(
+            schemaVersion: base.schemaVersion,
+            enabled: false,
+            display: base.display,
+            bands: [
+                NormalizedRect(x: 0.2, y: 0, w: 0.3, h: 0.3),
+                NormalizedRect(x: 0.2, y: 0.3, w: 0.3, h: 0.4),
+                NormalizedRect(x: 0.2, y: 0.7, w: 0.3, h: 0.3),
+            ]
+        )
+        let value = runtimeWindowGuardFixture(
+            configuration: custom,
+            screens: [runtimeWindowGuardScreen(
+                "a",
+                topLeftFrame: RectD(x: 0, y: 0, width: 1000, height: 800)
+            )]
+        )
+        value.runtime.start()
+        value.store.onSave = { value.runtime.stop() }
+
+        value.runtime.resetToDefaults()
+
+        try expectEqual(value.runtime.snapshot.configuration, custom)
+        try expectEqual(value.guardOwner.target, nil)
     },
     TestCase(name: "RuntimeWindowGuard disconnect revokes before masks and reconnects from fresh frames") {
         let initial = runtimeWindowGuardScreen(
