@@ -6,6 +6,7 @@ enum Main {
                 + maskGeometryTests
                 + configValidatorTests
                 + displaySelectorTests
+                + configStoreTests
         )
     }
 }
