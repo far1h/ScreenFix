@@ -52,6 +52,7 @@ private final class RuntimeWindowGuardCatalog: RuntimeDisplayCatalog {
 
 private final class RuntimeWindowGuardMasks: RuntimeMaskOwner {
     var failReplace = false
+    var onPrepare: (() -> Void)?
     private(set) var hasMasks = false
     let log: NSMutableArray
 
@@ -65,6 +66,7 @@ private final class RuntimeWindowGuardMasks: RuntimeMaskOwner {
         beforeRetire: () throws -> Void
     ) throws {
         log.add("masks-prepare")
+        onPrepare?()
         if failReplace { throw RuntimeWindowGuardTestError.requested }
         try beforeRetire()
         log.add("masks-commit")
@@ -174,6 +176,9 @@ private final class RuntimeWindowGuardOwnerFake: RuntimeWindowGuardOwner {
     private(set) var starts: [WindowGuardTarget] = []
     private(set) var stopCount = 0
     private(set) var events: [AXWindowEvent] = []
+    private(set) var staleLaneWrites = 0
+    private var generation = 0
+    private var stagedLane: (() -> Void)?
     let log: NSMutableArray
 
     init(log: NSMutableArray) {
@@ -181,12 +186,14 @@ private final class RuntimeWindowGuardOwnerFake: RuntimeWindowGuardOwner {
     }
 
     func start(target: WindowGuardTarget) {
+        generation += 1
         log.add("guard-start-\(target.selectedDisplayID)")
         starts.append(target)
         self.target = target
     }
 
     func stop() {
+        generation += 1
         log.add("guard-stop")
         stopCount += 1
         target = nil
@@ -194,6 +201,20 @@ private final class RuntimeWindowGuardOwnerFake: RuntimeWindowGuardOwner {
 
     func handle(_ event: AXWindowEvent) {
         events.append(event)
+    }
+
+    func stageOldLaneWrite() {
+        let stagedGeneration = generation
+        stagedLane = { [weak self] in
+            guard let self, self.generation == stagedGeneration else { return }
+            self.staleLaneWrites += 1
+        }
+    }
+
+    func flushOldLane() {
+        let lane = stagedLane
+        stagedLane = nil
+        lane?()
     }
 }
 
@@ -587,7 +608,29 @@ let runtimeWindowGuardTests = [
         try expectEqual(value.guardOwner.target?.selectedDisplayID, "b")
         try expect(value.masks.hasMasks)
         try expect(!events.contains("guard-start-a"))
-        try expect(!events.contains("guard-stop"))
+        try expectRuntimeWindowGuardOrder("guard-stop", "masks-prepare", in: events)
+        try expectRuntimeWindowGuardOrder("masks-prepare", "guard-start-b", in: events)
+        try expectEqual(events.filter { $0 == "guard-start-b" }.count, 1)
+    },
+    TestCase(name: "RuntimeWindowGuard invalidates an old PID lane before replacement masks") {
+        let value = runtimeWindowGuardFixture(
+            configuration: runtimeWindowGuardConfig("a"),
+            screens: [runtimeWindowGuardScreen(
+                "a",
+                topLeftFrame: RectD(x: 0, y: 0, width: 1000, height: 800)
+            )]
+        )
+        value.runtime.start()
+        value.guardOwner.stageOldLaneWrite()
+        value.masks.onPrepare = { value.guardOwner.flushOldLane() }
+        value.log.removeAllObjects()
+
+        value.runtime.reload()
+
+        let events = runtimeWindowGuardEvents(value)
+        try expectEqual(value.guardOwner.staleLaneWrites, 0)
+        try expectRuntimeWindowGuardOrder("guard-stop", "masks-prepare", in: events)
+        try expectRuntimeWindowGuardOrder("masks-commit", "guard-start-a", in: events)
     },
     TestCase(name: "RuntimeWindowGuard reentrant stop cannot commit reset masks or guard") {
         let value = runtimeWindowGuardFixture(

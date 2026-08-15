@@ -1061,11 +1061,14 @@ public final class RuntimeController {
         persist: Bool
     ) {
         let activeGeneration = generation
+        let pausedGuardTarget = activeGuardTarget
         let frames = MaskGeometry.localFrames(
             bands: desired.bands,
             displayWidth: Double(screen.fullFrame.width),
             displayHeight: Double(screen.fullFrame.height)
         )
+        guardTransitionInProgress = true
+        stopWindowGuard()
         do {
             try maskOwner.replace(frames: frames, screenFrame: screen.fullFrame) {
                 guard self.started, self.generation == activeGeneration else {
@@ -1082,9 +1085,11 @@ public final class RuntimeController {
                 }
             }
             guard started, generation == activeGeneration else {
+                guardTransitionInProgress = false
                 maskOwner.removeAll()
                 return
             }
+            guardTransitionInProgress = false
             configuration = desired
             displayConnected = true
             runtimeError = nil
@@ -1094,12 +1099,23 @@ public final class RuntimeController {
                 retireWindowCorrection()
             }
         } catch RuntimeOperationError.configuration(let error) {
+            guardTransitionInProgress = false
             reportConfiguration(error)
+            restoreWindowGuard(pausedGuardTarget)
         } catch RuntimeOperationError.superseded {
+            guardTransitionInProgress = false
             return
         } catch {
+            guardTransitionInProgress = false
             runtimeError = "Paused: mask error: \(error)"
+            restoreWindowGuard(pausedGuardTarget)
         }
+    }
+
+    private func restoreWindowGuard(_ target: WindowGuardTarget?) {
+        guard let target, started else { return }
+        availableGuardTarget = target
+        restoreAvailableWindowGuard()
     }
 
     private func selectedScreen(
