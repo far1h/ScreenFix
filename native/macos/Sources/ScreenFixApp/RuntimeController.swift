@@ -80,6 +80,7 @@ extension AccessibilityTrustController: RuntimeAccessibilityTrustOwner {}
 public protocol RuntimeWindowGuardOwner: AnyObject {
     func start(target: WindowGuardTarget)
     func stop()
+    func handle(_ event: AXWindowEvent)
 }
 
 extension WindowGuardController: RuntimeWindowGuardOwner {}
@@ -97,6 +98,7 @@ private final class NoopRuntimeAccessibilityTrustOwner: RuntimeAccessibilityTrus
 private final class NoopRuntimeWindowGuardOwner: RuntimeWindowGuardOwner {
     func start(target: WindowGuardTarget) {}
     func stop() {}
+    func handle(_ event: AXWindowEvent) {}
 }
 
 public protocol RuntimeNotifications: AnyObject {
@@ -484,6 +486,11 @@ public final class RuntimeController {
 
     public func accessibilityPermissionLost() {
         accessibilityTrustDidChange(false)
+    }
+
+    public func handleWindowGuardEvent(_ event: AXWindowEvent) {
+        guard started, !sleeping, activeGuardTarget != nil else { return }
+        windowGuardOwner.handle(event)
     }
 
     private func prepareForSleep() {

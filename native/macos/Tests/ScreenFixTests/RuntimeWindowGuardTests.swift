@@ -168,6 +168,7 @@ private final class RuntimeWindowGuardOwnerFake: RuntimeWindowGuardOwner {
     private(set) var target: WindowGuardTarget?
     private(set) var starts: [WindowGuardTarget] = []
     private(set) var stopCount = 0
+    private(set) var events: [AXWindowEvent] = []
     let log: NSMutableArray
 
     init(log: NSMutableArray) {
@@ -184,6 +185,10 @@ private final class RuntimeWindowGuardOwnerFake: RuntimeWindowGuardOwner {
         log.add("guard-stop")
         stopCount += 1
         target = nil
+    }
+
+    func handle(_ event: AXWindowEvent) {
+        events.append(event)
     }
 }
 
@@ -653,6 +658,36 @@ let runtimeWindowGuardTests = [
 
         try expectEqual(runtimeWindowGuardEvents(value), [])
         try expectEqual(value.guardOwner.target, nil)
+    },
+    TestCase(name: "RuntimeWindowGuard weak relay routes only into current runtime") {
+        let value = runtimeWindowGuardFixture(
+            configuration: runtimeWindowGuardConfig("a"),
+            screens: [runtimeWindowGuardScreen(
+                "a",
+                topLeftFrame: RectD(x: 0, y: 0, width: 1000, height: 800)
+            )]
+        )
+        let relay = RuntimeWindowGuardEventRelay()
+        relay.runtime = value.runtime
+        value.runtime.start()
+        let element = AXUIElementCreateApplication(991)
+        let event = AXWindowEvent(
+            identity: AXWindowIdentity(pid: 991, element: element),
+            element: element,
+            kind: .moved
+        )
+
+        relay.handle(event)
+        try expectEqual(value.guardOwner.events.count, 1)
+
+        value.trust.trusted = false
+        relay.accessibilityTrustDidChange(false)
+        try expectEqual(value.guardOwner.stopCount, 1)
+
+        value.runtime.stop()
+        relay.handle(event)
+        relay.accessibilityPermissionLost()
+        try expectEqual(value.guardOwner.events.count, 1)
     },
     TestCase(name: "RuntimeWindowGuard quit teardown follows dependency order once") {
         var terminations = 0
