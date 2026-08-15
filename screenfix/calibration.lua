@@ -5,7 +5,8 @@ local ACCENT_COLOR = { red = 1, green = 100 / 255, blue = 59 / 255, alpha = 1 }
 local CANCEL_COLOR = { red = 53 / 255, green = 58 / 255, blue = 66 / 255, alpha = 1 }
 local CONTROL_GAP = 12
 local CONTROL_HEIGHT = 42
-local CONTROL_LABEL_INSET = 6
+local CONTROL_LABEL_HEIGHT = 30
+local CONTROL_LABEL_TOP_OFFSET = 12
 local CONTROL_MARGIN = 24
 local CONTROL_WIDTH = 104
 local HANDLE_WIDTH = 8
@@ -149,9 +150,9 @@ end
 local function controlLabelFrame(frame)
     return {
         x = frame.x,
-        y = frame.y + CONTROL_LABEL_INSET,
+        y = frame.y + CONTROL_LABEL_TOP_OFFSET,
         w = frame.w,
-        h = frame.h - (2 * CONTROL_LABEL_INSET),
+        h = CONTROL_LABEL_HEIGHT,
     }
 end
 
