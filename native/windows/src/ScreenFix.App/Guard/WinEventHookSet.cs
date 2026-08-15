@@ -83,6 +83,11 @@ public sealed class WinEventHookSet(
     private bool active;
     private bool disposed;
     private long generation;
+    private int? installingThreadId;
+
+    internal int RetainedHookCount => hooks.Count;
+
+    internal bool IsCallbackRooted => callbackLease.IsAllocated && callback is not null;
 
     public RuntimeOperationResult Start(
         long generation,
@@ -97,6 +102,7 @@ public sealed class WinEventHookSet(
 
         callback = HandleNativeEvent;
         callbackLease = GCHandle.Alloc(callback);
+        installingThreadId = Environment.CurrentManagedThreadId;
         IReadOnlyList<nint> windows;
         try
         {
@@ -152,7 +158,7 @@ public sealed class WinEventHookSet(
 
     public void Dispose()
     {
-        if (disposed)
+        if (disposed && hooks.Count == 0)
         {
             return;
         }
@@ -198,18 +204,41 @@ public sealed class WinEventHookSet(
 
     private void ReleaseHooks()
     {
+        if (installingThreadId != Environment.CurrentManagedThreadId)
+        {
+            return;
+        }
+
+        var retained = new List<nint>();
         foreach (var hook in hooks)
         {
-            _ = native.Unhook(hook);
+            try
+            {
+                if (!native.Unhook(hook))
+                {
+                    retained.Add(hook);
+                }
+            }
+            catch
+            {
+                retained.Add(hook);
+            }
         }
 
         hooks.Clear();
+        hooks.AddRange(retained);
+        if (hooks.Count != 0)
+        {
+            return;
+        }
+
         if (callbackLease.IsAllocated)
         {
             callbackLease.Free();
         }
 
         callback = null;
+        installingThreadId = null;
     }
 
     private static bool IsObjectEvent(uint eventType) =>

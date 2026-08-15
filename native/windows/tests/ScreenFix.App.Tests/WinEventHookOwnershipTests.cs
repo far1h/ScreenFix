@@ -85,6 +85,51 @@ public sealed class WinEventHookOwnershipTests
     }
 
     [Fact]
+    public void Stop_RetainsFailedHooksAndRetriesOnlyThoseHandles()
+    {
+        var native = new FakeWinEventNativeApi();
+        native.UnhookFailuresRemaining[new nint(2)] = 1;
+        native.UnhookFailuresRemaining[new nint(4)] = 2;
+        var hooks = new WinEventHookSet(native, new FakeDispatcher());
+        Assert.True(hooks.Start(generation: 7, _ => { }).IsSuccess);
+
+        hooks.Stop();
+        Assert.Equal(2, hooks.RetainedHookCount);
+        Assert.True(hooks.IsCallbackRooted);
+        hooks.Stop();
+        Assert.Equal(1, hooks.RetainedHookCount);
+        Assert.True(hooks.IsCallbackRooted);
+        hooks.Dispose();
+        Assert.Equal(0, hooks.RetainedHookCount);
+        Assert.False(hooks.IsCallbackRooted);
+
+        Assert.Equal(
+            [1L, 2, 3, 4, 5, 6, 2, 4, 4],
+            native.UnhookAttempts.Select(handle => handle.ToInt64()));
+        Assert.Equal([1L, 3, 5, 6, 2, 4], native.Unhooked.Select(handle => handle.ToInt64()));
+        Assert.All(native.CallbacksAliveDuringUnhook, Assert.True);
+    }
+
+    [Fact]
+    public void Stop_FromDifferentThreadRetainsHooksUntilInstallingThreadRetries()
+    {
+        var native = new FakeWinEventNativeApi();
+        var hooks = new WinEventHookSet(native, new FakeDispatcher());
+        Assert.True(hooks.Start(generation: 7, _ => { }).IsSuccess);
+
+        var thread = new Thread(hooks.Stop);
+        thread.Start();
+        thread.Join();
+
+        Assert.Empty(native.UnhookAttempts);
+        Assert.Equal(6, hooks.RetainedHookCount);
+        Assert.True(hooks.IsCallbackRooted);
+        hooks.Stop();
+        Assert.Equal(6, native.Unhooked.Count);
+        Assert.False(hooks.IsCallbackRooted);
+    }
+
+    [Fact]
     public void Callback_PostedBeforeStopIsGenerationRejected()
     {
         var native = new FakeWinEventNativeApi();
@@ -149,7 +194,11 @@ public sealed class WinEventHookOwnershipTests
 
         public List<nint> Unhooked { get; } = [];
 
+        public List<nint> UnhookAttempts { get; } = [];
+
         public List<bool> CallbacksAliveDuringUnhook { get; } = [];
+
+        public Dictionary<nint, int> UnhookFailuresRemaining { get; } = [];
 
         public int? FailRegistrationIndex { get; set; }
 
@@ -189,9 +238,17 @@ public sealed class WinEventHookOwnershipTests
 
         public bool Unhook(nint hook)
         {
-            Unhooked.Add(hook);
+            UnhookAttempts.Add(hook);
             CallbacksAliveDuringUnhook.Add(
                 Registrations.Any(registration => registration.Callback is not null));
+            if (UnhookFailuresRemaining.TryGetValue(hook, out var remaining) &&
+                remaining > 0)
+            {
+                UnhookFailuresRemaining[hook] = remaining - 1;
+                return false;
+            }
+
+            Unhooked.Add(hook);
             return true;
         }
 
