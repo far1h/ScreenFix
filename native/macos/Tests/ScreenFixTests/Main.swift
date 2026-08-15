@@ -9,6 +9,9 @@ enum Main {
                 + configStoreTests
                 + maskPanelTests
                 + displayCatalogTests
+                + menuStateTests
+                + menuModelTests
+                + runtimeControllerTests
         )
     }
 }

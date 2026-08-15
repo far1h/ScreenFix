@@ -1,3 +1,5 @@
+import Foundation
+
 public struct NormalizedRect: Codable, Equatable {
     public let x: Double
     public let y: Double
@@ -91,5 +93,134 @@ public struct TopLeftDisplayBounds: Equatable {
         self.y = y
         self.width = width
         self.height = height
+    }
+}
+
+public struct MenuState: Equatable {
+    public let status: String?
+    public let enabledActionTitle: String
+    public let enabledActionEnabled: Bool
+    public let enabledActionChecked: Bool
+    public let resetEnabled: Bool
+    public let calibrateEnabled: Bool
+    public let calibrateChecked: Bool
+    public let windowGuardEnabled: Bool
+    public let selectMonitorEnabled: Bool
+    public let reloadEnabled: Bool
+    public let quitEnabled: Bool
+
+    public static func make(
+        configuration: ScreenFixConfiguration?,
+        displayConnected: Bool,
+        runtimeError: String?
+    ) -> MenuState {
+        let enabled = configuration?.enabled ?? false
+        let ordinaryStatus: String?
+        if configuration == nil {
+            ordinaryStatus = "Paused: select a monitor"
+        } else if !displayConnected {
+            ordinaryStatus = "Paused: saved display is disconnected"
+        } else {
+            ordinaryStatus = nil
+        }
+        return MenuState(
+            status: runtimeError ?? ordinaryStatus,
+            enabledActionTitle: enabled ? "Disable" : "Enable",
+            enabledActionEnabled: configuration != nil,
+            enabledActionChecked: enabled,
+            resetEnabled: configuration != nil && displayConnected,
+            calibrateEnabled: false,
+            calibrateChecked: false,
+            windowGuardEnabled: false,
+            selectMonitorEnabled: true,
+            reloadEnabled: true,
+            quitEnabled: true
+        )
+    }
+}
+
+public struct MenuItemModel: Equatable {
+    public let identifier: String
+    public let title: String
+    public let isEnabled: Bool
+    public let isChecked: Bool
+    public let stableId: String?
+    public let children: [MenuItemModel]
+
+    public init(
+        identifier: String,
+        title: String,
+        isEnabled: Bool = true,
+        isChecked: Bool = false,
+        stableId: String? = nil,
+        children: [MenuItemModel] = []
+    ) {
+        self.identifier = identifier
+        self.title = title
+        self.isEnabled = isEnabled
+        self.isChecked = isChecked
+        self.stableId = stableId
+        self.children = children
+    }
+}
+
+public final class MenuModelBuilder {
+    private let displayProvider: () -> [ConnectedDisplay]
+
+    public init(displayProvider: @escaping () -> [ConnectedDisplay]) {
+        self.displayProvider = displayProvider
+    }
+
+    public func build(state: MenuState, savedStableId: String?) -> [MenuItemModel] {
+        var items: [MenuItemModel] = []
+        if let status = state.status {
+            items.append(MenuItemModel(identifier: "paused-status", title: status, isEnabled: false))
+        }
+        items.append(MenuItemModel(
+            identifier: "window-guard-phase2",
+            title: "Window guard: unavailable in Phase 1",
+            isEnabled: state.windowGuardEnabled
+        ))
+        items.append(MenuItemModel(
+            identifier: "enabled-action",
+            title: state.enabledActionTitle,
+            isEnabled: state.enabledActionEnabled,
+            isChecked: state.enabledActionChecked
+        ))
+        items.append(MenuItemModel(
+            identifier: "calibrate-phase2",
+            title: "Calibrate (Phase 2)",
+            isEnabled: state.calibrateEnabled,
+            isChecked: state.calibrateChecked
+        ))
+        let displays = displayProvider()
+        let children = displays.enumerated().map { index, display in
+            let identifiable = display.stableId != nil
+            let isCurrent = display.stableId.map { candidate in
+                savedStableId?.caseInsensitiveCompare(candidate) == .orderedSame
+            } ?? false
+            return MenuItemModel(
+                identifier: "display-\(index)",
+                title: identifiable ? display.name : "\(display.name) (identity unavailable)",
+                isEnabled: identifiable,
+                isChecked: isCurrent,
+                stableId: display.stableId
+            )
+        }
+        items.append(MenuItemModel(
+            identifier: "select-monitor",
+            title: "Select Monitor",
+            isEnabled: state.selectMonitorEnabled,
+            children: children
+        ))
+        items.append(MenuItemModel(
+            identifier: "reset-defaults",
+            title: "Reset to Defaults",
+            isEnabled: state.resetEnabled
+        ))
+        items.append(MenuItemModel(identifier: "reload", title: "Reload", isEnabled: state.reloadEnabled))
+        items.append(MenuItemModel(identifier: "separator", title: "", isEnabled: false))
+        items.append(MenuItemModel(identifier: "quit", title: "Quit", isEnabled: state.quitEnabled))
+        return items
     }
 }
