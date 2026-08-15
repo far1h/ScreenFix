@@ -10,6 +10,7 @@ public protocol WindowGuardTimer: AnyObject {
 public protocol WindowGuardEventSource: AnyObject {
     func start()
     func stop()
+    func reseedCurrentWindows()
     func lane(for pid: pid_t) -> AXWorkLane?
 }
 
@@ -123,7 +124,10 @@ public final class WindowGuardController {
         target = newTarget
         recentTargets.removeAll()
         blockedUntil.removeAll()
-        guard !started else { return }
+        if started {
+            source.reseedCurrentWindows()
+            return
+        }
         started = true
         source.start()
     }

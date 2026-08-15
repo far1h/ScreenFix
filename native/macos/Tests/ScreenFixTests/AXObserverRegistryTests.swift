@@ -258,6 +258,36 @@ let axObserverRegistryTests: [TestCase] = [
 
         try expectEqual(environment.events.map(\.kind), [.seeded, .moved, .created, .focused, .destroyed])
     },
+    TestCase(name: "AXObserverRegistry reseeds only retained windows without AX or observer changes") {
+        let environment = ObserverEnvironment()
+        let destroyed = environment.window(142)
+        let live = environment.window(242)
+        environment.apps = [environment.app(42)]
+        environment.client.windows[42] = [destroyed, live]
+        let registry = environment.registry()
+        registry.start()
+        guard let token = environment.tokens[42] else {
+            throw TestFailure(description: "missing token")
+        }
+        token.callback(destroyed, kAXUIElementDestroyedNotification as CFString)
+        environment.events.removeAll()
+        environment.log.removeAllObjects()
+
+        registry.reseedCurrentWindows()
+
+        try expectEqual(environment.events.map(\.kind), [.seeded])
+        try expectEqual(environment.events.map(\.identity), [AXWindowIdentity(pid: 42, element: live)])
+        try expectEqual(environment.log.compactMap { $0 as? String }, [])
+        try expect(environment.tokens[42] === token)
+        try expectEqual(token.attached, 1)
+
+        registry.stop()
+        environment.events.removeAll()
+        environment.log.removeAllObjects()
+        registry.reseedCurrentWindows()
+        try expectEqual(environment.events.count, 0)
+        try expectEqual(environment.log.compactMap { $0 as? String }, [])
+    },
     TestCase(name: "AXObserverRegistry stop never touches a destroyed window again") {
         let environment = ObserverEnvironment()
         let destroyed = environment.window(142)

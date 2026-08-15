@@ -243,6 +243,8 @@ private final class RuntimeWindowGuardOrderedSource: WindowGuardEventSource {
         log.add("source-stop")
     }
 
+    func reseedCurrentWindows() {}
+
     func lane(for pid: pid_t) -> AXWorkLane? {
         nil
     }

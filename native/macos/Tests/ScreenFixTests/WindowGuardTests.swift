@@ -49,8 +49,10 @@ private final class FakeGuardLane: AXWorkLane {
 
 private final class FakeGuardSource: WindowGuardEventSource {
     var lanes: [pid_t: FakeGuardLane] = [:]
+    var onReseed: (() -> Void)?
     private(set) var startCount = 0
     private(set) var stopCount = 0
+    private(set) var reseedCount = 0
 
     func start() {
         startCount += 1
@@ -58,6 +60,11 @@ private final class FakeGuardSource: WindowGuardEventSource {
 
     func stop() {
         stopCount += 1
+    }
+
+    func reseedCurrentWindows() {
+        reseedCount += 1
+        onReseed?()
     }
 
     func lane(for pid: pid_t) -> AXWorkLane? {
@@ -226,7 +233,35 @@ let windowGuardTests: [TestCase] = [
 
         try expectEqual(stale.timer.cancelCount, 1)
         try expectEqual(fixture.source.startCount, 1)
+        try expectEqual(fixture.source.reseedCount, 1)
         try expectEqual(fixture.access.log, [])
+    },
+    TestCase(name: "WindowGuard target update reseeds a live window against new masks") {
+        let fixture = guardFixture()
+        let identity = guardIdentity(42)
+        fixture.source.lanes[42] = FakeGuardLane()
+        fixture.access.frames[identity] = RectD(x: 100, y: 100, width: 100, height: 400)
+        let firstTarget = guardTarget(mask: RectD(x: 400, y: 0, width: 300, height: 800))
+        let secondTarget = guardTarget(mask: RectD(x: 50, y: 0, width: 200, height: 800))
+        fixture.controller.start(target: firstTarget)
+        fixture.controller.handle(guardEvent(identity, .seeded))
+        fixture.scheduler.entries[0].callback()
+        fixture.access.clearLog()
+        fixture.source.onReseed = {
+            fixture.controller.handle(guardEvent(identity, .seeded))
+        }
+
+        fixture.controller.start(target: secondTarget)
+
+        try expectEqual(fixture.source.startCount, 1)
+        try expectEqual(fixture.source.reseedCount, 1)
+        try expectEqual(fixture.scheduler.entries.count, 2)
+        fixture.scheduler.entries[1].callback()
+        try expect(fixture.access.log.contains("42-set-position"))
+        guard let corrected = fixture.access.frames[identity] else {
+            throw TestFailure(description: "missing corrected window")
+        }
+        try expect(!corrected.intersects(secondTarget.masks[0]))
     },
     TestCase(name: "WindowGuard observes every correctable event kind with one retained identity") {
         let fixture = guardFixture()
@@ -240,6 +275,7 @@ let windowGuardTests: [TestCase] = [
         kinds.forEach { fixture.controller.handle(guardEvent(identity, $0)) }
 
         try expectEqual(fixture.source.startCount, 1)
+        try expectEqual(fixture.source.reseedCount, 0)
         try expectEqual(fixture.scheduler.entries.count, kinds.count)
         try expectEqual(fixture.scheduler.entries.dropLast().allSatisfy { $0.timer.cancelCount == 1 }, true)
         try expectEqual(fixture.scheduler.entries.last?.timer.cancelCount, 0)

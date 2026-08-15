@@ -234,6 +234,15 @@ public final class AXObserverRegistry: WindowGuardEventSource {
         retired.forEach(retire)
     }
 
+    public func reseedCurrentWindows() {
+        guard started else { return }
+        let identities = sessions.values.flatMap { Array($0.windows) }
+        for identity in identities {
+            guard started, sessions[identity.pid]?.windows.contains(identity) == true else { continue }
+            emit(pid: identity.pid, element: identity.element, kind: .seeded)
+        }
+    }
+
     public func lane(for pid: pid_t) -> AXWorkLane? {
         sessions[pid]?.lane
     }
