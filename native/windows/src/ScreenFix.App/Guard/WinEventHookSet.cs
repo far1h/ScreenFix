@@ -56,6 +56,8 @@ public interface IWinEventNativeApi
 
 public interface IWinEventSource : IDisposable
 {
+    bool IsReleaseComplete { get; }
+
     RuntimeOperationResult Start(
         long generation,
         Action<WinEventSignal> signal);
@@ -90,6 +92,8 @@ public sealed class WinEventHookSet(
     internal int RetainedHookCount => hooks.Count;
 
     internal bool IsCallbackRooted => callbackLease.IsAllocated && callback is not null;
+
+    public bool IsReleaseComplete => hooks.Count == 0;
 
     public RuntimeOperationResult Start(
         long generation,

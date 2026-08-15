@@ -38,6 +38,7 @@ public sealed class WindowGuard(
     private SelectedMonitor? selectedMonitor;
     private RectD[] maskBands = [];
     private readonly Dictionary<nint, WindowIdentity> liveWindows = [];
+    private readonly List<IWinEventSource> retiredSources = [];
     private bool correctionEnabled;
     private bool disposed;
     private long generation;
@@ -49,6 +50,7 @@ public sealed class WindowGuard(
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         ArgumentNullException.ThrowIfNull(maskBands);
+        RetryRetiredSources();
         if (correctionEnabled && IsSameConfiguration(selectedMonitor, maskBands))
         {
             return RuntimeOperationResult.Success();
@@ -85,13 +87,13 @@ public sealed class WindowGuard(
         }
         catch
         {
-            TryDispose(candidate);
+            RetireSource(candidate);
             return RuntimeOperationResult.Failure("Window event hook registration failed");
         }
 
         if (!result.IsSuccess)
         {
-            TryDispose(candidate);
+            RetireSource(candidate);
             return result;
         }
 
@@ -103,7 +105,7 @@ public sealed class WindowGuard(
         catch
         {
             TryStopCorrection();
-            TryDispose(candidate);
+            RetireSource(candidate);
             return RuntimeOperationResult.Failure("Window correction startup failed");
         }
 
@@ -119,12 +121,13 @@ public sealed class WindowGuard(
             HandleSignal(candidateGeneration, signal);
         }
 
-        TryDispose(retired);
+        RetireSource(retired);
         return RuntimeOperationResult.Success();
     }
 
     public void Pause()
     {
+        RetryRetiredSources();
         if (disposed || !correctionEnabled)
         {
             return;
@@ -137,6 +140,7 @@ public sealed class WindowGuard(
 
     public void Stop()
     {
+        RetryRetiredSources();
         if (source is null && selectedMonitor is null && !correctionEnabled)
         {
             return;
@@ -150,13 +154,14 @@ public sealed class WindowGuard(
         selectedMonitor = null;
         maskBands = [];
         liveWindows.Clear();
-        TryDispose(retired);
+        RetireSource(retired);
     }
 
     public void Dispose()
     {
         if (disposed)
         {
+            RetryRetiredSources();
             return;
         }
 
@@ -331,14 +336,45 @@ public sealed class WindowGuard(
         }
     }
 
-    private static void TryDispose(IWinEventSource? eventSource)
+    private void RetireSource(IWinEventSource? eventSource)
     {
+        if (eventSource is null)
+        {
+            return;
+        }
+
         try
         {
-            eventSource?.Dispose();
+            eventSource.Dispose();
         }
         catch
         {
+        }
+
+        if (!eventSource.IsReleaseComplete &&
+            !retiredSources.Any(item => ReferenceEquals(item, eventSource)))
+        {
+            retiredSources.Add(eventSource);
+        }
+    }
+
+    private void RetryRetiredSources()
+    {
+        for (var index = retiredSources.Count - 1; index >= 0; index--)
+        {
+            var eventSource = retiredSources[index];
+            try
+            {
+                eventSource.Dispose();
+            }
+            catch
+            {
+            }
+
+            if (eventSource.IsReleaseComplete)
+            {
+                retiredSources.RemoveAt(index);
+            }
         }
     }
 

@@ -133,6 +133,29 @@ public sealed class WindowGuardTests
         Assert.Equal(1, source.StopCount);
     }
 
+    [Fact]
+    public void Stop_RetriesAPreviouslyFailedHookRelease()
+    {
+        var source = new FakeEventSource([])
+        {
+            ReleaseFailuresRemaining = 1,
+        };
+        using var guard = CreateGuard(
+            new FakeEventSourceFactory(source),
+            new FakeScheduler([]),
+            new FakeCorrector([]));
+        Assert.True(guard.Start(Selected(), Masks()).IsSuccess);
+
+        guard.Stop();
+        Assert.False(source.IsReleaseComplete);
+
+        guard.Stop();
+        guard.Stop();
+
+        Assert.True(source.IsReleaseComplete);
+        Assert.Equal(2, source.StopCount);
+    }
+
     [Theory]
     [InlineData(0, 0, 0)]
     [InlineData(17, 1, 0)]
@@ -493,6 +516,10 @@ public sealed class WindowGuardTests
 
         public int StopCount { get; private set; }
 
+        public int ReleaseFailuresRemaining { get; set; }
+
+        public bool IsReleaseComplete { get; private set; } = true;
+
         public bool RaiseDuringStop { get; set; }
 
         public bool ThrowOnStart { get; set; }
@@ -510,6 +537,7 @@ public sealed class WindowGuardTests
 
             this.generation = generation;
             callback = signal;
+            IsReleaseComplete = false;
             order.Add(name.Length == 0 ? "hook-start" : $"hook-start-{name}");
             foreach (var item in StartSignals)
             {
@@ -535,7 +563,17 @@ public sealed class WindowGuardTests
             order.Add(name.Length == 0 ? "hook-stop" : $"hook-stop-{name}");
         }
 
-        public void Dispose() => Stop();
+        public void Dispose()
+        {
+            Stop();
+            if (ReleaseFailuresRemaining > 0)
+            {
+                ReleaseFailuresRemaining--;
+                return;
+            }
+
+            IsReleaseComplete = true;
+        }
 
         public void Raise(
             uint eventType,
