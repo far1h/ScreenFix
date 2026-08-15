@@ -238,6 +238,80 @@ let axObserverRegistryTests: [TestCase] = [
         )
         try expectEqual(environment.tokens[42]?.detached, 1)
     },
+    TestCase(name: "AXObserverRegistry termination detaches live registrations without AX cleanup") {
+        let environment = ObserverEnvironment()
+        let first = environment.window(142)
+        let second = environment.window(242)
+        environment.apps = [environment.app(42)]
+        environment.client.windows[42] = [first, second]
+        let registry = environment.registry()
+        registry.start()
+        environment.events.removeAll()
+        environment.log.removeAllObjects()
+
+        environment.workspaceCallback?(
+            AXApplicationEvent(kind: .terminated, application: environment.app(42, terminated: true))
+        )
+
+        let calls = environment.log.compactMap { $0 as? String }
+        try expectEqual(environment.events.map(\.kind), [.destroyed, .destroyed])
+        try expectEqual(calls, ["detach-42"])
+        try expectEqual(environment.tokens[42]?.detached, 1)
+
+        environment.log.removeAllObjects()
+        registry.stop()
+        try expectEqual(environment.log.compactMap { $0 as? String }, [])
+    },
+    TestCase(name: "AXObserverRegistry termination cancels a queued install before AX work") {
+        let environment = ObserverEnvironment()
+        let held = FakeObserverLane()
+        held.held = true
+        environment.lanes[42] = held
+        environment.apps = [environment.app(42)]
+        environment.client.windows[42] = [environment.window(142)]
+        let registry = environment.registry()
+        registry.start()
+
+        environment.workspaceCallback?(
+            AXApplicationEvent(kind: .terminated, application: environment.app(42, terminated: true))
+        )
+        environment.log.removeAllObjects()
+        held.held = false
+        held.flush()
+
+        try expectEqual(environment.log.compactMap { $0 as? String }, [])
+        try expect(environment.tokens[42] == nil)
+        try expectEqual(environment.events.count, 0)
+    },
+    TestCase(name: "AXObserverRegistry termination cancels queued refreshes before AX work") {
+        let environment = ObserverEnvironment()
+        let application = AXUIElementCreateApplication(42)
+        let first = environment.window(142)
+        let second = environment.window(242)
+        environment.apps = [environment.app(42)]
+        environment.client.windows[42] = [first]
+        let registry = environment.registry()
+        registry.start()
+        guard let token = environment.tokens[42], let lane = environment.lanes[42] else {
+            throw TestFailure(description: "missing installed observer session")
+        }
+        lane.held = true
+        environment.client.windows[42] = [first, second]
+        environment.client.focused[42] = second
+        token.callback(application, kAXWindowCreatedNotification as CFString)
+        token.callback(application, kAXFocusedWindowChangedNotification as CFString)
+
+        environment.workspaceCallback?(
+            AXApplicationEvent(kind: .terminated, application: environment.app(42, terminated: true))
+        )
+        environment.events.removeAll()
+        environment.log.removeAllObjects()
+        lane.held = false
+        lane.flush()
+
+        try expectEqual(environment.log.compactMap { $0 as? String }, [])
+        try expectEqual(environment.events.count, 0)
+    },
     TestCase(name: "AXObserverRegistry emits window events and registers created windows") {
         let environment = ObserverEnvironment()
         let app = AXUIElementCreateApplication(42)
@@ -307,6 +381,8 @@ let axObserverRegistryTests: [TestCase] = [
         try expectEqual(calls.contains { $0.hasPrefix("remove-142-") }, false)
         try expect(calls.contains { $0.hasPrefix("prepare-242") })
         try expect(calls.contains { $0.hasPrefix("remove-242-") })
+        try expect(calls.contains { $0 == "prepare-42" })
+        try expect(calls.contains { $0.hasPrefix("remove-42-") })
     },
     TestCase(name: "AXObserverRegistry termination keeps destroyed registrations bounded") {
         let environment = ObserverEnvironment()

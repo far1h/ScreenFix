@@ -99,6 +99,42 @@ public enum AXObserverCreation {
 
 private enum AXObserverRegistryError: Error {
     case registration(AXError)
+    case superseded
+}
+
+private enum AXApplicationLifetimeState {
+    case active
+    case stopped
+    case terminated
+}
+
+private final class AXApplicationLifetime {
+    private let lock = NSLock()
+    private var state = AXApplicationLifetimeState.active
+
+    func stop() {
+        lock.lock()
+        if state == .active { state = .stopped }
+        lock.unlock()
+    }
+
+    func terminate() {
+        lock.lock()
+        state = .terminated
+        lock.unlock()
+    }
+
+    var isActive: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return state == .active
+    }
+
+    var allowsRollback: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return state != .terminated
+    }
 }
 
 private struct AXRegistration {
@@ -117,6 +153,7 @@ private final class AXApplicationSession {
     let applicationElement: AXUIElement
     let observer: AXObserverToken
     let lane: AXWorkLane
+    let lifetime: AXApplicationLifetime
     var registrations: [AXRegistration]
     var windows: Set<AXWindowIdentity>
 
@@ -126,6 +163,7 @@ private final class AXApplicationSession {
         applicationElement: AXUIElement,
         observer: AXObserverToken,
         lane: AXWorkLane,
+        lifetime: AXApplicationLifetime,
         registrations: [AXRegistration],
         windows: Set<AXWindowIdentity>
     ) {
@@ -134,6 +172,7 @@ private final class AXApplicationSession {
         self.applicationElement = applicationElement
         self.observer = observer
         self.lane = lane
+        self.lifetime = lifetime
         self.registrations = registrations
         self.windows = windows
     }
@@ -159,7 +198,7 @@ public final class AXObserverRegistry: WindowGuardEventSource {
     private var workspaceObservation: AXWorkspaceObservation?
     private var sessions: [pid_t: AXApplicationSession] = [:]
     private var revisions: [pid_t: Int] = [:]
-    private var pending = Set<pid_t>()
+    private var pending: [pid_t: AXApplicationLifetime] = [:]
     private var generation = 0
     private var started = false
 
@@ -226,10 +265,12 @@ public final class AXObserverRegistry: WindowGuardEventSource {
         started = false
         let observation = workspaceObservation
         workspaceObservation = nil
+        let pendingLifetimes = Array(pending.values)
         pending.removeAll()
         let retired = Array(sessions.values)
         sessions.removeAll()
         revisions.removeAll()
+        pendingLifetimes.forEach { $0.stop() }
         observation?.cancel()
         retired.forEach(retire)
     }
@@ -269,17 +310,19 @@ public final class AXObserverRegistry: WindowGuardEventSource {
               generation == activeGeneration,
               isObservable(application),
               sessions[application.pid] == nil,
-              !pending.contains(application.pid) else {
+              pending[application.pid] == nil else {
             return
         }
         let pid = application.pid
         let revision = (revisions[pid] ?? 0) + 1
         revisions[pid] = revision
-        pending.insert(pid)
+        let lifetime = AXApplicationLifetime()
+        pending[pid] = lifetime
         let lane = makeLane(pid)
         lane.submit { [weak self] in
-            guard let self else { return }
+            guard let self, lifetime.isActive else { return }
             let applicationElement = self.applicationElement(pid)
+            guard lifetime.isActive else { return }
             let creation = self.makeObserver(pid) { [weak self] element, notification in
                 self?.deliverOnMain { [weak self] in
                     self?.handleNotification(
@@ -293,10 +336,16 @@ public final class AXObserverRegistry: WindowGuardEventSource {
             }
             guard case let .success(observer) = creation else {
                 self.deliverOnMain { [weak self] in
-                    self?.finishFailedInstall(pid: pid, revision: revision, generation: activeGeneration)
+                    self?.finishFailedInstall(
+                        pid: pid,
+                        revision: revision,
+                        generation: activeGeneration,
+                        lifetime: lifetime
+                    )
                 }
                 return
             }
+            guard lifetime.isActive else { return }
 
             var registrations: [AXRegistration] = []
             do {
@@ -305,18 +354,22 @@ public final class AXObserverRegistry: WindowGuardEventSource {
                     pid: pid,
                     element: applicationElement,
                     observer: observer,
+                    lifetime: lifetime,
                     registrations: &registrations
                 )
+                guard lifetime.isActive else { throw AXObserverRegistryError.superseded }
                 let windows = try self.client.elements(
                     applicationElement,
                     attribute: kAXWindowsAttribute as CFString
                 )
+                guard lifetime.isActive else { throw AXObserverRegistryError.superseded }
                 for window in windows {
                     try self.register(
                         Self.windowNotifications,
                         pid: pid,
                         element: window,
                         observer: observer,
+                        lifetime: lifetime,
                         registrations: &registrations
                     )
                 }
@@ -329,15 +382,25 @@ public final class AXObserverRegistry: WindowGuardEventSource {
                         applicationElement: applicationElement,
                         observer: observer,
                         lane: lane,
+                        lifetime: lifetime,
                         registrations: registrations,
                         windows: windows,
                         identities: identities
                     )
                 }
             } catch {
-                self.rollback(registrations, observer: observer)
+                self.rollbackIfAllowed(
+                    registrations,
+                    observer: observer,
+                    lifetime: lifetime
+                )
                 self.deliverOnMain { [weak self] in
-                    self?.finishFailedInstall(pid: pid, revision: revision, generation: activeGeneration)
+                    self?.finishFailedInstall(
+                        pid: pid,
+                        revision: revision,
+                        generation: activeGeneration,
+                        lifetime: lifetime
+                    )
                 }
             }
         }
@@ -350,6 +413,7 @@ public final class AXObserverRegistry: WindowGuardEventSource {
         applicationElement: AXUIElement,
         observer: AXObserverToken,
         lane: AXWorkLane,
+        lifetime: AXApplicationLifetime,
         registrations: [AXRegistration],
         windows: [AXUIElement],
         identities: Set<AXWindowIdentity>
@@ -357,47 +421,75 @@ public final class AXObserverRegistry: WindowGuardEventSource {
         guard started,
               generation == activeGeneration,
               revisions[pid] == revision,
+              pending[pid] === lifetime,
+              lifetime.isActive,
               sessions[pid] == nil,
               observer.attachToMainRunLoop() else {
-            pending.remove(pid)
-            lane.submit { [weak self] in self?.rollback(registrations, observer: observer) }
+            if pending[pid] === lifetime { pending.removeValue(forKey: pid) }
+            lane.submit { [weak self] in
+                self?.rollbackIfAllowed(
+                    registrations,
+                    observer: observer,
+                    lifetime: lifetime
+                )
+            }
             return
         }
-        pending.remove(pid)
+        pending.removeValue(forKey: pid)
         sessions[pid] = AXApplicationSession(
             pid: pid,
             revision: revision,
             applicationElement: applicationElement,
             observer: observer,
             lane: lane,
+            lifetime: lifetime,
             registrations: registrations,
             windows: identities
         )
         windows.forEach { emit(pid: pid, element: $0, kind: .seeded) }
     }
 
-    private func finishFailedInstall(pid: pid_t, revision: Int, generation activeGeneration: Int) {
-        guard generation == activeGeneration, revisions[pid] == revision else { return }
-        pending.remove(pid)
+    private func finishFailedInstall(
+        pid: pid_t,
+        revision: Int,
+        generation activeGeneration: Int,
+        lifetime: AXApplicationLifetime
+    ) {
+        guard generation == activeGeneration,
+              revisions[pid] == revision,
+              pending[pid] === lifetime else { return }
+        pending.removeValue(forKey: pid)
     }
 
     private func invalidate(pid: pid_t) {
         revisions[pid] = (revisions[pid] ?? 0) + 1
-        pending.remove(pid)
+        pending.removeValue(forKey: pid)?.terminate()
         guard let session = sessions.removeValue(forKey: pid) else { return }
+        session.lifetime.terminate()
         session.windows.forEach { identity in
             eventSink(AXWindowEvent(identity: identity, element: identity.element, kind: .destroyed))
         }
-        retire(session)
+        releaseTerminated(session)
+    }
+
+    private func releaseTerminated(_ session: AXApplicationSession) {
+        session.observer.detachFromMainRunLoop()
+        session.registrations.removeAll()
+        session.windows.removeAll()
     }
 
     private func retire(_ session: AXApplicationSession) {
+        session.lifetime.stop()
         session.observer.detachFromMainRunLoop()
         let registrations = session.registrations
         session.registrations.removeAll()
         session.windows.removeAll()
         session.lane.submit { [weak self] in
-            self?.rollback(registrations, observer: session.observer)
+            self?.rollbackIfAllowed(
+                registrations,
+                observer: session.observer,
+                lifetime: session.lifetime
+            )
         }
     }
 
@@ -406,10 +498,13 @@ public final class AXObserverRegistry: WindowGuardEventSource {
         pid: pid_t,
         element: AXUIElement,
         observer: AXObserverToken,
+        lifetime: AXApplicationLifetime,
         registrations: inout [AXRegistration]
     ) throws {
         for notification in notifications {
+            guard lifetime.isActive else { throw AXObserverRegistryError.superseded }
             try client.prepare(element)
+            guard lifetime.isActive else { throw AXObserverRegistryError.superseded }
             let result = observer.addNotification(notification, element: element)
             if result == .success {
                 registrations.append(AXRegistration(
@@ -420,12 +515,19 @@ public final class AXObserverRegistry: WindowGuardEventSource {
             } else if result != .notificationUnsupported {
                 throw AXObserverRegistryError.registration(result)
             }
+            guard lifetime.isActive else { throw AXObserverRegistryError.superseded }
         }
     }
 
-    private func rollback(_ registrations: [AXRegistration], observer: AXObserverToken) {
+    private func rollbackIfAllowed(
+        _ registrations: [AXRegistration],
+        observer: AXObserverToken,
+        lifetime: AXApplicationLifetime
+    ) {
         for registration in registrations.reversed() {
+            guard lifetime.allowsRollback else { return }
             guard (try? client.prepare(registration.element)) != nil else { continue }
+            guard lifetime.allowsRollback else { return }
             _ = observer.removeNotification(registration.notification, element: registration.element)
         }
     }
@@ -467,24 +569,28 @@ public final class AXObserverRegistry: WindowGuardEventSource {
     }
 
     private func refreshAll(pid: pid_t, kind: AXWindowEventKind, emitExisting: Bool) {
-        guard let session = sessions[pid] else { return }
+        guard let session = sessions[pid], session.lifetime.isActive else { return }
         let activeGeneration = generation
         let revision = session.revision
         let known = session.windows
         session.lane.submit { [weak self] in
-            guard let self else { return }
+            guard let self, session.lifetime.isActive else { return }
             var registrations: [AXRegistration] = []
             do {
                 let windows = try self.client.elements(
                     session.applicationElement,
                     attribute: kAXWindowsAttribute as CFString
                 )
+                guard session.lifetime.isActive else {
+                    throw AXObserverRegistryError.superseded
+                }
                 for window in windows where !known.contains(AXWindowIdentity(pid: pid, element: window)) {
                     try self.register(
                         Self.windowNotifications,
                         pid: pid,
                         element: window,
                         observer: session.observer,
+                        lifetime: session.lifetime,
                         registrations: &registrations
                     )
                 }
@@ -497,12 +603,17 @@ public final class AXObserverRegistry: WindowGuardEventSource {
                         registrations: registrations,
                         observer: session.observer,
                         lane: session.lane,
+                        lifetime: session.lifetime,
                         kind: kind,
                         emitExisting: emitExisting
                     )
                 }
             } catch {
-                self.rollback(registrations, observer: session.observer)
+                self.rollbackIfAllowed(
+                    registrations,
+                    observer: session.observer,
+                    lifetime: session.lifetime
+                )
             }
         }
     }
@@ -515,14 +626,23 @@ public final class AXObserverRegistry: WindowGuardEventSource {
         registrations: [AXRegistration],
         observer: AXObserverToken,
         lane: AXWorkLane,
+        lifetime: AXApplicationLifetime,
         kind: AXWindowEventKind,
         emitExisting: Bool
     ) {
         guard started,
               generation == activeGeneration,
               let session = sessions[pid],
+              session.lifetime === lifetime,
+              lifetime.isActive,
               session.revision == revision else {
-            lane.submit { [weak self] in self?.rollback(registrations, observer: observer) }
+            lane.submit { [weak self] in
+                self?.rollbackIfAllowed(
+                    registrations,
+                    observer: observer,
+                    lifetime: lifetime
+                )
+            }
             return
         }
         session.registrations.append(contentsOf: registrations)
@@ -537,24 +657,28 @@ public final class AXObserverRegistry: WindowGuardEventSource {
     }
 
     private func refreshFocused(pid: pid_t) {
-        guard let session = sessions[pid] else { return }
+        guard let session = sessions[pid], session.lifetime.isActive else { return }
         let activeGeneration = generation
         let revision = session.revision
         let known = session.windows
         session.lane.submit { [weak self] in
-            guard let self else { return }
+            guard let self, session.lifetime.isActive else { return }
             var registrations: [AXRegistration] = []
             do {
                 let window = try self.client.element(
                     session.applicationElement,
                     attribute: kAXFocusedWindowAttribute as CFString
                 )
+                guard session.lifetime.isActive else {
+                    throw AXObserverRegistryError.superseded
+                }
                 if !known.contains(AXWindowIdentity(pid: pid, element: window)) {
                     try self.register(
                         Self.windowNotifications,
                         pid: pid,
                         element: window,
                         observer: session.observer,
+                        lifetime: session.lifetime,
                         registrations: &registrations
                     )
                 }
@@ -566,11 +690,16 @@ public final class AXObserverRegistry: WindowGuardEventSource {
                         window: window,
                         registrations: registrations,
                         observer: session.observer,
-                        lane: session.lane
+                        lane: session.lane,
+                        lifetime: session.lifetime
                     )
                 }
             } catch {
-                self.rollback(registrations, observer: session.observer)
+                self.rollbackIfAllowed(
+                    registrations,
+                    observer: session.observer,
+                    lifetime: session.lifetime
+                )
             }
         }
     }
@@ -582,13 +711,22 @@ public final class AXObserverRegistry: WindowGuardEventSource {
         window: AXUIElement,
         registrations: [AXRegistration],
         observer: AXObserverToken,
-        lane: AXWorkLane
+        lane: AXWorkLane,
+        lifetime: AXApplicationLifetime
     ) {
         guard started,
               generation == activeGeneration,
               let session = sessions[pid],
+              session.lifetime === lifetime,
+              lifetime.isActive,
               session.revision == revision else {
-            lane.submit { [weak self] in self?.rollback(registrations, observer: observer) }
+            lane.submit { [weak self] in
+                self?.rollbackIfAllowed(
+                    registrations,
+                    observer: observer,
+                    lifetime: lifetime
+                )
+            }
             return
         }
         session.registrations.append(contentsOf: registrations)
