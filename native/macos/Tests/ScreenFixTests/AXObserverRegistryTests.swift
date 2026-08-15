@@ -232,7 +232,10 @@ let axObserverRegistryTests: [TestCase] = [
         environment.workspaceCallback?(AXApplicationEvent(kind: .unhidden, application: environment.app(42)))
         environment.workspaceCallback?(AXApplicationEvent(kind: .terminated, application: environment.app(42, terminated: true)))
 
-        try expectEqual(environment.events.map(\.kind), [.seeded, .shown, .shown, .shown, .shown])
+        try expectEqual(
+            environment.events.map(\.kind),
+            [.seeded, .shown, .shown, .shown, .shown, .destroyed, .destroyed]
+        )
         try expectEqual(environment.tokens[42]?.detached, 1)
     },
     TestCase(name: "AXObserverRegistry emits window events and registers created windows") {

@@ -369,6 +369,9 @@ public final class AXObserverRegistry: WindowGuardEventSource {
         revisions[pid] = (revisions[pid] ?? 0) + 1
         pending.remove(pid)
         guard let session = sessions.removeValue(forKey: pid) else { return }
+        session.windows.forEach { identity in
+            eventSink(AXWindowEvent(identity: identity, element: identity.element, kind: .destroyed))
+        }
         retire(session)
     }
 
