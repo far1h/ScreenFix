@@ -9,6 +9,8 @@ internal static partial class User32
     internal const int WindowExtendedStyleNoActivate = 0x08000000;
     internal const int WindowExtendedStyleToolWindow = 0x00000080;
     internal const uint LayeredWindowAlpha = 0x00000002;
+    internal const byte AlphaSourceOver = 0x00;
+    internal const byte AlphaSourceAlpha = 0x01;
     internal const uint SetWindowPositionNoActivate = 0x0010;
     internal const uint SetWindowPositionShowWindow = 0x0040;
     internal const uint SetWindowPositionNoOwnerZOrder = 0x0200;
@@ -61,4 +63,22 @@ internal static partial class User32
 
     [LibraryImport("user32.dll")]
     internal static partial uint GetDpiForWindow(nint window);
+
+    [LibraryImport("user32.dll")]
+    internal static partial nint GetDC(nint window);
+
+    [LibraryImport("user32.dll")]
+    internal static partial int ReleaseDC(nint window, nint deviceContext);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    internal static partial int UpdateLayeredWindow(
+        nint window,
+        nint destinationDeviceContext,
+        in NativePoint destination,
+        in NativeSize size,
+        nint sourceDeviceContext,
+        in NativePoint source,
+        uint colorKey,
+        in NativeBlendFunction blend,
+        uint flags);
 }

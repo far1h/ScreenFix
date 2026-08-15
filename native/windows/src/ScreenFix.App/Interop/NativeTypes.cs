@@ -11,6 +11,29 @@ internal struct NativeRect
     internal int Bottom;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativePoint(int x, int y)
+{
+    internal int X = x;
+    internal int Y = y;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeSize(int width, int height)
+{
+    internal int Width = width;
+    internal int Height = height;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1)]
+internal struct NativeBlendFunction
+{
+    internal byte BlendOperation;
+    internal byte BlendFlags;
+    internal byte SourceConstantAlpha;
+    internal byte AlphaFormat;
+}
+
 [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
 internal struct MonitorInfoEx
 {

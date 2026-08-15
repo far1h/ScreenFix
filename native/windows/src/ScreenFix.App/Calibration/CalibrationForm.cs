@@ -20,6 +20,8 @@ internal sealed class CalibrationForm : Form
     private readonly CalibrationSession session;
     private readonly CalibrationCommandAdapter commands;
     private bool intentionallyChangingCapture;
+    private bool renderFailureReported;
+    private bool readyForRendering;
 
     public CalibrationForm(
         Rectangle physicalBounds,
@@ -43,10 +45,7 @@ internal sealed class CalibrationForm : Form
         commands = new CalibrationCommandAdapter(session, ReleaseCapture);
 
         AutoScaleMode = AutoScaleMode.None;
-        BackColor = Color.Fuchsia;
-        TransparencyKey = Color.Fuchsia;
         Bounds = physicalBounds;
-        DoubleBuffered = true;
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
@@ -58,7 +57,8 @@ internal sealed class CalibrationForm : Form
         get
         {
             var parameters = base.CreateParams;
-            parameters.ExStyle |= User32.WindowExtendedStyleToolWindow;
+            parameters.ExStyle |= User32.WindowExtendedStyleLayered |
+                User32.WindowExtendedStyleToolWindow;
             return parameters;
         }
     }
@@ -82,6 +82,8 @@ internal sealed class CalibrationForm : Form
         }
 
         Bounds = physicalBounds;
+        readyForRendering = true;
+        RenderLayered();
         Show();
         if (User32.GetWindowRect(Handle, out var actualBounds) == 0)
         {
@@ -99,13 +101,11 @@ internal sealed class CalibrationForm : Form
 
     protected override void OnPaint(PaintEventArgs eventArgs)
     {
-        base.OnPaint(eventArgs);
-        CalibrationPainter.Paint(
-            eventArgs.Graphics,
-            dpi,
-            logicalFrame,
-            session.WorkingBands,
-            layout);
+        _ = eventArgs;
+        if (readyForRendering)
+        {
+            TryRenderLayered();
+        }
     }
 
     protected override void OnMouseDown(MouseEventArgs eventArgs)
@@ -136,7 +136,7 @@ internal sealed class CalibrationForm : Form
             (eventArgs.Button & MouseButtons.Left) != 0);
         if (action == CalibrationAction.Render)
         {
-            Invalidate();
+            TryRenderLayered();
         }
     }
 
@@ -199,6 +199,36 @@ internal sealed class CalibrationForm : Form
         if (Capture)
         {
             SetCapture(false);
+        }
+    }
+
+    private void RenderLayered()
+    {
+        using var bitmap = CalibrationLayeredRenderer.Render(
+            physicalBounds.Width,
+            physicalBounds.Height,
+            dpi,
+            logicalFrame,
+            session.WorkingBands,
+            layout);
+        CalibrationLayeredRenderer.Present(Handle, physicalBounds, bitmap);
+    }
+
+    private void TryRenderLayered()
+    {
+        if (renderFailureReported || IsDisposed)
+        {
+            return;
+        }
+
+        try
+        {
+            RenderLayered();
+        }
+        catch
+        {
+            renderFailureReported = true;
+            callbacks.Cancel(generation);
         }
     }
 
