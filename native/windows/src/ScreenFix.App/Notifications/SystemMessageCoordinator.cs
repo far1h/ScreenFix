@@ -21,7 +21,7 @@ public interface ISystemMessageTarget
 
     void Resume();
 
-    void CancelEditorForDpiChange();
+    void CancelEditorForDpiChange(long editorGeneration);
 }
 
 public sealed class SystemMessageCoordinator
@@ -72,8 +72,16 @@ public sealed class SystemMessageCoordinator
                 QueueResume(callbackGeneration);
                 break;
             case SystemMessage.DpiChanged:
-                QueueDpiChange(callbackGeneration);
+                QueueDpiChange(callbackGeneration, callbackGeneration);
                 break;
+        }
+    }
+
+    public void HandleEditorDpiChanged(long editorGeneration, long callbackGeneration)
+    {
+        if (callbackGeneration == Generation)
+        {
+            QueueDpiChange(callbackGeneration, editorGeneration);
         }
     }
 
@@ -149,7 +157,7 @@ public sealed class SystemMessageCoordinator
         });
     }
 
-    private void QueueDpiChange(long callbackGeneration)
+    private void QueueDpiChange(long callbackGeneration, long editorGeneration)
     {
         if (dpiQueued)
         {
@@ -165,7 +173,7 @@ public sealed class SystemMessageCoordinator
             }
 
             dpiQueued = false;
-            target.CancelEditorForDpiChange();
+            target.CancelEditorForDpiChange(editorGeneration);
         });
     }
 

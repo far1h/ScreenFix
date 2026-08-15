@@ -146,18 +146,18 @@ public sealed class RuntimeController : ISystemMessageTarget
 
     public void CancelEditorForDpiChange()
     {
+        CancelEditorForDpiChange(generation);
+    }
+
+    public void CancelEditorForDpiChange(long editorGeneration)
+    {
         VerifyActive();
         if (stopped || suspended)
         {
             return;
         }
 
-        if (calibration.IsEditing)
-        {
-            EndEditing();
-        }
-
-        Reconcile();
+        OnCalibrationDpiChanged(editorGeneration);
     }
 
     public void SelectMonitor()

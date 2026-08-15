@@ -3,7 +3,7 @@ using ScreenFix.Core.Calibration;
 
 namespace ScreenFix.App.Calibration;
 
-internal sealed class WinFormsCalibrationHost(Action? dpiChanged = null) : ICalibrationHost
+internal sealed class WinFormsCalibrationHost(Action<long>? dpiChanged = null) : ICalibrationHost
 {
     private CalibrationForm? editor;
 
@@ -31,7 +31,7 @@ internal sealed class WinFormsCalibrationHost(Action? dpiChanged = null) : ICali
 
             var routedCallbacks = dpiChanged is null
                 ? callbacks
-                : callbacks with { DpiChanged = _ => dpiChanged() };
+                : callbacks with { DpiChanged = dpiChanged };
             candidate = new CalibrationForm(
                 bounds,
                 dpi,

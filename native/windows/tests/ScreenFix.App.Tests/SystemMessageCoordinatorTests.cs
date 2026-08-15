@@ -82,7 +82,8 @@ public sealed class SystemMessageCoordinatorTests
 
         public void Resume() => Calls.Add(ExpectedCall.Resume);
 
-        public void CancelEditorForDpiChange() => Calls.Add(ExpectedCall.CancelEditorForDpi);
+        public void CancelEditorForDpiChange(long editorGeneration) =>
+            Calls.Add(ExpectedCall.CancelEditorForDpi);
     }
 
     private sealed class FakeDispatcher : IUiDispatcher

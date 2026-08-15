@@ -104,10 +104,10 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
         var messageWindow = new SystemMessageWindow(messageCoordinator);
         lifetime.OwnSystemMessages(messageWindow.Dispose);
 
-        var calibration = new WinFormsCalibrationHost(() => messageCoordinator.Handle(
-            SystemMessage.DpiChanged,
-            value: 0,
-            messageCoordinator.Generation));
+        var calibration = new WinFormsCalibrationHost(editorGeneration =>
+            messageCoordinator.HandleEditorDpiChanged(
+                editorGeneration,
+                messageCoordinator.Generation));
         lifetime.OwnEditor(calibration.Stop);
 
         var localData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

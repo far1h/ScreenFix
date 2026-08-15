@@ -23,5 +23,6 @@ internal sealed class SystemMessageTargetBridge : ISystemMessageTarget
 
     public void Resume() => target?.Resume();
 
-    public void CancelEditorForDpiChange() => target?.CancelEditorForDpiChange();
+    public void CancelEditorForDpiChange(long editorGeneration) =>
+        target?.CancelEditorForDpiChange(editorGeneration);
 }

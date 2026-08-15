@@ -1,3 +1,4 @@
+using ScreenFix.App.Notifications;
 using ScreenFix.App.Runtime;
 using ScreenFix.Core.Configuration;
 using ScreenFix.Core.Displays;
@@ -401,6 +402,30 @@ public sealed class RuntimeControllerTests
     }
 
     [Fact]
+    public void DeferredOldEditorDpiChange_CannotCancelReplacementEditor()
+    {
+        var config = DefaultConfig();
+        var harness = new Harness(
+            new ConfigLoadResult(config, false, null),
+            [Connected(config.Display)]);
+        var dispatcher = new DeferredDispatcher();
+        var coordinator = new SystemMessageCoordinator(harness.Controller, dispatcher, generation: 1);
+        harness.Controller.Start();
+        harness.Controller.Calibrate();
+        var oldEditorGeneration = harness.Calibration.Request!.Generation;
+        coordinator.HandleEditorDpiChanged(oldEditorGeneration, callbackGeneration: 1);
+
+        harness.Controller.Calibrate();
+        harness.Controller.Calibrate();
+        var replacementGeneration = harness.Calibration.Request!.Generation;
+        dispatcher.RunAll();
+
+        Assert.NotEqual(oldEditorGeneration, replacementGeneration);
+        Assert.True(harness.Calibration.IsEditing);
+        Assert.Equal(replacementGeneration, harness.Calibration.Request.Generation);
+    }
+
+    [Fact]
     public void SuspendAndResume_CloseTransientResourcesThenRestoreMasksOnce()
     {
         var config = DefaultConfig();
@@ -685,6 +710,23 @@ public sealed class RuntimeControllerTests
     {
         public void VerifyAccess()
         {
+        }
+    }
+
+    private sealed class DeferredDispatcher : IUiDispatcher
+    {
+        private readonly List<Action> pending = [];
+
+        public void Post(Action action) => pending.Add(action);
+
+        public void RunAll()
+        {
+            var actions = pending.ToArray();
+            pending.Clear();
+            foreach (var action in actions)
+            {
+                action();
+            }
         }
     }
 
