@@ -591,6 +591,18 @@ let runtimeCalibrationTests = [
         try staleSession.onCancel()
         try expectEqual(value.runtime.snapshot.configuration, calibrationConfig("a"))
     },
+    TestCase(name: "RuntimeCalibration sleep blocks editor teardown reentrancy") {
+        let value = calibrationFixture(configuration: calibrationConfig("a"), screens: [calibrationScreen("a")])
+        value.runtime.start()
+        value.runtime.toggleCalibration()
+        value.editor.onStop = { value.runtime.toggleCalibration() }
+
+        value.notifications.willSleep?()
+
+        try expect(!value.runtime.snapshot.calibrating)
+        try expect(!value.editor.isEditing)
+        try expectEqual(value.editor.sessions.count, 1)
+    },
     TestCase(name: "RuntimeCalibration invalid or too-small frames fail before editor allocation") {
         let frames = [
             NSRect(x: CGFloat.nan, y: 0, width: 3440, height: 1440),

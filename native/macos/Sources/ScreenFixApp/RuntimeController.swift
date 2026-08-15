@@ -317,7 +317,7 @@ public final class RuntimeController {
 
     public func setEnabled(_ enabled: Bool) {
         if deferDuringCalibrationCommit({ runtime in runtime.setEnabled(enabled) }) { return }
-        guard started else { return }
+        guard started, !sleeping else { return }
         guard cancelCalibrationAndRestore() else { return }
         guard let current = configuration, current.enabled != enabled else {
             stateDidChange()
@@ -385,7 +385,7 @@ public final class RuntimeController {
 
     public func selectDisplay(stableId: String) {
         if deferDuringCalibrationCommit({ runtime in runtime.selectDisplay(stableId: stableId) }) { return }
-        guard started else { return }
+        guard started, !sleeping else { return }
         let screens = catalog.connectedDisplays()
         guard let screen = screens.first(where: { candidate in
             candidate.display.stableId?.caseInsensitiveCompare(stableId) == .orderedSame
@@ -407,7 +407,7 @@ public final class RuntimeController {
 
     public func toggleCalibration() {
         if deferDuringCalibrationCommit({ runtime in runtime.toggleCalibration() }) { return }
-        guard started else { return }
+        guard started, !sleeping else { return }
         if calibrationSession != nil {
             if cancelCalibrationAndRestore() { stateDidChange() }
             return
@@ -433,7 +433,7 @@ public final class RuntimeController {
 
     public func resetToDefaults() {
         if deferDuringCalibrationCommit({ runtime in runtime.resetToDefaults() }) { return }
-        guard started else { return }
+        guard started, !sleeping else { return }
         guard cancelCalibrationAndRestore() else { return }
         guard let current = configuration else {
             stateDidChange()
@@ -469,7 +469,7 @@ public final class RuntimeController {
 
     public func reload() {
         if deferDuringCalibrationCommit({ runtime in runtime.reload() }) { return }
-        guard started else { return }
+        guard started, !sleeping else { return }
         guard cancelCalibrationAndRestore() else { return }
         let activeGeneration = generation
         do {
