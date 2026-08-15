@@ -1485,6 +1485,183 @@ test.test("a throwing commit guard is contained and preserves active input", fun
     test.equal(oldTap:isEnabled(), true)
 end)
 
+test.test("stop during commit guard supersedes the pending editor", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+
+    local started, startError = calibration:start(
+        fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 }),
+        validBands(),
+        function() end,
+        function() end,
+        function()
+            calibration:stop()
+            return true
+        end
+    )
+
+    test.equal(started, nil)
+    test.equal(startError, "calibration start superseded")
+    test.equal(calibration.session, nil)
+    test.equal(calibration.editorCanvas, nil)
+    test.equal(calibration.eventTap, nil)
+    test.equal(canvas.canvases[1].deleteCount, 1)
+    test.equal(eventtap.taps[1].stopCount, 1)
+end)
+
+test.test("stop during candidate show supersedes the pending editor", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local realNew = canvas.new
+    canvas.new = function(frame)
+        local editor = realNew(frame)
+        local realShow = editor.show
+        editor.show = function(self)
+            local result = realShow(self)
+            calibration:stop()
+            return result
+        end
+        return editor
+    end
+
+    local started, startError = calibration:start(
+        fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 }),
+        validBands(),
+        function() end,
+        function() end
+    )
+
+    test.equal(started, nil)
+    test.equal(startError, "calibration start superseded")
+    test.equal(calibration.session, nil)
+    test.equal(calibration.editorCanvas, nil)
+    test.equal(calibration.eventTap, nil)
+    test.equal(canvas.canvases[1].deleteCount, 1)
+    test.equal(eventtap.taps[1].stopCount, 1)
+    test.equal(eventtap.taps[1]:isEnabled(), false)
+end)
+
+test.test("cancel during candidate show supersedes the pending editor", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local realNew = canvas.new
+    canvas.new = function(frame)
+        local editor = realNew(frame)
+        local realShow = editor.show
+        editor.show = function(self)
+            local result = realShow(self)
+            calibration:cancel()
+            return result
+        end
+        return editor
+    end
+
+    local started, startError = calibration:start(
+        fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 }),
+        validBands(),
+        function() end,
+        function() end
+    )
+
+    test.equal(started, nil)
+    test.equal(startError, "calibration start superseded")
+    test.equal(calibration.session, nil)
+    test.equal(calibration.editorCanvas, nil)
+    test.equal(calibration.eventTap, nil)
+    test.equal(canvas.canvases[1].deleteCount, 1)
+    test.equal(eventtap.taps[1].stopCount, 1)
+    test.equal(eventtap.taps[1]:isEnabled(), false)
+end)
+
+test.test("saving the prior session during candidate show supersedes replacement", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    local saveCalls = 0
+    calibration:start(screen, validBands(), function()
+        saveCalls = saveCalls + 1
+    end, function() end)
+    local realNew = canvas.new
+    canvas.new = function(frame)
+        local editor = realNew(frame)
+        if #canvas.canvases == 2 then
+            local realShow = editor.show
+            editor.show = function(self)
+                local result = realShow(self)
+                calibration:save()
+                return result
+            end
+        end
+        return editor
+    end
+
+    local started, startError = calibration:start(
+        screen,
+        validBands(),
+        function() end,
+        function() end
+    )
+
+    test.equal(started, nil)
+    test.equal(startError, "calibration start superseded")
+    test.equal(saveCalls, 1)
+    test.equal(calibration.session, nil)
+    test.equal(calibration.editorCanvas, nil)
+    test.equal(calibration.eventTap, nil)
+    test.equal(canvas.canvases[1].deleteCount, 1)
+    test.equal(eventtap.taps[1].stopCount, 1)
+    test.equal(canvas.canvases[2].deleteCount, 1)
+    test.equal(eventtap.taps[2].stopCount, 1)
+end)
+
 test.test("successful replacement retires old input and rejects its captured callbacks", function()
     local canvas = fake.canvas()
     local eventtap = fake.eventtap()
@@ -1640,6 +1817,65 @@ test.test("Save does not stop a replacement started reentrantly by onSave", func
     test.equal(eventtap.taps[2].stopCount, 0)
 end)
 
+test.test("stop teardown retains a replacement started by the old tap", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    calibration:start(screen, validBands(), function() end, function() end)
+    local oldSession = calibration.session
+    local oldCanvas = calibration.editorCanvas
+    local oldTap = calibration.eventTap
+    local replacementStarted
+    local replacementError
+    local replacementSession
+    eventtap.stopHook = function(tap)
+        if tap == oldTap then
+            eventtap.stopHook = nil
+            replacementStarted, replacementError = calibration:start(
+                screen,
+                validBands(),
+                function() end,
+                function() end
+            )
+            replacementSession = calibration.session
+        end
+    end
+
+    calibration:stop()
+
+    test.equal(replacementStarted, true)
+    test.equal(replacementError, nil)
+    test.equal(replacementSession == oldSession, false)
+    test.equal(calibration.session, replacementSession)
+    test.equal(calibration.sessionToken, replacementSession.token)
+    test.equal(calibration.editorCanvas, canvas.canvases[2])
+    test.equal(calibration.eventTap, eventtap.taps[2])
+    test.equal(oldCanvas.deleteCount, 1)
+    test.equal(oldTap.stopCount, 1)
+    test.equal(oldTap:isEnabled(), false)
+    test.equal(canvas.canvases[2].deleteCount, 0)
+    test.equal(eventtap.taps[2].stopCount, 0)
+    test.equal(eventtap.taps[2]:isEnabled(), true)
+    assertActiveMovement(
+        calibration,
+        canvas.canvases[2],
+        eventtap.taps[2],
+        eventtap.event.types
+    )
+end)
+
 test.test("stop invalidates input before resilient ordered teardown", function()
     local canvas = fake.canvas()
     local eventtap = fake.eventtap()
@@ -1672,9 +1908,11 @@ test.test("stop invalidates input before resilient ordered teardown", function()
     tap.stop = function(self)
         tapSnapshot = {
             token = calibration.sessionToken,
+            session = calibration.session,
             eventTap = calibration.eventTap,
             editorCanvas = calibration.editorCanvas,
             fullFrame = calibration.fullFrame,
+            workingBands = calibration.workingBands,
         }
         return originalTapStop(self)
     end
@@ -1707,9 +1945,11 @@ test.test("stop invalidates input before resilient ordered teardown", function()
     test.equal(firstSafe, true)
     test.equal(secondSafe, true)
     test.equal(tapSnapshot.token, nil)
+    test.equal(tapSnapshot.session, nil)
     test.equal(tapSnapshot.eventTap, nil)
-    test.equal(tapSnapshot.editorCanvas, editor)
-    test.equal(tapSnapshot.fullFrame, fullFrame)
+    test.equal(tapSnapshot.editorCanvas, nil)
+    test.equal(tapSnapshot.fullFrame, nil)
+    test.equal(tapSnapshot.workingBands, nil)
     test.equal(deleteSnapshot.session, nil)
     test.equal(deleteSnapshot.editorCanvas, nil)
     test.equal(deleteSnapshot.fullFrame, nil)

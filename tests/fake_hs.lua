@@ -217,6 +217,9 @@ function M.eventtap()
             self.stopCount = self.stopCount + 1
             record("stop", self)
             self.enabled = false
+            if module.stopHook then
+                module.stopHook(self)
+            end
             return self
         end
 

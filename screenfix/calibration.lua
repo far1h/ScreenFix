@@ -170,7 +170,11 @@ local function setDrag(calibration, session, drag)
 end
 
 function M.new(deps)
-    return setmetatable({ deps = deps, nextSessionToken = 0 }, Calibration)
+    return setmetatable({
+        deps = deps,
+        lifecycleGeneration = 0,
+        nextSessionToken = 0,
+    }, Calibration)
 end
 
 function Calibration:selectScreen(onSelect)
@@ -403,12 +407,12 @@ function Calibration:stop()
     local chooser = self.screenChooser
     local session = self.session
     local eventTap = self.eventTap
+    self.lifecycleGeneration = self.lifecycleGeneration + 1
     self.sessionToken = nil
     self.screenChooser = nil
-    self.eventTap = nil
-    stopEventTap(eventTap)
     clearSession(self)
 
+    stopEventTap(eventTap)
     deleteChooser(chooser)
     if session then
         deleteEditor(session.editorCanvas)
@@ -427,6 +431,8 @@ function Calibration:start(screen, bands, onSave, onCancel, commitGuard)
 
     self.nextSessionToken = self.nextSessionToken + 1
     local candidateToken = self.nextSessionToken
+    self.lifecycleGeneration = self.lifecycleGeneration + 1
+    local candidateGeneration = self.lifecycleGeneration
 
     local candidate = {
         token = candidateToken,
@@ -513,9 +519,18 @@ function Calibration:start(screen, bands, onSave, onCancel, commitGuard)
         return nil, prepareError
     end
 
+    if self.lifecycleGeneration ~= candidateGeneration then
+        stopEventTap(candidate.eventTap)
+        deleteEditor(candidate.editorCanvas)
+        return nil, "calibration start superseded"
+    end
+
     if commitGuard then
         local guarded, canCommit = pcall(commitGuard)
-        if not guarded or canCommit ~= true then
+        if not guarded
+            or canCommit ~= true
+            or self.lifecycleGeneration ~= candidateGeneration
+        then
             stopEventTap(candidate.eventTap)
             deleteEditor(candidate.editorCanvas)
             return nil, "calibration start superseded"
