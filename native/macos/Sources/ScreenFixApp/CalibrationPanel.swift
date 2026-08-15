@@ -36,6 +36,7 @@ public final class CalibrationPanel: NSPanel, CalibrationSurface {
 
     public override func close() {
         calibrationView?.eventHandler = nil
+        calibrationView?.stopTracking()
         super.close()
     }
 }

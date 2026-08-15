@@ -14,6 +14,7 @@ private final class FakeCalibrationSurface: CalibrationSurface {
     private let failConfigure: Bool
     private let failRender: Bool
     private let failOrder: Bool
+    var onClose: (() -> Void)?
     private(set) var handler: ((CalibrationPointerEvent) -> Void)?
     private(set) var renderedBands: [NormalizedRect] = []
 
@@ -53,6 +54,9 @@ private final class FakeCalibrationSurface: CalibrationSurface {
 
     func close() {
         log.add("close-\(identifier)")
+        let callback = onClose
+        onClose = nil
+        callback?()
     }
 
     func send(_ event: CalibrationPointerEvent) {
@@ -261,6 +265,104 @@ let calibrationPanelTests = [
         try expect(options.contains(.mouseMoved))
         try expect(options.contains(.activeAlways))
         try expect(options.contains(.inVisibleRect))
+        view.stopTracking()
+        try expectEqual(view.trackingAreas.count, 0)
+    },
+    TestCase(name: "CalibrationPanel reentrant commit guard cannot replace a newer editor") {
+        let log = NSMutableArray()
+        let surfaces = NSMutableArray()
+        let controller = makeCalibrationController(log: log, surfaces: surfaces)
+        let first = try controller.prepare(
+            screenFrame: panelFrame,
+            bands: panelBands,
+            onSave: { _ in },
+            onCancel: {}
+        )
+        let replacementBands = panelBands.map { band in
+            NormalizedRect(x: band.x + 0.10, y: band.y, w: band.w, h: band.h)
+        }
+
+        try expectThrows {
+            try controller.commit(first) {
+                let replacement = try controller.prepare(
+                    screenFrame: panelFrame,
+                    bands: replacementBands,
+                    onSave: { _ in },
+                    onCancel: {}
+                )
+                try controller.commit(replacement)
+                return true
+            }
+        }
+
+        try expect(controller.isEditing)
+        try expectEqual(controller.workingBands, replacementBands)
+        try expect(panelEvents(log).contains("close-1"))
+        try expect(!panelEvents(log).contains("close-2"))
+    },
+    TestCase(name: "CalibrationPanel reentrant Save cannot stop a newer editor") {
+        let log = NSMutableArray()
+        let surfaces = NSMutableArray()
+        let controller = makeCalibrationController(log: log, surfaces: surfaces)
+        let replacementBands = panelBands.map { band in
+            NormalizedRect(x: band.x + 0.10, y: band.y, w: band.w, h: band.h)
+        }
+        let first = try controller.prepare(
+            screenFrame: panelFrame,
+            bands: panelBands,
+            onSave: { _ in
+                let replacement = try controller.prepare(
+                    screenFrame: panelFrame,
+                    bands: replacementBands,
+                    onSave: { _ in },
+                    onCancel: {}
+                )
+                try controller.commit(replacement)
+            },
+            onCancel: {}
+        )
+        try controller.commit(first)
+        let firstSurface = try requireSurface(surfaces.firstObject as? FakeCalibrationSurface)
+
+        firstSurface.send(.primaryDown(PointD(x: 50, y: 750)))
+
+        try expect(controller.isEditing)
+        try expectEqual(controller.workingBands, replacementBands)
+        try expectEqual(panelEvents(log).filter { $0 == "close-1" }.count, 1)
+        try expect(!panelEvents(log).contains("close-2"))
+    },
+    TestCase(name: "CalibrationPanel reentrant close cannot retire a newer editor") {
+        let log = NSMutableArray()
+        let surfaces = NSMutableArray()
+        let controller = makeCalibrationController(log: log, surfaces: surfaces)
+        let replacementBands = panelBands.map { band in
+            NormalizedRect(x: band.x + 0.10, y: band.y, w: band.w, h: band.h)
+        }
+        var cancels = 0
+        let first = try controller.prepare(
+            screenFrame: panelFrame,
+            bands: panelBands,
+            onSave: { _ in },
+            onCancel: { cancels += 1 }
+        )
+        try controller.commit(first)
+        let firstSurface = try requireSurface(surfaces.firstObject as? FakeCalibrationSurface)
+        firstSurface.onClose = {
+            guard let replacement = try? controller.prepare(
+                screenFrame: panelFrame,
+                bands: replacementBands,
+                onSave: { _ in },
+                onCancel: {}
+            ) else { return }
+            try? controller.commit(replacement)
+        }
+
+        firstSurface.send(.primaryDown(PointD(x: 170, y: 750)))
+
+        try expectEqual(cancels, 1)
+        try expect(controller.isEditing)
+        try expectEqual(controller.workingBands, replacementBands)
+        try expect(!panelEvents(log).contains("close-2"))
     },
 ]
 

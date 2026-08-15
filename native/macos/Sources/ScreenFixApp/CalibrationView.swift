@@ -42,6 +42,13 @@ public final class CalibrationView: NSView {
             && options.contains(.inVisibleRect)
     }
 
+    public func stopTracking() {
+        if let calibrationTrackingArea {
+            removeTrackingArea(calibrationTrackingArea)
+            self.calibrationTrackingArea = nil
+        }
+    }
+
     public override func mouseDown(with event: NSEvent) {
         guard event.buttonNumber == 0 else { return }
         eventHandler?(.primaryDown(localPoint(for: event)))

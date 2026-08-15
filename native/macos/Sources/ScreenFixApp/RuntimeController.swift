@@ -158,6 +158,7 @@ public final class RuntimeController {
     private var nextCalibrationToken = 0
     private var generation = 0
     private var started = false
+    private var stopping = false
     private var terminated = false
 
     public init(
@@ -193,7 +194,7 @@ public final class RuntimeController {
     }
 
     public func start() {
-        guard !started else { return }
+        guard !started, !stopping else { return }
         started = true
         generation += 1
         let activeGeneration = generation
@@ -221,7 +222,7 @@ public final class RuntimeController {
 
     public func setEnabled(_ enabled: Bool) {
         guard started else { return }
-        cancelCalibrationAndRestore()
+        guard cancelCalibrationAndRestore() else { return }
         guard let current = configuration, current.enabled != enabled else {
             stateDidChange()
             return
@@ -274,7 +275,7 @@ public final class RuntimeController {
         guard let screen = screens.first(where: { candidate in
             candidate.display.stableId?.caseInsensitiveCompare(stableId) == .orderedSame
         }), let selectedId = screen.display.stableId else { return }
-        cancelCalibrationAndRestore()
+        guard cancelCalibrationAndRestore() else { return }
         let identity = DisplayIdentity(
             stableId: selectedId,
             name: screen.display.name,
@@ -292,8 +293,7 @@ public final class RuntimeController {
     public func toggleCalibration() {
         guard started else { return }
         if calibrationSession != nil {
-            cancelCalibrationAndRestore()
-            stateDidChange()
+            if cancelCalibrationAndRestore() { stateDidChange() }
             return
         }
         guard let configuration else { return }
@@ -315,7 +315,7 @@ public final class RuntimeController {
 
     public func resetToDefaults() {
         guard started else { return }
-        cancelCalibrationAndRestore()
+        guard cancelCalibrationAndRestore() else { return }
         guard let current = configuration else {
             stateDidChange()
             return
@@ -346,7 +346,7 @@ public final class RuntimeController {
 
     public func reload() {
         guard started else { return }
-        cancelCalibrationAndRestore()
+        guard cancelCalibrationAndRestore() else { return }
         do {
             let loaded = try store.load()
             reconcileLoadedConfiguration(loaded)
@@ -358,20 +358,26 @@ public final class RuntimeController {
 
     public func reconcile() {
         guard started else { return }
-        cancelCalibrationAndRestore()
+        if reconcileCalibrationTopology() {
+            stateDidChange()
+            return
+        }
         reconcileLoadedConfiguration(configuration)
         stateDidChange()
     }
 
     public func stop() {
         guard started else { return }
+        stopping = true
         generation += 1
-        calibrationSession = nil
-        calibrationOwner.stop()
+        started = false
         notifications.unsubscribe(notificationTokens)
         notificationTokens = []
+        calibrationSession = nil
+        nextCalibrationToken += 1
+        calibrationOwner.stop()
         maskOwner.removeAll()
-        started = false
+        stopping = false
         stateDidChange()
     }
 
@@ -388,15 +394,10 @@ public final class RuntimeController {
         base: ScreenFixConfiguration?,
         needsTemporaryMasks: Bool
     ) {
-        if needsTemporaryMasks {
-            do {
-                try replaceMasks(for: target, on: screen)
-            } catch {
-                runtimeError = "Paused: mask error: \(error)"
-                return
-            }
+        guard Self.isValidCalibrationFrame(screen.fullFrame) else {
+            runtimeError = "Paused: calibration error: display is too small or invalid"
+            return
         }
-
         nextCalibrationToken += 1
         let session = RuntimeCalibrationSession(
             token: nextCalibrationToken,
@@ -407,6 +408,26 @@ public final class RuntimeController {
             screenFrame: screen.fullFrame
         )
         calibrationSession = session
+
+        if needsTemporaryMasks {
+            do {
+                try replaceMasks(for: target, on: screen)
+                guard isCurrentCalibration(
+                    token: session.token,
+                    lifecycleGeneration: session.lifecycleGeneration
+                ) else { return }
+            } catch {
+                if isCurrentCalibration(
+                    token: session.token,
+                    lifecycleGeneration: session.lifecycleGeneration
+                ) {
+                    calibrationSession = nil
+                    restoreBaseRuntime(base)
+                    runtimeError = "Paused: mask error: \(error)"
+                }
+                return
+            }
+        }
         do {
             try calibrationOwner.start(
                 screenFrame: screen.fullFrame,
@@ -511,12 +532,22 @@ public final class RuntimeController {
                 }
             }
         } catch RuntimeOperationError.configuration(let error) {
-            reportConfiguration(error)
-            stateDidChange()
+            if isCurrentCalibration(
+                token: token,
+                lifecycleGeneration: lifecycleGeneration
+            ) {
+                reportConfiguration(error)
+                stateDidChange()
+            }
             throw error
         } catch {
-            runtimeError = "Paused: mask error: \(error)"
-            stateDidChange()
+            if isCurrentCalibration(
+                token: token,
+                lifecycleGeneration: lifecycleGeneration
+            ) {
+                runtimeError = "Paused: mask error: \(error)"
+                stateDidChange()
+            }
             throw error
         }
 
@@ -542,16 +573,44 @@ public final class RuntimeController {
             return
         }
         calibrationSession = nil
+        nextCalibrationToken += 1
+        let invalidationToken = nextCalibrationToken
         calibrationOwner.stop()
+        guard started, calibrationSession == nil, nextCalibrationToken == invalidationToken else {
+            return
+        }
         restoreBaseRuntime(session.base)
         stateDidChange()
     }
 
-    private func cancelCalibrationAndRestore() {
-        guard let session = calibrationSession else { return }
+    @discardableResult
+    private func cancelCalibrationAndRestore() -> Bool {
+        guard let session = calibrationSession else { return true }
         calibrationSession = nil
+        nextCalibrationToken += 1
+        let invalidationToken = nextCalibrationToken
         calibrationOwner.stop()
+        guard started, calibrationSession == nil, nextCalibrationToken == invalidationToken else {
+            return false
+        }
         restoreBaseRuntime(session.base)
+        return true
+    }
+
+    private func reconcileCalibrationTopology() -> Bool {
+        guard let session = calibrationSession else { return false }
+        guard let screen = liveScreen(for: session),
+              Self.isValidCalibrationFrame(screen.fullFrame) else {
+            _ = cancelCalibrationAndRestore()
+            return true
+        }
+        if screen.fullFrame == session.screenFrame {
+            displayConnected = true
+            runtimeError = nil
+            return true
+        }
+        _ = cancelCalibrationAndRestore()
+        return true
     }
 
     private func restoreBaseRuntime(_ base: ScreenFixConfiguration?) {
@@ -613,6 +672,12 @@ public final class RuntimeController {
             screenFrame: screen.fullFrame,
             beforeRetire: {}
         )
+    }
+
+    private static func isValidCalibrationFrame(_ frame: NSRect) -> Bool {
+        frame.origin.x.isFinite && frame.origin.y.isFinite
+            && frame.width.isFinite && frame.height.isFinite
+            && frame.width >= 260 && frame.height >= 180
     }
 
     private func reconcileLoadedConfiguration(_ desired: ScreenFixConfiguration?) {

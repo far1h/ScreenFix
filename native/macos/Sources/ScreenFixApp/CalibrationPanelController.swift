@@ -8,6 +8,7 @@ public enum CalibrationPanelError: Error {
     case notConfigured
     case notVisible
     case invalidTrackingArea
+    case superseded
 }
 
 public protocol CalibrationSurface: AnyObject {
@@ -49,14 +50,16 @@ private final class CalibrationEditorSession {
 
 public final class PreparedCalibrationEditor {
     private var session: CalibrationEditorSession?
+    private let lifecycleGeneration: Int
 
-    fileprivate init(session: CalibrationEditorSession) {
+    fileprivate init(session: CalibrationEditorSession, lifecycleGeneration: Int) {
         self.session = session
+        self.lifecycleGeneration = lifecycleGeneration
     }
 
-    fileprivate func take() -> CalibrationEditorSession? {
+    fileprivate func take() -> (CalibrationEditorSession, Int)? {
         defer { session = nil }
-        return session
+        return session.map { ($0, lifecycleGeneration) }
     }
 }
 
@@ -66,6 +69,7 @@ public final class CalibrationPanelController {
     private let factory: Factory
     private let reportError: (Error) -> Void
     private var nextToken = 0
+    private var lifecycleGeneration = 0
     private var active: CalibrationEditorSession?
 
     public init(
@@ -112,6 +116,7 @@ public final class CalibrationPanelController {
 
         nextToken += 1
         let token = nextToken
+        let preparingGeneration = lifecycleGeneration
         let candidate = try factory(screenFrame)
         let session = CalibrationEditorSession(
             token: token,
@@ -123,42 +128,65 @@ public final class CalibrationPanelController {
             onCancel: onCancel
         )
         do {
+            guard lifecycleGeneration == preparingGeneration else {
+                throw CalibrationPanelError.superseded
+            }
             try candidate.configure { [weak self] event in
                 self?.dispatch(event, token: token)
             }
+            guard lifecycleGeneration == preparingGeneration else {
+                throw CalibrationPanelError.superseded
+            }
             try candidate.render(bands: bands, controls: controls)
+            guard lifecycleGeneration == preparingGeneration else {
+                throw CalibrationPanelError.superseded
+            }
             try candidate.orderAndVerify()
+            guard lifecycleGeneration == preparingGeneration else {
+                throw CalibrationPanelError.superseded
+            }
         } catch {
             candidate.close()
             throw error
         }
-        return PreparedCalibrationEditor(session: session)
+        return PreparedCalibrationEditor(
+            session: session,
+            lifecycleGeneration: preparingGeneration
+        )
     }
 
     public func commit(
         _ prepared: PreparedCalibrationEditor,
         commitGuard: () throws -> Bool = { true }
     ) throws {
-        guard let candidate = prepared.take() else { return }
+        guard let (candidate, preparedGeneration) = prepared.take() else { return }
         do {
+            guard preparedGeneration == lifecycleGeneration else {
+                throw CalibrationPanelError.superseded
+            }
             guard try commitGuard() else { throw CalibrationPanelError.commitRejected }
+            guard preparedGeneration == lifecycleGeneration else {
+                throw CalibrationPanelError.superseded
+            }
         } catch {
             candidate.surface.close()
             throw error
         }
         let previous = active
+        lifecycleGeneration += 1
         active = candidate
         previous?.surface.close()
     }
 
     public func discard(_ prepared: PreparedCalibrationEditor) {
-        prepared.take()?.surface.close()
+        prepared.take()?.0.surface.close()
     }
 
     public func stop() {
-        let previous = active
+        guard let previous = active else { return }
+        lifecycleGeneration += 1
         active = nil
-        previous?.surface.close()
+        previous.surface.close()
     }
 
     private func dispatch(_ event: CalibrationPointerEvent, token: Int) {
@@ -186,6 +214,7 @@ public final class CalibrationPanelController {
                 reportError(error)
             }
         case .cancelRequested:
+            lifecycleGeneration += 1
             active = nil
             session.surface.close()
             do {
