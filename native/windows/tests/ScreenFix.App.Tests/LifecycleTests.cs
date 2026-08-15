@@ -15,12 +15,13 @@ public sealed class LifecycleTests
         lifetime.OwnMasks(() => calls.Add("masks"));
         lifetime.OwnEditor(() => calls.Add("editor"));
         lifetime.OwnSystemMessages(() => calls.Add("messages"));
+        lifetime.OwnGuard(() => calls.Add("guard"));
         lifetime.OwnControllerCallbacks(() => calls.Add("callbacks"));
 
         lifetime.Dispose();
 
         Assert.Equal(
-            ["callbacks", "messages", "editor", "masks", "menu", "icon", "gate"],
+            ["callbacks", "guard", "messages", "editor", "masks", "menu", "icon", "gate"],
             calls);
     }
 

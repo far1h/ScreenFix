@@ -43,6 +43,12 @@ public interface IRuntimeConfigStore
 public interface IDisplayTopology
 {
     IReadOnlyList<ConnectedDisplay> Enumerate();
+
+    bool TryGetMonitorHandle(ConnectedDisplay display, out nint monitorHandle)
+    {
+        monitorHandle = 0;
+        return false;
+    }
 }
 
 public interface IMaskOverlayHost

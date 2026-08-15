@@ -1,4 +1,5 @@
 using ScreenFix.App.Notifications;
+using ScreenFix.App.Guard;
 using ScreenFix.Core.Configuration;
 using ScreenFix.Core.Displays;
 using ScreenFix.Core.Geometry;
@@ -11,6 +12,7 @@ public sealed class RuntimeController : ISystemMessageTarget
     private readonly IRuntimeConfigStore configStore;
     private readonly IDisplayTopology topology;
     private readonly IMaskOverlayHost overlays;
+    private readonly IWindowGuard guard;
     private readonly ICalibrationHost calibration;
     private readonly IMonitorPickerHost picker;
     private readonly IMenuHost menu;
@@ -20,9 +22,12 @@ public sealed class RuntimeController : ISystemMessageTarget
     private ScreenFixConfig? pendingConfiguration;
     private ConnectedDisplay? connectedDisplay;
     private bool invalidConfiguration;
+    private bool invalidFailureEpisode;
     private bool maskRenderingFailed;
     private bool disconnectedFailureEpisode;
     private bool maskFailureEpisode;
+    private bool guardUnavailable;
+    private bool guardFailureEpisode;
     private bool stopped;
     private bool suspended;
     private long generation;
@@ -31,6 +36,7 @@ public sealed class RuntimeController : ISystemMessageTarget
         IRuntimeConfigStore configStore,
         IDisplayTopology topology,
         IMaskOverlayHost overlays,
+        IWindowGuard guard,
         ICalibrationHost calibration,
         IMonitorPickerHost picker,
         IMenuHost menu,
@@ -41,6 +47,7 @@ public sealed class RuntimeController : ISystemMessageTarget
         this.configStore = configStore ?? throw new ArgumentNullException(nameof(configStore));
         this.topology = topology ?? throw new ArgumentNullException(nameof(topology));
         this.overlays = overlays ?? throw new ArgumentNullException(nameof(overlays));
+        this.guard = guard ?? throw new ArgumentNullException(nameof(guard));
         this.calibration = calibration ?? throw new ArgumentNullException(nameof(calibration));
         this.picker = picker ?? throw new ArgumentNullException(nameof(picker));
         this.menu = menu ?? throw new ArgumentNullException(nameof(menu));
@@ -61,6 +68,7 @@ public sealed class RuntimeController : ISystemMessageTarget
                 connectedDisplay,
                 invalidConfiguration,
                 maskRenderingFailed,
+                guardUnavailable,
                 calibration.IsEditing,
                 stopped,
                 generation);
@@ -81,6 +89,8 @@ public sealed class RuntimeController : ISystemMessageTarget
             configuration = null;
             connectedDisplay = null;
             invalidConfiguration = false;
+            invalidFailureEpisode = false;
+            StopGuard();
             overlays.Clear();
             RefreshMenu();
             return;
@@ -89,13 +99,16 @@ public sealed class RuntimeController : ISystemMessageTarget
         if (loaded.Value is null)
         {
             invalidConfiguration = true;
+            guard.Pause();
             overlays.Clear();
+            ReportInvalidConfiguration(loaded.Error);
             RefreshMenu();
             return;
         }
 
         configuration = loaded.Value;
         invalidConfiguration = false;
+        invalidFailureEpisode = false;
         Reconcile();
     }
 
@@ -128,6 +141,7 @@ public sealed class RuntimeController : ISystemMessageTarget
         pendingConfiguration = null;
         picker.Stop();
         calibration.Stop();
+        StopGuard();
         overlays.Clear();
     }
 
@@ -291,17 +305,58 @@ public sealed class RuntimeController : ISystemMessageTarget
         if (loaded.IsMissing || loaded.Value is null)
         {
             invalidConfiguration = true;
+            guard.Pause();
+            ReportInvalidConfiguration(loaded.Error);
             RefreshMenu();
             return;
         }
+
+        invalidFailureEpisode = false;
 
         generation++;
         pendingConfiguration = null;
         picker.Stop();
         calibration.Stop();
-        configuration = loaded.Value;
+        guard.Pause();
+        var candidate = loaded.Value;
+        var candidateDisplay = DisplayMatcher.Find(
+            candidate.Display,
+            topology.Enumerate());
+        if (!candidate.Enabled || candidateDisplay is null)
+        {
+            configuration = candidate;
+            invalidConfiguration = false;
+            Reconcile();
+            return;
+        }
+
+        var frames = NativePixelGeometry.ToNativeBands(
+            candidateDisplay.FullBounds,
+            candidate.Bands);
+        var replacement = overlays.Replace(frames);
+        if (!replacement.IsSuccess)
+        {
+            invalidConfiguration = false;
+            maskRenderingFailed = true;
+            guardUnavailable = false;
+            if (!maskFailureEpisode)
+            {
+                notices.Show(replacement.Error ?? "Mask rendering failed");
+                maskFailureEpisode = true;
+            }
+
+            RefreshMenu();
+            return;
+        }
+
+        configuration = candidate;
+        connectedDisplay = candidateDisplay;
         invalidConfiguration = false;
-        Reconcile();
+        maskRenderingFailed = false;
+        maskFailureEpisode = false;
+        disconnectedFailureEpisode = false;
+        StartGuard(frames);
+        RefreshMenu();
     }
 
     public void Stop()
@@ -315,6 +370,7 @@ public sealed class RuntimeController : ISystemMessageTarget
         }
 
         calibration.Stop();
+        StopGuard();
         overlays.Clear();
     }
 
@@ -385,6 +441,7 @@ public sealed class RuntimeController : ISystemMessageTarget
 
         generation++;
         var editorGeneration = generation;
+        guard.Pause();
         var result = calibration.Start(
             new CalibrationStartRequest(
                 editorGeneration,
@@ -397,12 +454,11 @@ public sealed class RuntimeController : ISystemMessageTarget
         if (!result.IsSuccess)
         {
             notices.Show(result.Error ?? "Calibration failed");
-            RefreshMenu();
+            Reconcile();
             return;
         }
 
         pendingConfiguration = candidateConfiguration;
-        overlays.Clear();
         RefreshMenu();
     }
 
@@ -496,6 +552,7 @@ public sealed class RuntimeController : ISystemMessageTarget
         {
             connectedDisplay = null;
             maskRenderingFailed = false;
+            StopGuard();
             overlays.Clear();
             RefreshMenu();
             return;
@@ -504,12 +561,14 @@ public sealed class RuntimeController : ISystemMessageTarget
         connectedDisplay = DisplayMatcher.Find(configuration.Display, topology.Enumerate());
         if (calibration.IsEditing)
         {
+            guard.Pause();
             RefreshMenu();
             return;
         }
 
         if (!configuration.Enabled)
         {
+            StopGuard();
             overlays.Clear();
             maskRenderingFailed = false;
             disconnectedFailureEpisode = false;
@@ -520,6 +579,7 @@ public sealed class RuntimeController : ISystemMessageTarget
 
         if (connectedDisplay is null)
         {
+            StopGuard();
             overlays.Clear();
             maskRenderingFailed = false;
             maskFailureEpisode = false;
@@ -542,11 +602,18 @@ public sealed class RuntimeController : ISystemMessageTarget
         if (replacement.IsSuccess)
         {
             maskFailureEpisode = false;
+            StartGuard(frames);
         }
         else if (!maskFailureEpisode)
         {
             notices.Show(replacement.Error ?? "Mask rendering failed");
             maskFailureEpisode = true;
+        }
+
+        if (!replacement.IsSuccess)
+        {
+            guard.Pause();
+            guardUnavailable = false;
         }
 
         RefreshMenu();
@@ -560,11 +627,70 @@ public sealed class RuntimeController : ISystemMessageTarget
             DisplayConnected: connectedDisplay is not null,
             Calibrating: calibration.IsEditing,
             InvalidConfiguration: invalidConfiguration,
-            MaskRenderingFailed: maskRenderingFailed)));
+            MaskRenderingFailed: maskRenderingFailed,
+            WindowCorrectionUnavailable: guardUnavailable)));
     }
 
     private bool IsCurrent(long callbackGeneration) =>
         !stopped && callbackGeneration == generation;
 
     private void VerifyActive() => uiThread.VerifyAccess();
+
+    private void StartGuard(IReadOnlyList<RectD> frames)
+    {
+        RuntimeOperationResult result;
+        if (connectedDisplay is null ||
+            !topology.TryGetMonitorHandle(connectedDisplay, out var monitorHandle))
+        {
+            guard.Pause();
+            result = RuntimeOperationResult.Failure("Monitor handle is unavailable");
+        }
+        else
+        {
+            try
+            {
+                result = guard.Start(
+                    new SelectedMonitor(
+                        monitorHandle,
+                        connectedDisplay.FullBounds,
+                        connectedDisplay.WorkArea),
+                    frames);
+            }
+            catch (Exception error)
+            {
+                guard.Pause();
+                result = RuntimeOperationResult.Failure(error.Message);
+            }
+        }
+
+        guardUnavailable = !result.IsSuccess;
+        if (result.IsSuccess)
+        {
+            guardFailureEpisode = false;
+        }
+        else if (!guardFailureEpisode)
+        {
+            notices.Show(result.Error ?? "Window correction unavailable");
+            guardFailureEpisode = true;
+        }
+    }
+
+    private void StopGuard()
+    {
+        guard.Stop();
+        guardUnavailable = false;
+        guardFailureEpisode = false;
+    }
+
+    private void ReportInvalidConfiguration(string? error)
+    {
+        if (invalidFailureEpisode)
+        {
+            return;
+        }
+
+        notices.Show(error ?? "Invalid configuration");
+        invalidFailureEpisode = true;
+    }
+
 }

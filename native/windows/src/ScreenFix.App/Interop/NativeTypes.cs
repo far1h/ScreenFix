@@ -19,6 +19,18 @@ internal struct NativePoint(int x, int y)
 }
 
 [StructLayout(LayoutKind.Sequential)]
+internal struct NativeWindowPlacement
+{
+    internal uint Length;
+    internal uint Flags;
+    internal uint ShowCommand;
+    internal NativePoint MinimizedPosition;
+    internal NativePoint MaximizedPosition;
+    internal NativeRect NormalPosition;
+    internal NativeRect DeviceRectangle;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 internal struct NativeSize(int width, int height)
 {
     internal int Width = width;

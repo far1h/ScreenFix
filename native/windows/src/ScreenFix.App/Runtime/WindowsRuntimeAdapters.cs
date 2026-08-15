@@ -19,9 +19,22 @@ internal sealed class RuntimeConfigStore(string path) : IRuntimeConfigStore
 internal sealed class RuntimeDisplayTopology : IDisplayTopology
 {
     private readonly WindowsDisplayTopology topology = new();
+    private IReadOnlyList<WindowsDisplay> snapshot = [];
 
-    public IReadOnlyList<ConnectedDisplay> Enumerate() =>
-        topology.Enumerate().Select(display => display.Descriptor).ToArray();
+    public IReadOnlyList<ConnectedDisplay> Enumerate()
+    {
+        snapshot = topology.Enumerate();
+        return snapshot.Select(display => display.Descriptor).ToArray();
+    }
+
+    public bool TryGetMonitorHandle(
+        ConnectedDisplay display,
+        out nint monitorHandle)
+    {
+        var match = snapshot.SingleOrDefault(candidate => candidate.Descriptor == display);
+        monitorHandle = match?.MonitorHandle ?? 0;
+        return match is not null && monitorHandle != 0;
+    }
 }
 
 internal sealed class RuntimeMaskOverlayHost(MaskOverlaySet overlays) : IMaskOverlayHost

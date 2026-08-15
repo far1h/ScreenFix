@@ -23,7 +23,8 @@ public sealed record MenuStateInput(
     bool DisplayConnected,
     bool Calibrating,
     bool InvalidConfiguration,
-    bool MaskRenderingFailed);
+    bool MaskRenderingFailed,
+    bool WindowCorrectionUnavailable = false);
 
 public static class MenuState
 {
@@ -84,9 +85,12 @@ public static class MenuState
             return "Paused: Select a monitor";
         }
 
-        if (state.Enabled && state.DisplayConnected && !state.Calibrating)
+        if (state.Enabled &&
+            state.DisplayConnected &&
+            !state.Calibrating &&
+            state.WindowCorrectionUnavailable)
         {
-            return "Paused: Window correction is not available in this build";
+            return "Paused: Window correction unavailable";
         }
 
         return null;

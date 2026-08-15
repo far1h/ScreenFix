@@ -9,6 +9,7 @@ public sealed class ApplicationLifetime : IDisposable
     private Action? clearMasks;
     private Action? closeEditor;
     private Action? stopSystemMessages;
+    private Action? stopGuard;
     private Action? revokeControllerCallbacks;
     private bool disposed;
 
@@ -23,6 +24,8 @@ public sealed class ApplicationLifetime : IDisposable
     public void OwnEditor(Action cleanup) => Own(ref closeEditor, cleanup);
 
     public void OwnSystemMessages(Action cleanup) => Own(ref stopSystemMessages, cleanup);
+
+    public void OwnGuard(Action cleanup) => Own(ref stopGuard, cleanup);
 
     public void OwnControllerCallbacks(Action cleanup) => Own(ref revokeControllerCallbacks, cleanup);
 
@@ -40,6 +43,7 @@ public sealed class ApplicationLifetime : IDisposable
             actions =
             [
                 revokeControllerCallbacks,
+                stopGuard,
                 stopSystemMessages,
                 closeEditor,
                 clearMasks,
@@ -48,6 +52,7 @@ public sealed class ApplicationLifetime : IDisposable
                 releaseGate,
             ];
             revokeControllerCallbacks = null;
+            stopGuard = null;
             stopSystemMessages = null;
             closeEditor = null;
             clearMasks = null;
