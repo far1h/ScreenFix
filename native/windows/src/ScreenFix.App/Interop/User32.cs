@@ -70,6 +70,9 @@ internal static partial class User32
     [LibraryImport("user32.dll")]
     internal static partial int ReleaseDC(nint window, nint deviceContext);
 
+    [LibraryImport("user32.dll")]
+    internal static partial nint WindowFromPoint(NativePoint point);
+
     [LibraryImport("user32.dll", SetLastError = true)]
     internal static partial int UpdateLayeredWindow(
         nint window,

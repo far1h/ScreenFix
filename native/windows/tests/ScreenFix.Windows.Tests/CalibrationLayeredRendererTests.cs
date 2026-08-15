@@ -10,14 +10,12 @@ public sealed class CalibrationLayeredRendererTests
     [Fact]
     public void RenderAndPresent_KeepBackgroundTransparentAndControlsInteractive()
     {
-        const int width = 1000;
-        const int height = 800;
+        const int width = 300;
+        const int height = 200;
         var logicalFrame = new RectD(0, 0, width, height);
         var bands = new[]
         {
-            new RectD(0.2, 0.2, 0.2, 0.2),
-            new RectD(0.6, 0.45, 0.2, 0.15),
-            new RectD(0.7, 0.7, 0.2, 0.15),
+            new RectD(0.2, 0.45, 0.25, 0.2),
         };
         var layout = Assert.IsType<CalibrationLayoutSpec>(
             CalibrationLayout.TryCreate(width, height).Value);
@@ -30,36 +28,69 @@ public sealed class CalibrationLayeredRendererTests
             bands,
             layout);
 
-        Assert.Equal(0, bitmap.GetPixel(50, 400).A);
-        Assert.InRange(bitmap.GetPixel(300, 240).A, 80, 96);
-        Assert.Equal(255, bitmap.GetPixel(202, 240).A);
+        Assert.Equal(0, bitmap.GetPixel(285, 100).A);
+        Assert.InRange(bitmap.GetPixel(100, 110).A, 80, 96);
+        Assert.Equal(255, bitmap.GetPixel(62, 110).A);
 
-        using var window = new LayeredProbeWindow();
+        var workingArea = Screen.PrimaryScreen!.WorkingArea;
+        Assert.True(workingArea.Width >= width && workingArea.Height >= height);
+        var bounds = new Rectangle(workingArea.X, workingArea.Y, width, height);
+        using var backingWindow = new ProbeWindow(bounds, layered: false);
+        using var layeredWindow = new ProbeWindow(bounds, layered: true);
+        backingWindow.ShowBehind();
         CalibrationLayeredRenderer.Present(
-            window.Handle,
-            new Rectangle(-32_000, -32_000, width, height),
+            layeredWindow.Handle,
+            bounds,
             bitmap);
-        Assert.NotEqual(nint.Zero, window.Handle);
+        layeredWindow.ShowAbove();
+
+        var transparentPoint = new NativePoint(bounds.X + 285, bounds.Y + 100);
+        var paintedPoint = new NativePoint(bounds.X + 100, bounds.Y + 110);
+        Assert.Equal(backingWindow.Handle, User32.WindowFromPoint(transparentPoint));
+        Assert.Equal(layeredWindow.Handle, User32.WindowFromPoint(paintedPoint));
     }
 
-    private sealed class LayeredProbeWindow : NativeWindow, IDisposable
+    private sealed class ProbeWindow : NativeWindow, IDisposable
     {
-        public LayeredProbeWindow()
+        private readonly Rectangle bounds;
+
+        public ProbeWindow(Rectangle bounds, bool layered)
         {
+            this.bounds = bounds;
             CreateHandle(new CreateParams
             {
                 Caption = "ScreenFix layered render test",
-                X = -32_000,
-                Y = -32_000,
-                Width = 1000,
-                Height = 800,
+                X = bounds.X,
+                Y = bounds.Y,
+                Width = bounds.Width,
+                Height = bounds.Height,
                 Style = unchecked((int)0x80000000),
-                ExStyle = User32.WindowExtendedStyleLayered |
-                    User32.WindowExtendedStyleToolWindow |
-                    User32.WindowExtendedStyleNoActivate,
+                ExStyle = User32.WindowExtendedStyleToolWindow |
+                    User32.WindowExtendedStyleNoActivate |
+                    (layered ? User32.WindowExtendedStyleLayered : 0),
             });
         }
 
+        public void ShowBehind() => Show(nint.Zero);
+
+        public void ShowAbove() => Show(User32.TopMostWindow);
+
         public void Dispose() => DestroyHandle();
+
+        private void Show(nint insertAfter)
+        {
+            Assert.NotEqual(
+                0,
+                User32.SetWindowPos(
+                    Handle,
+                    insertAfter,
+                    bounds.X,
+                    bounds.Y,
+                    bounds.Width,
+                    bounds.Height,
+                    User32.SetWindowPositionNoActivate |
+                    User32.SetWindowPositionShowWindow |
+                    User32.SetWindowPositionNoOwnerZOrder));
+        }
     }
 }
