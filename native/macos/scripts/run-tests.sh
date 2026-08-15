@@ -26,7 +26,7 @@ swiftc -target arm64-apple-macosx13.0 -swift-version 5 -parse-as-library \
 swiftc -target arm64-apple-macosx13.0 -swift-version 5 -parse-as-library \
   -I "$BUILD_DIR" "${TEST_SOURCES[@]}" \
   "$BUILD_DIR/libScreenFixApp.a" "$BUILD_DIR/libScreenFixCore.a" \
-  -framework AppKit -framework CoreGraphics \
+  -framework AppKit -framework ApplicationServices -framework CoreGraphics \
   -o "$BUILD_DIR/ScreenFixTests"
 
 test "$(lipo -archs "$BUILD_DIR/ScreenFixTests")" = "arm64"
