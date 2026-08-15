@@ -11,6 +11,8 @@ public interface IGuardScheduler : IDisposable
 
     void Signal(long key, Action<long> correction);
 
+    void Cancel(long key);
+
     void Stop();
 }
 
@@ -63,6 +65,14 @@ public sealed class GuardScheduler(IUiDelay delay) : IGuardScheduler
     }
 
     public void Dispose() => Stop();
+
+    public void Cancel(long key)
+    {
+        if (pending.Remove(key, out var work))
+        {
+            work.Cancellation.Dispose();
+        }
+    }
 
     private void CancelPending()
     {

@@ -23,7 +23,7 @@ public sealed class WindowsWindowInspectorTests
         var inspector = new WindowsWindowInspector(query, screenFixProcessId: 100);
 
         var result = inspector.TryInspect(
-            new nint(17),
+            Identity(query),
             new SelectedMonitor(
                 new nint(77),
                 new RectD(0, 0, 1920, 1080),
@@ -179,7 +179,7 @@ public sealed class WindowsWindowInspectorTests
         var query = OrdinaryQuery() with { StylesSucceed = false };
         var inspector = new WindowsWindowInspector(query, screenFixProcessId: 100);
 
-        var result = inspector.TryInspect(new nint(17), Selected());
+        var result = inspector.TryInspect(Identity(query), Selected());
 
         Assert.Null(result);
     }
@@ -190,7 +190,30 @@ public sealed class WindowsWindowInspectorTests
         var query = OrdinaryQuery() with { OwnerSucceeds = false };
         var inspector = new WindowsWindowInspector(query, screenFixProcessId: 100);
 
-        var result = inspector.TryInspect(new nint(17), Selected());
+        var result = inspector.TryInspect(Identity(query), Selected());
+
+        Assert.Null(result);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TryInspect_RejectsRecycledIdentityBeforeReadingWindowFacts(
+        bool changeProcess)
+    {
+        var query = OrdinaryQuery();
+        var identity = Identity(query);
+        if (changeProcess)
+        {
+            query.ProcessId++;
+        }
+        else
+        {
+            query.ThreadId++;
+        }
+
+        var result = new WindowsWindowInspector(query, screenFixProcessId: 100)
+            .TryInspect(identity, Selected());
 
         Assert.Null(result);
     }
@@ -201,9 +224,17 @@ public sealed class WindowsWindowInspectorTests
     {
         var inspector = new WindowsWindowInspector(query, screenFixProcessId: 100);
         return Assert.IsType<WindowInspection>(inspector.TryInspect(
-            new nint(17),
+            Identity(query),
             Selected(fullBounds)));
     }
+
+    private static WindowIdentity Identity(
+        FakeWindowNativeQuery query,
+        long incarnation = 17) => new(
+            new nint(17),
+            query.ProcessId,
+            query.ThreadId,
+            incarnation);
 
     private static SelectedMonitor Selected(RectD? fullBounds = null) => new(
         new nint(77),
@@ -237,6 +268,8 @@ public sealed class WindowsWindowInspectorTests
         public bool StylesSucceed { get; set; } = true;
 
         public uint ProcessId { get; set; }
+
+        public uint ThreadId { get; set; } = 300;
 
         public bool ProcessIdSucceeds { get; set; } = true;
 
@@ -280,8 +313,12 @@ public sealed class WindowsWindowInspectorTests
             return StylesSucceed;
         }
 
-        public bool TryGetProcessId(nint window, out uint processId)
+        public bool TryGetThreadProcessId(
+            nint window,
+            out uint threadId,
+            out uint processId)
         {
+            threadId = ThreadId;
             processId = ProcessId;
             return ProcessIdSucceeds;
         }

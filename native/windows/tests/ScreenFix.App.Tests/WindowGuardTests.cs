@@ -20,7 +20,7 @@ public sealed class WindowGuardTests
         };
         var scheduler = new FakeScheduler(order);
         var corrector = new FakeCorrector(order);
-        using var guard = new WindowGuard(
+        using var guard = CreateGuard(
             new FakeEventSourceFactory(source),
             scheduler,
             corrector);
@@ -29,7 +29,7 @@ public sealed class WindowGuardTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(
-            ["hook-start", "corrector-start", "scheduler-start", "signal-17", "signal-23"],
+            ["hook-start", "corrector-start", "scheduler-start", "signal-1", "signal-2"],
             order);
     }
 
@@ -38,7 +38,7 @@ public sealed class WindowGuardTests
     {
         var order = new List<string>();
         var factory = new FakeEventSourceFactory(new FakeEventSource(order));
-        using var guard = new WindowGuard(
+        using var guard = CreateGuard(
             factory,
             new FakeScheduler(order),
             new FakeCorrector(order));
@@ -61,7 +61,7 @@ public sealed class WindowGuardTests
         var factory = new FakeEventSourceFactory(
             new FakeEventSource(order, "old"),
             new FakeEventSource(order, "new"));
-        using var guard = new WindowGuard(
+        using var guard = CreateGuard(
             factory,
             new FakeScheduler(order),
             new FakeCorrector(order));
@@ -91,7 +91,7 @@ public sealed class WindowGuardTests
             oldSource,
             failedSource,
             replacement);
-        using var guard = new WindowGuard(
+        using var guard = CreateGuard(
             factory,
             scheduler,
             new FakeCorrector(order));
@@ -109,7 +109,7 @@ public sealed class WindowGuardTests
         replacement.Raise(WinEventId.SystemForeground, new nint(23));
         Assert.True(retried.IsSuccess);
         Assert.Equal(1, oldSource.StopCount);
-        Assert.Equal([23L], scheduler.SignalKeys);
+        Assert.Equal([1L], scheduler.SignalKeys);
     }
 
     [Fact]
@@ -118,7 +118,7 @@ public sealed class WindowGuardTests
         var order = new List<string>();
         var source = new FakeEventSource(order) { RaiseDuringStop = true };
         var scheduler = new FakeScheduler(order);
-        using var guard = new WindowGuard(
+        using var guard = CreateGuard(
             new FakeEventSourceFactory(source),
             scheduler,
             new FakeCorrector(order));
@@ -145,7 +145,7 @@ public sealed class WindowGuardTests
         var order = new List<string>();
         var source = new FakeEventSource(order);
         var scheduler = new FakeScheduler(order);
-        using var guard = new WindowGuard(
+        using var guard = CreateGuard(
             new FakeEventSourceFactory(source),
             scheduler,
             new FakeCorrector(order));
@@ -170,7 +170,7 @@ public sealed class WindowGuardTests
         var scheduler = new FakeScheduler(order);
         var corrector = new FakeCorrector(order);
         corrector.ThrowWindows.Add(new nint(17));
-        using var guard = new WindowGuard(
+        using var guard = CreateGuard(
             new FakeEventSourceFactory(source),
             scheduler,
             corrector);
@@ -178,8 +178,8 @@ public sealed class WindowGuardTests
         source.Raise(WinEventId.SystemForeground, new nint(17));
         source.Raise(WinEventId.SystemForeground, new nint(23));
 
-        var firstError = Record.Exception(() => scheduler.Run(17));
-        var secondError = Record.Exception(() => scheduler.Run(23));
+        var firstError = Record.Exception(() => scheduler.Run(1));
+        var secondError = Record.Exception(() => scheduler.Run(2));
 
         Assert.Null(firstError);
         Assert.Null(secondError);
@@ -194,7 +194,7 @@ public sealed class WindowGuardTests
             ThrowOnStart = true,
             ThrowOnStop = true,
         };
-        using var guard = new WindowGuard(
+        using var guard = CreateGuard(
             new FakeEventSourceFactory(source),
             new FakeScheduler([]),
             new FakeCorrector([]));
@@ -219,8 +219,8 @@ public sealed class WindowGuardTests
             ],
         };
         var scheduler = new FakeScheduler([]);
-        scheduler.ThrowSignalKeys.Add(17);
-        using var guard = new WindowGuard(
+        scheduler.ThrowSignalKeys.Add(1);
+        using var guard = CreateGuard(
             new FakeEventSourceFactory(source),
             scheduler,
             new FakeCorrector([]));
@@ -231,8 +231,199 @@ public sealed class WindowGuardTests
 
         Assert.Null(error);
         Assert.True(result.IsSuccess);
-        Assert.Equal([17L, 23L], scheduler.SignalAttempts);
-        Assert.Equal([23L], scheduler.SignalKeys);
+        Assert.Equal([1L, 2L], scheduler.SignalAttempts);
+        Assert.Equal([2L], scheduler.SignalKeys);
+    }
+
+    [Fact]
+    public void DestroyThenCreateSameHandleUsesDifferentLifetimeKey()
+    {
+        var source = new FakeEventSource([]);
+        var scheduler = new FakeScheduler([]);
+        using var guard = CreateGuard(
+            new FakeEventSourceFactory(source),
+            scheduler,
+            new FakeCorrector([]));
+        Assert.True(guard.Start(Selected(), Masks()).IsSuccess);
+
+        source.Raise(WinEventId.ObjectCreate, new nint(17));
+        source.Raise(WinEventId.ObjectDestroy, new nint(17));
+        source.Raise(WinEventId.ObjectCreate, new nint(17));
+
+        Assert.Equal(2, scheduler.SignalKeys.Distinct().Count());
+    }
+
+    [Fact]
+    public void RepeatedCreateForSameHandleForcesNewLifetime()
+    {
+        var source = new FakeEventSource([]);
+        var scheduler = new FakeScheduler([]);
+        var corrector = new FakeCorrector([]);
+        using var guard = CreateGuard(
+            new FakeEventSourceFactory(source),
+            scheduler,
+            corrector);
+        Assert.True(guard.Start(Selected(), Masks()).IsSuccess);
+
+        source.Raise(WinEventId.ObjectCreate, new nint(17));
+        source.Raise(WinEventId.ObjectCreate, new nint(17));
+
+        Assert.Equal([1L, 2L], scheduler.SignalKeys);
+        Assert.Equal([1L], scheduler.CancelledKeys);
+        Assert.Equal(1, Assert.Single(corrector.Forgotten).Key);
+    }
+
+    [Fact]
+    public void SeedThenLocationReusesLifetimeForDebounce()
+    {
+        var source = new FakeEventSource([])
+        {
+            StartSignals =
+            [
+                new WinEventSignal(1, WinEventId.Seed, new nint(17), 0, 0),
+            ],
+        };
+        var scheduler = new FakeScheduler([]);
+        using var guard = CreateGuard(
+            new FakeEventSourceFactory(source),
+            scheduler,
+            new FakeCorrector([]));
+        Assert.True(guard.Start(Selected(), Masks()).IsSuccess);
+
+        source.Raise(WinEventId.ObjectLocationChange, new nint(17));
+
+        Assert.Equal([1L, 1L], scheduler.SignalKeys);
+        Assert.Empty(scheduler.CancelledKeys);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SeedAndCreateOrderingLeavesOneLiveCorrection(bool createFirst)
+    {
+        var create = new WinEventSignal(
+            1,
+            WinEventId.ObjectCreate,
+            new nint(17),
+            0,
+            0);
+        var seed = create with { EventType = WinEventId.Seed };
+        var source = new FakeEventSource([])
+        {
+            StartSignals = createFirst ? [create, seed] : [seed, create],
+        };
+        var scheduler = new FakeScheduler([]);
+        using var guard = CreateGuard(
+            new FakeEventSourceFactory(source),
+            scheduler,
+            new FakeCorrector([]));
+
+        var result = guard.Start(Selected(), Masks());
+
+        Assert.True(result.IsSuccess);
+        Assert.Single(scheduler.ActiveKeys);
+    }
+
+    [Fact]
+    public void DestroyRetiresLifetimeWithoutQueryingDestroyedWindow()
+    {
+        var source = new FakeEventSource([]);
+        var scheduler = new FakeScheduler([]);
+        var corrector = new FakeCorrector([]);
+        var identityQuery = new FakeIdentityQuery();
+        using var guard = CreateGuard(
+            new FakeEventSourceFactory(source),
+            scheduler,
+            corrector,
+            identityQuery);
+        Assert.True(guard.Start(Selected(), Masks()).IsSuccess);
+        source.Raise(WinEventId.ObjectCreate, new nint(17));
+
+        source.Raise(WinEventId.ObjectDestroy, new nint(17));
+
+        Assert.Equal(1, identityQuery.QueryCount);
+        Assert.Equal([1L], scheduler.CancelledKeys);
+        Assert.Equal(1, Assert.Single(corrector.Forgotten).Key);
+        Assert.Equal([1L], scheduler.SignalKeys);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ChangedProcessOrThreadForSameHandleMintsNewLifetime(
+        bool changeProcess)
+    {
+        var source = new FakeEventSource([]);
+        var scheduler = new FakeScheduler([]);
+        var corrector = new FakeCorrector([]);
+        var identityQuery = new FakeIdentityQuery();
+        using var guard = CreateGuard(
+            new FakeEventSourceFactory(source),
+            scheduler,
+            corrector,
+            identityQuery);
+        Assert.True(guard.Start(Selected(), Masks()).IsSuccess);
+        source.Raise(WinEventId.ObjectShow, new nint(17));
+        if (changeProcess)
+        {
+            identityQuery.ProcessId = 201;
+        }
+        else
+        {
+            identityQuery.ThreadId = 301;
+        }
+
+        source.Raise(WinEventId.ObjectLocationChange, new nint(17));
+
+        Assert.Equal([1L, 2L], scheduler.SignalKeys);
+        Assert.Equal([1L], scheduler.CancelledKeys);
+        Assert.Equal(1, Assert.Single(corrector.Forgotten).Key);
+    }
+
+    [Fact]
+    public void LateDebounceForDestroyedLifetimeCannotCorrectReplacement()
+    {
+        var source = new FakeEventSource([]);
+        var scheduler = new FakeScheduler([]);
+        var corrector = new FakeCorrector([]);
+        using var guard = CreateGuard(
+            new FakeEventSourceFactory(source),
+            scheduler,
+            corrector);
+        Assert.True(guard.Start(Selected(), Masks()).IsSuccess);
+        source.Raise(WinEventId.ObjectCreate, new nint(17));
+        source.Raise(WinEventId.ObjectDestroy, new nint(17));
+        source.Raise(WinEventId.ObjectCreate, new nint(17));
+
+        scheduler.RunRetired(1);
+        scheduler.Run(2);
+
+        Assert.Equal([new nint(17)], corrector.Attempts);
+    }
+
+    [Fact]
+    public void SeededScreenFixWindowIsNotRegisteredOrScheduled()
+    {
+        var source = new FakeEventSource([])
+        {
+            StartSignals =
+            [
+                new WinEventSignal(1, WinEventId.Seed, new nint(17), 0, 0),
+            ],
+        };
+        var scheduler = new FakeScheduler([]);
+        var identityQuery = new FakeIdentityQuery { ProcessId = 100 };
+        using var guard = CreateGuard(
+            new FakeEventSourceFactory(source),
+            scheduler,
+            new FakeCorrector([]),
+            identityQuery);
+
+        var result = guard.Start(Selected(), Masks());
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(1, identityQuery.QueryCount);
+        Assert.Empty(scheduler.SignalKeys);
     }
 
     private static SelectedMonitor Selected() => new(
@@ -242,6 +433,37 @@ public sealed class WindowGuardTests
 
     private static IReadOnlyList<RectD> Masks() =>
         [new RectD(400, 0, 200, 800)];
+
+    private static WindowGuard CreateGuard(
+        IWinEventSourceFactory sourceFactory,
+        IGuardScheduler scheduler,
+        IWindowCorrector corrector,
+        FakeIdentityQuery? identityQuery = null) => new(
+            sourceFactory,
+            scheduler,
+            corrector,
+            identityQuery ?? new FakeIdentityQuery(),
+            screenFixProcessId: 100);
+
+    private sealed class FakeIdentityQuery : IWindowIdentityQuery
+    {
+        public uint ProcessId { get; set; } = 200;
+
+        public uint ThreadId { get; set; } = 300;
+
+        public int QueryCount { get; private set; }
+
+        public bool TryGetThreadProcessId(
+            nint window,
+            out uint threadId,
+            out uint processId)
+        {
+            QueryCount++;
+            threadId = ThreadId;
+            processId = ProcessId;
+            return true;
+        }
+    }
 
     private sealed class FakeEventSourceFactory(
         params FakeEventSource[] sources) : IWinEventSourceFactory
@@ -331,12 +553,17 @@ public sealed class WindowGuardTests
     private sealed class FakeScheduler(List<string> order) : IGuardScheduler
     {
         private readonly Dictionary<long, Action<long>> corrections = [];
+        private readonly Dictionary<long, Action<long>> retiredCorrections = [];
 
         public List<long> SignalKeys { get; } = [];
 
         public List<long> SignalAttempts { get; } = [];
 
         public HashSet<long> ThrowSignalKeys { get; } = [];
+
+        public List<long> CancelledKeys { get; } = [];
+
+        public IReadOnlyCollection<long> ActiveKeys => corrections.Keys;
 
         public void Start(long generation) => order.Add("scheduler-start");
 
@@ -355,6 +582,17 @@ public sealed class WindowGuardTests
 
         public void Run(long key) => corrections[key](key);
 
+        public void RunRetired(long key) => retiredCorrections[key](key);
+
+        public void Cancel(long key)
+        {
+            CancelledKeys.Add(key);
+            if (corrections.Remove(key, out var correction))
+            {
+                retiredCorrections[key] = correction;
+            }
+        }
+
         public void Stop() => order.Add("scheduler-stop");
 
         public void Dispose() => Stop();
@@ -366,21 +604,25 @@ public sealed class WindowGuardTests
 
         public List<nint> Attempts { get; } = [];
 
+        public List<WindowIdentity> Forgotten { get; } = [];
+
         public void Start(long generation) => order.Add("corrector-start");
 
         public void Correct(
             long generation,
-            nint window,
+            WindowIdentity window,
             SelectedMonitor selectedMonitor,
             IReadOnlyList<RectD> maskBands)
         {
-            Attempts.Add(window);
-            order.Add($"correct-{window}");
-            if (ThrowWindows.Contains(window))
+            Attempts.Add(window.Handle);
+            order.Add($"correct-{window.Handle}");
+            if (ThrowWindows.Contains(window.Handle))
             {
                 throw new InvalidOperationException("correction failed");
             }
         }
+
+        public void Forget(WindowIdentity window) => Forgotten.Add(window);
 
         public void Stop() => order.Add("corrector-stop");
 

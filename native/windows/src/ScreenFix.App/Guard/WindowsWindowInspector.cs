@@ -8,22 +8,24 @@ public sealed class WindowsWindowInspector(
     uint screenFixProcessId) : IWindowInspector
 {
     public WindowInspection? TryInspect(
-        nint window,
+        WindowIdentity window,
         SelectedMonitor selectedMonitor)
     {
-        if (window == 0 || !query.IsWindow(window) ||
-            !query.TryGetStyles(window, out var styles) ||
-            !query.TryGetProcessId(window, out var processId) ||
-            !query.TryGetRoot(window, out var root) ||
-            !query.TryGetOwner(window, out var owner) ||
-            !query.TryGetClassName(window, out var className) ||
-            !query.TryGetOuterFrame(window, out var outerFrame) ||
+        var handle = window.Handle;
+        if (handle == 0 || !query.IsWindow(handle) ||
+            !query.TryGetThreadProcessId(handle, out var threadId, out var processId) ||
+            threadId != window.ThreadId || processId != window.ProcessId ||
+            !query.TryGetStyles(handle, out var styles) ||
+            !query.TryGetRoot(handle, out var root) ||
+            !query.TryGetOwner(handle, out var owner) ||
+            !query.TryGetClassName(handle, out var className) ||
+            !query.TryGetOuterFrame(handle, out var outerFrame) ||
             !IsValid(outerFrame))
         {
             return null;
         }
 
-        var visibleFrame = query.TryGetExtendedFrame(window, out var extendedFrame) &&
+        var visibleFrame = query.TryGetExtendedFrame(handle, out var extendedFrame) &&
             IsValid(extendedFrame)
             ? extendedFrame
             : outerFrame;
@@ -44,21 +46,21 @@ public sealed class WindowsWindowInspector(
             outerFrame.Right - visibleFrame.Right,
             outerFrame.Bottom - visibleFrame.Bottom);
         var facts = new WindowFacts(
-            window.ToInt64(),
+            window.Key,
             visibleFrame,
-            query.IsWindowVisible(window),
-            query.IsIconic(window),
-            root == window,
+            query.IsWindowVisible(handle),
+            query.IsIconic(handle),
+            root == handle,
             owner != 0,
             processId == screenFixProcessId,
-            window == shellWindow || window == desktopWindow,
+            handle == shellWindow || handle == desktopWindow,
             toolOrMenu,
             ordinaryStyle,
             !ordinaryStyle && Near(visibleFrame, selectedMonitor.FullBounds),
             query.MonitorFromFrame(visibleFrame) == selectedMonitor.Handle);
         return new WindowInspection(
             facts,
-            query.IsZoomed(window),
+            query.IsZoomed(handle),
             outerFrame,
             frameOffsets);
     }

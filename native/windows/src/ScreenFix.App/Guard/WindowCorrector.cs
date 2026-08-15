@@ -46,13 +46,20 @@ public readonly record struct WindowPlacementData(
 
 public interface IWindowNativeWriter
 {
-    bool IsWindow(nint window);
+    bool IsCurrent(WindowIdentity window);
 
-    bool TryGetPlacement(nint window, out WindowPlacementData placement);
+    bool TryGetPlacement(
+        WindowIdentity window,
+        out WindowPlacementData placement);
 
-    bool TrySetPlacement(nint window, WindowPlacementData placement);
+    bool TrySetPlacement(
+        WindowIdentity window,
+        WindowPlacementData placement);
 
-    bool TrySetFrame(nint window, NativeWindowFrame frame, uint flags);
+    bool TrySetFrame(
+        WindowIdentity window,
+        NativeWindowFrame frame,
+        uint flags);
 }
 
 public interface IWindowCorrector : IDisposable
@@ -61,9 +68,11 @@ public interface IWindowCorrector : IDisposable
 
     void Correct(
         long generation,
-        nint window,
+        WindowIdentity window,
         SelectedMonitor selectedMonitor,
         IReadOnlyList<RectD> maskBands);
+
+    void Forget(WindowIdentity window);
 
     void Stop();
 }
@@ -117,7 +126,7 @@ public sealed class WindowCorrector : IWindowCorrector
 
     public void Correct(
         long generation,
-        nint window,
+        WindowIdentity window,
         SelectedMonitor selectedMonitor,
         IReadOnlyList<RectD> maskBands)
     {
@@ -134,7 +143,7 @@ public sealed class WindowCorrector : IWindowCorrector
         }
         catch
         {
-            var key = window.ToInt64();
+            var key = window.Key;
             if (!pending.ContainsKey(key))
             {
                 memory.RecordRefusal(key, clock.UtcNow);
@@ -147,7 +156,7 @@ public sealed class WindowCorrector : IWindowCorrector
             bool exists;
             try
             {
-                exists = writer.IsWindow(window);
+                exists = writer.IsCurrent(window);
             }
             catch
             {
@@ -156,8 +165,8 @@ public sealed class WindowCorrector : IWindowCorrector
 
             if (!exists)
             {
-                CancelPending(window.ToInt64());
-                memory.Forget(window.ToInt64());
+                CancelPending(window.Key);
+                memory.Forget(window.Key);
             }
 
             return;
@@ -229,7 +238,13 @@ public sealed class WindowCorrector : IWindowCorrector
 
     public void Dispose() => Stop();
 
-    private bool TryRestoreWithoutActivation(nint window)
+    public void Forget(WindowIdentity window)
+    {
+        CancelPending(window.Key);
+        memory.Forget(window.Key);
+    }
+
+    private bool TryRestoreWithoutActivation(WindowIdentity window)
     {
         if (!writer.TryGetPlacement(window, out var placement))
         {
@@ -246,7 +261,7 @@ public sealed class WindowCorrector : IWindowCorrector
 
     private void BeginVerification(
         long generation,
-        nint window,
+        WindowIdentity window,
         long key,
         RectD visibleTarget,
         SelectedMonitor selectedMonitor)
@@ -316,7 +331,7 @@ public sealed class WindowCorrector : IWindowCorrector
             bool exists;
             try
             {
-                exists = writer.IsWindow(correction.Window);
+                exists = writer.IsCurrent(correction.Window);
             }
             catch
             {
@@ -451,7 +466,7 @@ public sealed class WindowCorrector : IWindowCorrector
 
     private sealed class PendingCorrection(
         long generation,
-        nint window,
+        WindowIdentity window,
         long key,
         RectD visibleTarget,
         SelectedMonitor selectedMonitor,
@@ -459,7 +474,7 @@ public sealed class WindowCorrector : IWindowCorrector
     {
         public long Generation { get; } = generation;
 
-        public nint Window { get; } = window;
+        public WindowIdentity Window { get; } = window;
 
         public long Key { get; } = key;
 

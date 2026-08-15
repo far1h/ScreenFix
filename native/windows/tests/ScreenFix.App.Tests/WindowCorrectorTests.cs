@@ -28,12 +28,12 @@ public sealed class WindowCorrectorTests
 
         corrector.Correct(
             generation: 7,
-            new nint(17),
+            Identity(),
             Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         var write = Assert.Single(writer.FrameWrites);
-        Assert.Equal(new nint(17), write.Window);
+        Assert.Equal(Identity(), write.Window);
         Assert.Equal(new NativeWindowFrame(290, 80, 120, 140), write.Frame);
         Assert.Equal(WindowCorrectionFlags.NoActivate |
             WindowCorrectionFlags.NoZOrder |
@@ -60,7 +60,7 @@ public sealed class WindowCorrectorTests
             delay);
         corrector.Start(generation: 7);
 
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         Assert.Equal(TimeSpan.FromMilliseconds(50), delay.Work[0].Delay);
@@ -76,7 +76,7 @@ public sealed class WindowCorrectorTests
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(500);
         delay.Work[3].Fire();
 
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         Assert.Single(writer.FrameWrites);
         Assert.Equal(4, delay.Work.Count);
@@ -99,7 +99,7 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             delay);
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         inspector.Inspection = null;
 
@@ -134,7 +134,7 @@ public sealed class WindowCorrectorTests
             new FakeDelay());
         corrector.Start(generation: 7);
 
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         var placementWrite = Assert.Single(writer.PlacementWrites);
@@ -167,12 +167,12 @@ public sealed class WindowCorrectorTests
 
         var error = Record.Exception(() => corrector.Correct(
             7,
-            new nint(17),
+            Identity(17),
             Selected(),
             [new RectD(400, 0, 200, 800)]));
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddSeconds(1);
         delay.ThrowOnSchedule = false;
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         Assert.Null(error);
@@ -195,7 +195,7 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             delay);
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(300);
@@ -222,7 +222,7 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             delay);
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(50);
         delay.ThrowOnSchedule = true;
@@ -231,7 +231,7 @@ public sealed class WindowCorrectorTests
 
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(1_050);
         delay.ThrowOnSchedule = false;
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         Assert.Null(error);
         Assert.Equal(2, writer.FrameWrites.Count);
@@ -258,7 +258,7 @@ public sealed class WindowCorrectorTests
 
         var error = Record.Exception(() => corrector.Correct(
             7,
-            new nint(17),
+            Identity(17),
             Selected(),
             [new RectD(400, 0, 200, 800)]));
         inspector.ThrowOnInspect = false;
@@ -267,12 +267,12 @@ public sealed class WindowCorrectorTests
             new RectD(440, 90, 120, 120),
             new WindowFrameOffsets(10, 10, 10, 10),
             key: 23);
-        corrector.Correct(7, new nint(23), Selected(),
+        corrector.Correct(7, Identity(23), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         Assert.Null(error);
         Assert.Single(writer.FrameWrites);
-        Assert.Equal(new nint(23), writer.FrameWrites[0].Window);
+        Assert.Equal(Identity(23), writer.FrameWrites[0].Window);
     }
 
     [Fact]
@@ -291,7 +291,7 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             delay);
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         inspector.ThrowOnInspect = true;
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(50);
@@ -320,7 +320,7 @@ public sealed class WindowCorrectorTests
             delay);
         corrector.Start(generation: 7);
 
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(0, 0, 1000, 800)]);
 
         Assert.Empty(writer.FrameWrites);
@@ -353,10 +353,10 @@ public sealed class WindowCorrectorTests
             new FakeDelay());
         corrector.Start(generation: 7);
 
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(999);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         Assert.Empty(writer.FrameWrites);
@@ -382,7 +382,7 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             delay);
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(50);
         delay.Work[0].Fire();
@@ -399,11 +399,11 @@ public sealed class WindowCorrectorTests
             new RectD(290, 90, 121, 120),
             new WindowFrameOffsets(10, 10, 10, 10));
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(399);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         Assert.Single(writer.FrameWrites);
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(400);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         Assert.Equal(2, writer.FrameWrites.Count);
     }
@@ -424,10 +424,10 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             delay);
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         Assert.Single(writer.FrameWrites);
         Assert.Single(delay.Work);
@@ -435,7 +435,7 @@ public sealed class WindowCorrectorTests
             new RectD(300, 100, 100, 100),
             new RectD(290, 90, 120, 120),
             new WindowFrameOffsets(10, 10, 10, 10));
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         Assert.True(delay.Work[0].IsDisposed);
@@ -460,11 +460,11 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             delay);
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         corrector.Start(generation: 8);
-        corrector.Correct(8, new nint(17), Selected(),
+        corrector.Correct(8, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         delay.Work[0].Fire();
 
@@ -490,7 +490,7 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             delay);
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         foreach (var deadline in new[] { 50, 150, 300 })
         {
@@ -509,7 +509,7 @@ public sealed class WindowCorrectorTests
             new RectD(300, 100, 101, 100),
             new RectD(290, 90, 121, 120),
             new WindowFrameOffsets(10, 10, 10, 10));
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         Assert.Single(writer.FrameWrites);
     }
@@ -531,7 +531,7 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             delay);
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         inspector.Inspection = null;
         writer.WindowExists = false;
@@ -543,7 +543,7 @@ public sealed class WindowCorrectorTests
             new RectD(440, 90, 120, 120),
             new WindowFrameOffsets(10, 10, 10, 10));
         writer.WindowExists = true;
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         Assert.Equal(2, writer.FrameWrites.Count);
@@ -566,7 +566,7 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             new FakeDelay());
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         inspector.Inspection = Inspection(
@@ -575,23 +575,23 @@ public sealed class WindowCorrectorTests
             new WindowFrameOffsets(10, 10, 10, 10),
             key: 23);
         writer.FrameWriteSucceeds = true;
-        corrector.Correct(7, new nint(23), Selected(),
+        corrector.Correct(7, Identity(23), Selected(),
             [new RectD(400, 0, 200, 800)]);
         inspector.Inspection = Inspection(
             new RectD(450, 100, 100, 100),
             new RectD(440, 90, 120, 120),
             new WindowFrameOffsets(10, 10, 10, 10));
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(999);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         Assert.Equal(2, writer.FrameWrites.Count);
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddSeconds(1);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         Assert.Equal(3, writer.FrameWrites.Count);
-        Assert.Equal(new nint(23), writer.FrameWrites[1].Window);
-        Assert.Equal(new nint(17), writer.FrameWrites[2].Window);
+        Assert.Equal(Identity(23), writer.FrameWrites[1].Window);
+        Assert.Equal(Identity(), writer.FrameWrites[2].Window);
     }
 
     [Fact]
@@ -610,11 +610,11 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             new FakeDelay());
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         inspector.ThrowOnInspect = true;
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(10);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         inspector.ThrowOnInspect = false;
         inspector.Inspection = Inspection(
@@ -622,7 +622,7 @@ public sealed class WindowCorrectorTests
             new RectD(290, 90, 120, 120),
             new WindowFrameOffsets(10, 10, 10, 10));
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(20);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         inspector.Inspection = Inspection(
             new RectD(300, 100, 101, 100),
@@ -630,7 +630,7 @@ public sealed class WindowCorrectorTests
             new WindowFrameOffsets(10, 10, 10, 10));
         clock.UtcNow = DateTimeOffset.UnixEpoch.AddMilliseconds(270);
 
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         Assert.Equal(2, writer.FrameWrites.Count);
@@ -652,11 +652,11 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             delay);
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
         inspector.Inspection = null;
 
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         Assert.False(delay.Work[0].IsDisposed);
@@ -683,7 +683,7 @@ public sealed class WindowCorrectorTests
             new RectD(-1000, 0, 1000, 800),
             new RectD(-1000, 0, 1000, 800));
 
-        corrector.Correct(7, new nint(17), selected,
+        corrector.Correct(7, Identity(17), selected,
             [new RectD(-600, 0, 200, 800)]);
 
         Assert.Equal(
@@ -720,7 +720,7 @@ public sealed class WindowCorrectorTests
             new FakeDelay());
         corrector.Start(generation: 7);
 
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         Assert.Empty(writer.CallOrder);
@@ -742,13 +742,13 @@ public sealed class WindowCorrectorTests
             new GuardMemory(),
             delay);
         corrector.Start(generation: 7);
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         corrector.Stop();
         corrector.Stop();
         delay.Work[0].Fire();
-        corrector.Correct(7, new nint(17), Selected(),
+        corrector.Correct(7, Identity(17), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         Assert.True(delay.Work[0].IsDisposed);
@@ -774,7 +774,7 @@ public sealed class WindowCorrectorTests
 
         var error = Record.Exception(() => corrector.Correct(
             7,
-            new nint(17),
+            Identity(17),
             Selected(),
             [new RectD(400, 0, 200, 800)]));
         inspector.Inspection = Inspection(
@@ -783,13 +783,89 @@ public sealed class WindowCorrectorTests
             new WindowFrameOffsets(10, 10, 10, 10),
             key: 23);
         writer.ThrowOnFrameWrite = false;
-        corrector.Correct(7, new nint(23), Selected(),
+        corrector.Correct(7, Identity(23), Selected(),
             [new RectD(400, 0, 200, 800)]);
 
         Assert.Null(error);
         Assert.Single(writer.FrameWrites);
-        Assert.Equal(new nint(23), writer.FrameWrites[0].Window);
+        Assert.Equal(Identity(23), writer.FrameWrites[0].Window);
     }
+
+    [Fact]
+    public void RefusedLifetimeDoesNotSuppressReplacementUsingSameHandle()
+    {
+        var inspector = new FakeInspector(Inspection(
+            new RectD(450, 100, 100, 100),
+            new RectD(440, 90, 120, 120),
+            new WindowFrameOffsets(10, 10, 10, 10),
+            key: 1));
+        var writer = new FakeWriter { FrameWriteSucceeds = false };
+        using var corrector = new WindowCorrector(
+            inspector,
+            writer,
+            new FakeClock(),
+            new GuardMemory(),
+            new FakeDelay());
+        corrector.Start(generation: 7);
+        corrector.Correct(7, Identity(17, 1), Selected(),
+            [new RectD(400, 0, 200, 800)]);
+        inspector.Inspection = Inspection(
+            new RectD(450, 100, 100, 100),
+            new RectD(440, 90, 120, 120),
+            new WindowFrameOffsets(10, 10, 10, 10),
+            key: 2);
+        writer.FrameWriteSucceeds = true;
+
+        corrector.Correct(7, Identity(17, 2), Selected(),
+            [new RectD(400, 0, 200, 800)]);
+
+        Assert.Equal(2, writer.FrameWrites.Count);
+        Assert.Equal(1, writer.FrameWrites[0].Window.Key);
+        Assert.Equal(2, writer.FrameWrites[1].Window.Key);
+    }
+
+    [Fact]
+    public void ForgetCancelsPendingVerificationBeforeHandleReplacement()
+    {
+        var inspector = new FakeInspector(Inspection(
+            new RectD(450, 100, 100, 100),
+            new RectD(440, 90, 120, 120),
+            new WindowFrameOffsets(10, 10, 10, 10),
+            key: 1));
+        var writer = new FakeWriter();
+        var delay = new FakeDelay();
+        using var corrector = new WindowCorrector(
+            inspector,
+            writer,
+            new FakeClock(),
+            new GuardMemory(),
+            delay);
+        corrector.Start(generation: 7);
+        var old = Identity(17, 1);
+        corrector.Correct(7, old, Selected(),
+            [new RectD(400, 0, 200, 800)]);
+
+        corrector.Forget(old);
+        inspector.Inspection = Inspection(
+            new RectD(450, 100, 100, 100),
+            new RectD(440, 90, 120, 120),
+            new WindowFrameOffsets(10, 10, 10, 10),
+            key: 2);
+        corrector.Correct(7, Identity(17, 2), Selected(),
+            [new RectD(400, 0, 200, 800)]);
+
+        Assert.True(delay.Work[0].IsDisposed);
+        delay.Work[0].Fire();
+        Assert.Equal(2, writer.FrameWrites.Count);
+    }
+
+    private static WindowIdentity Identity(
+        long handle = 17,
+        long? incarnation = null) => new(
+        new nint(handle),
+        ProcessId: 200,
+        ThreadId: 300,
+        Incarnation: incarnation ?? handle);
 
     private static WindowInspection Inspection(
         RectD visible,
@@ -825,7 +901,9 @@ public sealed class WindowCorrectorTests
 
         public bool ThrowOnInspect { get; set; }
 
-        public WindowInspection? TryInspect(nint window, SelectedMonitor selectedMonitor)
+        public WindowInspection? TryInspect(
+            WindowIdentity window,
+            SelectedMonitor selectedMonitor)
         {
             if (ThrowOnInspect)
             {
@@ -856,23 +934,30 @@ public sealed class WindowCorrectorTests
 
         public List<string> CallOrder { get; } = [];
 
-        public bool IsWindow(nint window) => WindowExists;
+        public bool IsCurrent(WindowIdentity window) => WindowExists;
 
-        public bool TryGetPlacement(nint window, out WindowPlacementData placement)
+        public bool TryGetPlacement(
+            WindowIdentity window,
+            out WindowPlacementData placement)
         {
             CallOrder.Add("get-placement");
             placement = Placement;
             return GetPlacementSucceeds;
         }
 
-        public bool TrySetPlacement(nint window, WindowPlacementData placement)
+        public bool TrySetPlacement(
+            WindowIdentity window,
+            WindowPlacementData placement)
         {
             CallOrder.Add("set-placement");
             PlacementWrites.Add(new PlacementWrite(window, placement));
             return SetPlacementSucceeds;
         }
 
-        public bool TrySetFrame(nint window, NativeWindowFrame frame, uint flags)
+        public bool TrySetFrame(
+            WindowIdentity window,
+            NativeWindowFrame frame,
+            uint flags)
         {
             if (ThrowOnFrameWrite)
             {
@@ -921,11 +1006,11 @@ public sealed class WindowCorrectorTests
     }
 
     private sealed record FrameWrite(
-        nint Window,
+        WindowIdentity Window,
         NativeWindowFrame Frame,
         uint Flags);
 
     private sealed record PlacementWrite(
-        nint Window,
+        WindowIdentity Window,
         WindowPlacementData Placement);
 }

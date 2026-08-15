@@ -19,6 +19,7 @@ public sealed class WinEventHookOwnershipTests
         Assert.Equal(
             [
                 WinEventId.ObjectCreate,
+                WinEventId.ObjectDestroy,
                 WinEventId.ObjectShow,
                 WinEventId.ObjectLocationChange,
                 WinEventId.SystemMoveSizeEnd,
@@ -79,7 +80,7 @@ public sealed class WinEventHookOwnershipTests
         hooks.Stop();
         hooks.Dispose();
 
-        Assert.Equal(6, native.Unhooked.Count);
+        Assert.Equal(7, native.Unhooked.Count);
         Assert.All(native.CallbacksAliveDuringUnhook, Assert.True);
         GC.KeepAlive(callback);
     }
@@ -104,9 +105,11 @@ public sealed class WinEventHookOwnershipTests
         Assert.False(hooks.IsCallbackRooted);
 
         Assert.Equal(
-            [1L, 2, 3, 4, 5, 6, 2, 4, 4],
+            [1L, 2, 3, 4, 5, 6, 7, 2, 4, 4],
             native.UnhookAttempts.Select(handle => handle.ToInt64()));
-        Assert.Equal([1L, 3, 5, 6, 2, 4], native.Unhooked.Select(handle => handle.ToInt64()));
+        Assert.Equal(
+            [1L, 3, 5, 6, 7, 2, 4],
+            native.Unhooked.Select(handle => handle.ToInt64()));
         Assert.All(native.CallbacksAliveDuringUnhook, Assert.True);
     }
 
@@ -122,10 +125,10 @@ public sealed class WinEventHookOwnershipTests
         thread.Join();
 
         Assert.Empty(native.UnhookAttempts);
-        Assert.Equal(6, hooks.RetainedHookCount);
+        Assert.Equal(7, hooks.RetainedHookCount);
         Assert.True(hooks.IsCallbackRooted);
         hooks.Stop();
-        Assert.Equal(6, native.Unhooked.Count);
+        Assert.Equal(7, native.Unhooked.Count);
         Assert.False(hooks.IsCallbackRooted);
     }
 
@@ -167,6 +170,25 @@ public sealed class WinEventHookOwnershipTests
     }
 
     [Fact]
+    public void DestroyCallback_IgnoresNonWindowObject()
+    {
+        var native = new FakeWinEventNativeApi();
+        var dispatcher = new FakeDispatcher();
+        using var hooks = new WinEventHookSet(native, dispatcher);
+        var signals = new List<WinEventSignal>();
+        hooks.Start(generation: 7, signals.Add);
+
+        native.Raise(
+            WinEventId.ObjectDestroy,
+            new nint(17),
+            objectId: 1,
+            childId: 0);
+        dispatcher.RunAll();
+
+        Assert.Empty(signals);
+    }
+
+    [Fact]
     public void Start_InstallsBeforeSeedingExistingWindows()
     {
         var native = new FakeWinEventNativeApi
@@ -181,7 +203,7 @@ public sealed class WinEventHookOwnershipTests
         dispatcher.RunAll();
 
         Assert.True(result.IsSuccess);
-        Assert.Equal(6, native.RegistrationCountWhenEnumerated);
+        Assert.Equal(7, native.RegistrationCountWhenEnumerated);
         Assert.Equal([new nint(17), new nint(23)], signals.Select(x => x.Window));
         Assert.All(signals, signal => Assert.Equal(WinEventId.Seed, signal.EventType));
     }

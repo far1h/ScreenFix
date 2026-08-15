@@ -92,6 +92,24 @@ public sealed class GuardSchedulerTests
         Assert.Empty(corrected);
     }
 
+    [Fact]
+    public void Cancel_RemovesOnlyRetiredWindowLifetime()
+    {
+        var delay = new FakeUiDelay();
+        var scheduler = new GuardScheduler(delay);
+        var corrected = new List<long>();
+        scheduler.Start(generation: 7);
+        scheduler.Signal(17, corrected.Add);
+        scheduler.Signal(23, corrected.Add);
+
+        scheduler.Cancel(17);
+        Assert.True(delay.Work[0].IsDisposed);
+        Assert.False(delay.Work[1].IsDisposed);
+        delay.Work[0].Fire();
+        delay.Work[1].Fire();
+        Assert.Equal([23L], corrected);
+    }
+
     private sealed class FakeUiDelay : IUiDelay
     {
         public List<ScheduledWork> Work { get; } = [];

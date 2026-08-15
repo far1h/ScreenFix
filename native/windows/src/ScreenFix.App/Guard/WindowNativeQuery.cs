@@ -26,6 +26,15 @@ public readonly record struct SelectedMonitor(
     RectD FullBounds,
     RectD WorkArea);
 
+public readonly record struct WindowIdentity(
+    nint Handle,
+    uint ProcessId,
+    uint ThreadId,
+    long Incarnation)
+{
+    public long Key => Incarnation;
+}
+
 public readonly record struct WindowFrameOffsets(
     double Left,
     double Top,
@@ -40,10 +49,20 @@ public sealed record WindowInspection(
 
 public interface IWindowInspector
 {
-    WindowInspection? TryInspect(nint window, SelectedMonitor selectedMonitor);
+    WindowInspection? TryInspect(
+        WindowIdentity window,
+        SelectedMonitor selectedMonitor);
 }
 
-public interface IWindowNativeQuery
+public interface IWindowIdentityQuery
+{
+    bool TryGetThreadProcessId(
+        nint window,
+        out uint threadId,
+        out uint processId);
+}
+
+public interface IWindowNativeQuery : IWindowIdentityQuery
 {
     bool IsWindow(nint window);
 
@@ -54,8 +73,6 @@ public interface IWindowNativeQuery
     bool IsZoomed(nint window);
 
     bool TryGetStyles(nint window, out WindowStyleData styles);
-
-    bool TryGetProcessId(nint window, out uint processId);
 
     bool TryGetRoot(nint window, out nint root);
 

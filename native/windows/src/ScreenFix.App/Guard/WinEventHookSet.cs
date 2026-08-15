@@ -11,6 +11,7 @@ public static class WinEventId
     public const uint SystemMoveSizeEnd = 0x000B;
     public const uint SystemMinimizeEnd = 0x0017;
     public const uint ObjectCreate = 0x8000;
+    public const uint ObjectDestroy = 0x8001;
     public const uint ObjectShow = 0x8002;
     public const uint ObjectLocationChange = 0x800B;
 }
@@ -69,6 +70,7 @@ public sealed class WinEventHookSet(
     private static readonly uint[] Events =
     [
         WinEventId.ObjectCreate,
+        WinEventId.ObjectDestroy,
         WinEventId.ObjectShow,
         WinEventId.ObjectLocationChange,
         WinEventId.SystemMoveSizeEnd,

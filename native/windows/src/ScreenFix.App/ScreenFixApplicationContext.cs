@@ -116,6 +116,7 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
         var localData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var configPath = Path.Combine(localData, "ScreenFix", "config.json");
         var native = new WindowNative();
+        var processId = checked((uint)Environment.ProcessId);
         var clock = new SystemClock();
         var delay = new WinFormsUiDelay();
         var guard = new WindowGuard(
@@ -124,11 +125,13 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
             new WindowCorrector(
                 new WindowsWindowInspector(
                     native,
-                    checked((uint)Environment.ProcessId)),
+                    processId),
                 native,
                 clock,
                 new GuardMemory(),
-                delay));
+                delay),
+            native,
+            processId);
         lifetime.OwnGuard(guard.Dispose);
         controller = new RuntimeController(
             new RuntimeConfigStore(configPath),

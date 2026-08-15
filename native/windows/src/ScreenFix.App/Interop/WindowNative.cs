@@ -23,8 +23,6 @@ internal sealed partial class WindowNative :
 
     bool IWindowNativeQuery.IsZoomed(nint window) => IsZoomed(window);
 
-    bool IWindowNativeWriter.IsWindow(nint window) => IsWindow(window);
-
     public bool TryGetStyles(nint window, out WindowStyleData styles)
     {
         if (!TryGetWindowLong(window, WindowStyleIndex, out var style) ||
@@ -38,8 +36,19 @@ internal sealed partial class WindowNative :
         return true;
     }
 
-    public bool TryGetProcessId(nint window, out uint processId) =>
-        GetWindowThreadProcessId(window, out processId) != 0;
+    public bool TryGetThreadProcessId(
+        nint window,
+        out uint threadId,
+        out uint processId)
+    {
+        threadId = GetWindowThreadProcessId(window, out processId);
+        return threadId != 0;
+    }
+
+    public bool IsCurrent(WindowIdentity window) =>
+        TryGetThreadProcessId(window.Handle, out var threadId, out var processId) &&
+        threadId == window.ThreadId &&
+        processId == window.ProcessId;
 
     public bool TryGetRoot(nint window, out nint root)
     {
@@ -108,14 +117,20 @@ internal sealed partial class WindowNative :
     }
 
     public bool TryGetPlacement(
-        nint window,
+        WindowIdentity window,
         out WindowPlacementData placement)
     {
+        if (!IsCurrent(window))
+        {
+            placement = default;
+            return false;
+        }
+
         var native = new NativeWindowPlacement
         {
             Length = (uint)Marshal.SizeOf<NativeWindowPlacement>(),
         };
-        if (GetWindowPlacementNative(window, ref native) == 0)
+        if (GetWindowPlacementNative(window.Handle, ref native) == 0)
         {
             placement = default;
             return false;
@@ -126,25 +141,37 @@ internal sealed partial class WindowNative :
     }
 
     public bool TrySetPlacement(
-        nint window,
+        WindowIdentity window,
         WindowPlacementData placement)
     {
+        if (!IsCurrent(window))
+        {
+            return false;
+        }
+
         var native = ToNativePlacement(placement);
-        return SetWindowPlacementNative(window, in native) != 0;
+        return SetWindowPlacementNative(window.Handle, in native) != 0;
     }
 
     public bool TrySetFrame(
-        nint window,
+        WindowIdentity window,
         NativeWindowFrame frame,
-        uint flags) =>
-        User32.SetWindowPos(
-            window,
-            insertAfter: 0,
-            frame.X,
-            frame.Y,
-            frame.Width,
-            frame.Height,
-            flags) != 0;
+        uint flags)
+    {
+        if (!IsCurrent(window))
+        {
+            return false;
+        }
+
+        return User32.SetWindowPos(
+                window.Handle,
+                insertAfter: 0,
+                frame.X,
+                frame.Y,
+                frame.Width,
+                frame.Height,
+                flags) != 0;
+    }
 
     public nint SetHook(
         uint eventMinimum,
