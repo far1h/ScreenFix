@@ -117,22 +117,13 @@ local function isPositiveInteger(value)
     return isFiniteNumber(value) and value >= 1 and value % 1 == 0
 end
 
-local function isSnapCandidate(rect, fullFrame, resizedAxis, resizedSizePoints)
-    local widthPoints = rect.w * fullFrame.w
-    local heightPoints = rect.h * fullFrame.h
-
-    if resizedAxis == "x" then
-        widthPoints = resizedSizePoints
-    elseif resizedAxis == "y" then
-        heightPoints = resizedSizePoints
-    end
-
+local function isSnapCandidate(rect, fullFrame)
     return withinUnitBounds(rect)
-        and widthPoints >= 20
-        and heightPoints >= 20
+        and rect.w * fullFrame.w >= 20
+        and rect.h * fullFrame.h >= 20
 end
 
-local function correctedRect(rect, axis, edge, correction)
+local function correctedRect(rect, axis, edge, correction, target)
     local result = copyRect(rect)
     local position = axis == "x" and "x" or "y"
     local size = axis == "x" and "w" or "h"
@@ -140,10 +131,11 @@ local function correctedRect(rect, axis, edge, correction)
     if edge == "body" then
         result[position] = result[position] + correction
     elseif edge == "leading" then
-        result[position] = result[position] + correction
-        result[size] = result[size] - correction
+        local fixedEnd = result[position] + result[size]
+        result[position] = target
+        result[size] = fixedEnd - target
     else
-        result[size] = result[size] + correction
+        result[size] = target - result[position]
     end
 
     return result
@@ -165,17 +157,10 @@ local function snapAxis(rect, axis, edges, targets, thresholdPoints, fullFrame, 
             local correction = target - edgePosition
             local distance = math.abs(correction)
             local distancePoints = distance * pointScale
-            local candidate = correctedRect(rect, axis, resizeEdge or "body", correction)
-            local resizedSizePoints
-
-            if resizeEdge == "leading" then
-                resizedSizePoints = (rect[position] + rect[size] - target) * pointScale
-            elseif resizeEdge == "trailing" then
-                resizedSizePoints = (target - rect[position]) * pointScale
-            end
+            local candidate = correctedRect(rect, axis, resizeEdge or "body", correction, target)
 
             if distancePoints <= thresholdPoints
-                and isSnapCandidate(candidate, fullFrame, resizeEdge and axis, resizedSizePoints)
+                and isSnapCandidate(candidate, fullFrame)
                 and (not bestDistance or distance < bestDistance)
             then
                 best = candidate

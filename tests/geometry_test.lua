@@ -498,7 +498,7 @@ test.test("snapBand aligns every resize handle with peer starts and ends", funct
         {
             x = peer.x + peer.w,
             y = 0.20,
-            w = 0.188 + 0.01171875,
+            w = 0.76171875 + 0.188 - (peer.x + peer.w),
             h = 0.20,
         }
     )
@@ -526,7 +526,7 @@ test.test("snapBand aligns every resize handle with peer starts and ends", funct
             x = 0.20,
             y = peer.y + peer.h,
             w = 0.20,
-            h = 0.188 + 0.01171875,
+            h = 0.76171875 + 0.188 - (peer.y + peer.h),
         }
     )
     test.rect(
@@ -656,7 +656,7 @@ test.test("snapBand discards an out-of-bounds peer resize target", function()
     test.rect(snapped, {
         x = 0.10,
         y = 0.20,
-        w = 0.20 + (1 - (0.10 + 0.20)),
+        w = 1 - 0.10,
         h = 0.20,
     })
 end)
@@ -704,18 +704,71 @@ test.test("snapBand rejects every target when another dimension is below 20 poin
     test.rect(snapped, raw)
 end)
 
-test.test("snapBand allows a resize result exactly 20 points wide", function()
-    local snapped = geometry.snapBand(
-        { x = 0.25, y = 0.20, w = 0.03, h = 0.20 },
-        2,
-        "right",
-        { { x = 0.26953125, y = 0.70, w = 0.10, h = 0.10 } },
-        { x = 0, y = 0, w = 1024, h = 1000 },
-        12
-    )
+local function resizedEdge(rect, part)
+    if part == "left" then
+        return rect.x
+    elseif part == "right" then
+        return rect.x + rect.w
+    elseif part == "top" then
+        return rect.y
+    end
 
-    test.equal(snapped.w, 0.03 + (0.26953125 - (0.25 + 0.03)))
-end)
+    return rect.y + rect.h
+end
+
+local function resizedSizePoints(rect, part, fullFrame)
+    if part == "left" or part == "right" then
+        return rect.w * fullFrame.w
+    end
+
+    return rect.h * fullFrame.h
+end
+
+local exactResizeCases = {
+    {
+        part = "left",
+        raw = { x = 0.24, y = 0.20, w = 0.02953125, h = 0.20 },
+        peer = { x = 0.25, y = 0.70, w = 0.30, h = 0.10 },
+        target = 0.25,
+    },
+    {
+        part = "right",
+        raw = { x = 0.25, y = 0.20, w = 0.03, h = 0.20 },
+        peer = { x = 0.26953125, y = 0.70, w = 0.30, h = 0.10 },
+        target = 0.26953125,
+    },
+    {
+        part = "top",
+        raw = { x = 0.20, y = 0.24, w = 0.20, h = 0.02953125 },
+        peer = { x = 0.70, y = 0.25, w = 0.10, h = 0.30 },
+        target = 0.25,
+    },
+    {
+        part = "bottom",
+        raw = { x = 0.20, y = 0.25, w = 0.20, h = 0.03 },
+        peer = { x = 0.70, y = 0.26953125, w = 0.10, h = 0.30 },
+        target = 0.26953125,
+    },
+}
+
+for _, case in ipairs(exactResizeCases) do
+    local resizeCase = case
+
+    test.test("snapBand returns an exact legal 20-point " .. resizeCase.part .. " resize", function()
+        local fullFrame = { x = 0, y = 0, w = 1024, h = 1024 }
+        local snapped = geometry.snapBand(
+            resizeCase.raw,
+            2,
+            resizeCase.part,
+            { resizeCase.peer },
+            fullFrame,
+            12
+        )
+
+        test.equal(resizedEdge(snapped, resizeCase.part), resizeCase.target)
+        test.equal(resizedSizePoints(snapped, resizeCase.part, fullFrame) >= 20, true)
+    end)
+end
 
 test.test("snapBand rejects a resize result just below 20 points wide", function()
     local raw = { x = 0.50, y = 0.20, w = 0.025, h = 0.20 }
@@ -744,6 +797,46 @@ test.test("snapBand rejects an adversarial resize below 20 rendered points", fun
 
     test.rect(snapped, raw)
 end)
+
+local subMinimumResizeCases = {
+    {
+        part = "left",
+        raw = { x = 0.24, y = 0.20, w = 0.0285546875, h = 0.20 },
+        peer = { x = 0.25, y = 0.70, w = 0.30, h = 0.10 },
+    },
+    {
+        part = "right",
+        raw = { x = 0.25, y = 0.20, w = 0.03, h = 0.20 },
+        peer = { x = 0.2685546875, y = 0.70, w = 0.30, h = 0.10 },
+    },
+    {
+        part = "top",
+        raw = { x = 0.20, y = 0.24, w = 0.20, h = 0.0285546875 },
+        peer = { x = 0.70, y = 0.25, w = 0.10, h = 0.30 },
+    },
+    {
+        part = "bottom",
+        raw = { x = 0.20, y = 0.25, w = 0.20, h = 0.03 },
+        peer = { x = 0.70, y = 0.2685546875, w = 0.10, h = 0.30 },
+    },
+}
+
+for _, case in ipairs(subMinimumResizeCases) do
+    local resizeCase = case
+
+    test.test("snapBand rejects a sub-20-point " .. resizeCase.part .. " resize", function()
+        local snapped = geometry.snapBand(
+            resizeCase.raw,
+            2,
+            resizeCase.part,
+            { resizeCase.peer },
+            { x = 0, y = 0, w = 1024, h = 1024 },
+            12
+        )
+
+        test.rect(snapped, resizeCase.raw)
+    end)
+end
 
 test.test("snapBand ignores malformed peers and continues to later targets", function()
     local active = { x = 0.39, y = 0.30, w = 0.20, h = 0.20 }
