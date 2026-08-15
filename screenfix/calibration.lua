@@ -372,6 +372,7 @@ function Calibration:report(err)
 end
 
 function Calibration:save()
+    self.lifecycleGeneration = self.lifecycleGeneration + 1
     local invokingToken = self.sessionToken
     local valid, validationError = validateBands(self.workingBands)
     if not valid then

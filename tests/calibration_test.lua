@@ -1609,6 +1609,110 @@ test.test("cancel during candidate show supersedes the pending editor", function
     test.equal(eventtap.taps[1]:isEnabled(), false)
 end)
 
+test.test("Save during first candidate show supersedes the pending editor", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local realNew = canvas.new
+    local saveResult
+    local saveError
+    canvas.new = function(frame)
+        local editor = realNew(frame)
+        local realShow = editor.show
+        editor.show = function(self)
+            local result = realShow(self)
+            saveResult, saveError = calibration:save()
+            return result
+        end
+        return editor
+    end
+
+    local started, startError = calibration:start(
+        fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 }),
+        validBands(),
+        function() end,
+        function() end
+    )
+
+    test.equal(saveResult, nil)
+    test.equal(saveError, "calibration requires three bands")
+    test.equal(started, nil)
+    test.equal(startError, "calibration start superseded")
+    test.equal(calibration.session, nil)
+    test.equal(calibration.editorCanvas, nil)
+    test.equal(calibration.eventTap, nil)
+    test.equal(canvas.canvases[1].deleteCount, 1)
+    test.equal(eventtap.taps[1].stopCount, 1)
+end)
+
+test.test("failed Save during candidate show supersedes only the candidate", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    calibration:start(screen, validBands(), function()
+        error("save failure", 0)
+    end, function() end)
+    local oldCanvas = calibration.editorCanvas
+    local oldTap = calibration.eventTap
+    local realNew = canvas.new
+    local saveResult
+    local saveError
+    canvas.new = function(frame)
+        local editor = realNew(frame)
+        if #canvas.canvases == 2 then
+            local realShow = editor.show
+            editor.show = function(self)
+                local result = realShow(self)
+                saveResult, saveError = calibration:save()
+                return result
+            end
+        end
+        return editor
+    end
+
+    local started, startError = calibration:start(
+        screen,
+        validBands(),
+        function() end,
+        function() end
+    )
+
+    test.equal(saveResult, nil)
+    test.equal(saveError, "save failure")
+    test.equal(started, nil)
+    test.equal(startError, "calibration start superseded")
+    test.equal(calibration.editorCanvas, oldCanvas)
+    test.equal(calibration.eventTap, oldTap)
+    test.equal(oldCanvas.deleteCount, 0)
+    test.equal(oldTap.stopCount, 0)
+    test.equal(oldTap:isEnabled(), true)
+    test.equal(canvas.canvases[2].deleteCount, 1)
+    test.equal(eventtap.taps[2].stopCount, 1)
+end)
+
 test.test("saving the prior session during candidate show supersedes replacement", function()
     local canvas = fake.canvas()
     local eventtap = fake.eventtap()
@@ -1843,6 +1947,65 @@ test.test("stop teardown retains a replacement started by the old tap", function
     eventtap.stopHook = function(tap)
         if tap == oldTap then
             eventtap.stopHook = nil
+            replacementStarted, replacementError = calibration:start(
+                screen,
+                validBands(),
+                function() end,
+                function() end
+            )
+            replacementSession = calibration.session
+        end
+    end
+
+    calibration:stop()
+
+    test.equal(replacementStarted, true)
+    test.equal(replacementError, nil)
+    test.equal(replacementSession == oldSession, false)
+    test.equal(calibration.session, replacementSession)
+    test.equal(calibration.sessionToken, replacementSession.token)
+    test.equal(calibration.editorCanvas, canvas.canvases[2])
+    test.equal(calibration.eventTap, eventtap.taps[2])
+    test.equal(oldCanvas.deleteCount, 1)
+    test.equal(oldTap.stopCount, 1)
+    test.equal(oldTap:isEnabled(), false)
+    test.equal(canvas.canvases[2].deleteCount, 0)
+    test.equal(eventtap.taps[2].stopCount, 0)
+    test.equal(eventtap.taps[2]:isEnabled(), true)
+    assertActiveMovement(
+        calibration,
+        canvas.canvases[2],
+        eventtap.taps[2],
+        eventtap.event.types
+    )
+end)
+
+test.test("stop teardown retains a replacement started by old canvas deletion", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    calibration:start(screen, validBands(), function() end, function() end)
+    local oldSession = calibration.session
+    local oldCanvas = calibration.editorCanvas
+    local oldTap = calibration.eventTap
+    local replacementStarted
+    local replacementError
+    local replacementSession
+    canvas.deleteHook = function(editor)
+        if editor == oldCanvas then
+            canvas.deleteHook = nil
             replacementStarted, replacementError = calibration:start(
                 screen,
                 validBands(),

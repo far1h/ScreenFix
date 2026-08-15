@@ -144,6 +144,9 @@ function M.canvas()
         self.deleted = true
         record(self, "delete")
         failSelectedMethod("delete")
+        if module.deleteHook then
+            module.deleteHook(self)
+        end
     end
 
     return module
