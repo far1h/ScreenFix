@@ -10,7 +10,7 @@ if (Test-Path -LiteralPath $output) {
     Remove-Item -LiteralPath $output -Recurse -Force
 }
 
-& dotnet publish $project `
+$publishOutput = & dotnet publish $project `
     -c Release `
     -r win-x64 `
     --self-contained true `
@@ -23,7 +23,8 @@ if (Test-Path -LiteralPath $output) {
     -p:UseAppHost=true
 
 if ($LASTEXITCODE -ne 0) {
-    throw "dotnet publish failed with exit code $LASTEXITCODE"
+    $details = $publishOutput -join [Environment]::NewLine
+    throw "dotnet publish failed with exit code $LASTEXITCODE`n$details"
 }
 
 & $assertion -OutputDirectory $output
