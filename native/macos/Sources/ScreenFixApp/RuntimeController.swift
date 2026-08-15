@@ -151,7 +151,7 @@ public final class RuntimeController {
         )
         do {
             configuration = try store.load()
-            reconcileLoadedConfiguration()
+            reconcileLoadedConfiguration(configuration)
         } catch {
             configuration = nil
             displayConnected = false
@@ -266,7 +266,7 @@ public final class RuntimeController {
 
     public func reconcile() {
         guard started else { return }
-        reconcileLoadedConfiguration()
+        reconcileLoadedConfiguration(configuration)
         stateDidChange()
     }
 
@@ -287,8 +287,7 @@ public final class RuntimeController {
         termination()
     }
 
-    private func reconcileLoadedConfiguration(_ loaded: ScreenFixConfiguration? = nil) {
-        let desired = loaded ?? configuration
+    private func reconcileLoadedConfiguration(_ desired: ScreenFixConfiguration?) {
         guard let desired else {
             maskOwner.removeAll()
             configuration = nil

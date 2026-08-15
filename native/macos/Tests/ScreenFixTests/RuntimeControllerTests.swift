@@ -265,6 +265,16 @@ let runtimeControllerTests = [
         try expect(runtimeEvents(value).contains("prepare"))
         try expect(!runtimeEvents(value).contains("save"))
     },
+    TestCase(name: "RuntimeController reload of a missing file clears old state") {
+        let value = fixture(configuration: runtimeConfig("a"), screens: [runtimeDisplay("a")])
+        value.runtime.start()
+        value.store.configuration = nil
+        value.runtime.reload()
+
+        try expectEqual(value.runtime.snapshot.configuration, nil)
+        try expectEqual(value.masks.committedCount, 0)
+        try expectEqual(value.runtime.snapshot.menuState.status, "Paused: select a monitor")
+    },
     TestCase(name: "RuntimeController mask failure never saves and preserves old state") {
         let value = fixture(configuration: runtimeConfig("a"), screens: [runtimeDisplay("a"), runtimeDisplay("b")])
         value.runtime.start()
