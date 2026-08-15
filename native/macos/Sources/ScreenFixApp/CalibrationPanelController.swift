@@ -101,14 +101,21 @@ public final class CalibrationPanelController {
 
     public func prepare(
         screenFrame: NSRect,
+        visibleFrame: NSRect? = nil,
         bands: [NormalizedRect],
         onSave: @escaping ([NormalizedRect]) throws -> Void,
         onCancel: @escaping () throws -> Void
     ) throws -> PreparedCalibrationEditor {
+        let resolvedVisibleFrame = visibleFrame ?? screenFrame
         guard Self.isFinite(screenFrame), screenFrame.width > 0, screenFrame.height > 0,
+              let safeFrame = Self.localSafeFrame(
+                  screenFrame: screenFrame,
+                  visibleFrame: resolvedVisibleFrame
+              ),
               let controls = CalibrationControlLayout.make(
                   width: screenFrame.width,
-                  height: screenFrame.height
+                  height: screenFrame.height,
+                  safeFrame: safeFrame
               ) else {
             throw CalibrationPanelError.invalidFrame
         }
@@ -232,6 +239,25 @@ public final class CalibrationPanelController {
     private static func isFinite(_ frame: NSRect) -> Bool {
         frame.origin.x.isFinite && frame.origin.y.isFinite
             && frame.width.isFinite && frame.height.isFinite
+    }
+
+    private static func localSafeFrame(
+        screenFrame: NSRect,
+        visibleFrame: NSRect
+    ) -> RectD? {
+        guard isFinite(visibleFrame), visibleFrame.width > 0, visibleFrame.height > 0,
+              visibleFrame.minX >= screenFrame.minX,
+              visibleFrame.minY >= screenFrame.minY,
+              visibleFrame.maxX <= screenFrame.maxX,
+              visibleFrame.maxY <= screenFrame.maxY else {
+            return nil
+        }
+        return RectD(
+            x: visibleFrame.minX - screenFrame.minX,
+            y: screenFrame.maxY - visibleFrame.maxY,
+            width: visibleFrame.width,
+            height: visibleFrame.height
+        )
     }
 
     private static func areValid(_ bands: [NormalizedRect]) -> Bool {

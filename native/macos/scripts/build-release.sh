@@ -26,7 +26,7 @@ swiftc -target arm64-apple-macosx13.0 -swift-version 5 -O -parse-as-library \
 swiftc -target arm64-apple-macosx13.0 -swift-version 5 -O -parse-as-library \
   -I "$BUILD_DIR" "${LAUNCHER_SOURCES[@]}" \
   "$BUILD_DIR/libScreenFixApp.a" "$BUILD_DIR/libScreenFixCore.a" \
-  -framework AppKit -framework CoreGraphics \
+  -framework AppKit -framework ApplicationServices -framework CoreGraphics \
   -o "$BUILD_DIR/ScreenFix"
 
 file "$BUILD_DIR/ScreenFix" | grep -q 'Mach-O 64-bit executable arm64'

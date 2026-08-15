@@ -8,6 +8,13 @@ enum Main {
                 + calibrationLayoutTests
                 + calibrationPanelTests
                 + maskGeometryTests
+                + windowCorrectionTests
+                + displayAssignmentTests
+                + windowEligibilityTests
+                + accessibilityTrustTests
+                + axClientTests
+                + axObserverRegistryTests
+                + windowGuardTests
                 + configValidatorTests
                 + displaySelectorTests
                 + configStoreTests
@@ -16,6 +23,7 @@ enum Main {
                 + menuStateTests
                 + menuModelTests
                 + runtimeCalibrationTests
+                + runtimeWindowGuardTests
                 + runtimeControllerTests
         )
     }

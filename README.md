@@ -55,12 +55,19 @@ region; physically black or colored pixels may remain visible.
    drag with a mouse, or tap, move, and tap again with a trackpad. No modifier key is
    required.
 6. Choose **Save** to persist the working copy, or **Cancel** to discard it.
+7. When macOS asks, allow ScreenFix in **System Settings > Privacy & Security >
+   Accessibility** so it can keep ordinary windows outside the masks.
 
-The native app needs neither Hammerspoon nor Accessibility permission. It includes the
-three-band calibration editor and defaults spanning exactly 1215–1920 on a 3440-wide
-display. Automatic window movement remains available only in the Hammerspoon version.
-This local build supports macOS 13 or later on Apple Silicon, not Intel Macs. Warning-free
-public distribution requires an Apple Developer ID and notarization.
+The native app needs no Hammerspoon process. Its masks and calibration editor work
+without Accessibility permission; only automatic window placement pauses until
+permission is granted. The menu explains the missing permission, rechecks it
+automatically, and starts correction without a Reload after access is granted.
+
+The permanent defaults span exactly 1215–1920 on a 3440-wide display. Protected,
+custom, full-screen, or non-movable windows may be left unchanged, and a fixed-size
+window is moved only when correction does not require resizing. This local build
+supports macOS 13 or later on Apple Silicon, not Intel Macs. Warning-free public
+distribution requires an Apple Developer ID and notarization.
 
 ## Hammerspoon version requirements
 

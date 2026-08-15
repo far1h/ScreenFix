@@ -27,6 +27,63 @@ let calibrationLayoutTests = [
         try expectEqual(layout.instructionText, RectD(x: 58, y: 24, width: 280, height: 42))
         try expectEqual(layout.instructionTextSize, 15)
     },
+    TestCase(name: "CalibrationLayout keeps controls inside menu bar and Dock safe edges") {
+        let cases: [(RectD, RectD, RectD, RectD)] = [
+            (
+                RectD(x: 0, y: 38, width: 1_000, height: 762),
+                RectD(x: 24, y: 734, width: 104, height: 42),
+                RectD(x: 140, y: 734, width: 104, height: 42),
+                RectD(x: 24, y: 62, width: 330, height: 42)
+            ),
+            (
+                RectD(x: 0, y: 0, width: 1_000, height: 750),
+                RectD(x: 24, y: 684, width: 104, height: 42),
+                RectD(x: 140, y: 684, width: 104, height: 42),
+                RectD(x: 24, y: 24, width: 330, height: 42)
+            ),
+            (
+                RectD(x: 80, y: 0, width: 920, height: 800),
+                RectD(x: 104, y: 734, width: 104, height: 42),
+                RectD(x: 220, y: 734, width: 104, height: 42),
+                RectD(x: 104, y: 24, width: 330, height: 42)
+            ),
+            (
+                RectD(x: 0, y: 0, width: 900, height: 800),
+                RectD(x: 24, y: 734, width: 104, height: 42),
+                RectD(x: 140, y: 734, width: 104, height: 42),
+                RectD(x: 24, y: 24, width: 330, height: 42)
+            ),
+        ]
+        for (safeFrame, save, cancel, instruction) in cases {
+            let layout = try requireLayout(
+                CalibrationControlLayout.make(width: 1_000, height: 800, safeFrame: safeFrame)
+            )
+            try expectEqual(layout.save, save)
+            try expectEqual(layout.cancel, cancel)
+            try expectEqual(layout.instruction, instruction)
+            try expectInside(layout.save, safeFrame)
+            try expectInside(layout.cancel, safeFrame)
+            try expectInside(layout.instruction, safeFrame)
+        }
+    },
+    TestCase(name: "CalibrationLayout rejects invalid or insufficient safe frames") {
+        let invalid = [
+            RectD(x: -1, y: 0, width: 1_000, height: 800),
+            RectD(x: 0, y: -1, width: 1_000, height: 800),
+            RectD(x: 0, y: 0, width: 1_001, height: 800),
+            RectD(x: 0, y: 0, width: 1_000, height: 801),
+            RectD(x: 0, y: 0, width: 259, height: 800),
+            RectD(x: 0, y: 0, width: 1_000, height: 179),
+            RectD(x: .nan, y: 0, width: 1_000, height: 800),
+            RectD(x: 0, y: 0, width: .infinity, height: 800),
+        ]
+        for safeFrame in invalid {
+            try expectEqual(
+                CalibrationControlLayout.make(width: 1_000, height: 800, safeFrame: safeFrame),
+                nil
+            )
+        }
+    },
     TestCase(name: "CalibrationLayout minimum width computes button widths and narrow instruction") {
         let layout = try requireLayout(CalibrationControlLayout.make(width: 260, height: 180))
         try expectEqual(layout.save, RectD(x: 24, y: 114, width: 100, height: 42))

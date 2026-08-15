@@ -95,6 +95,7 @@ private final class CalibrationTestMasks: RuntimeMaskOwner {
 
 private final class CalibrationTestNotifications: RuntimeNotifications {
     var displayChanged: (() -> Void)?
+    var willSleep: (() -> Void)?
     var woke: (() -> Void)?
     let log: NSMutableArray
 
@@ -102,10 +103,15 @@ private final class CalibrationTestNotifications: RuntimeNotifications {
         self.log = log
     }
 
-    func subscribe(displayChanged: @escaping () -> Void, woke: @escaping () -> Void) -> [AnyObject] {
+    func subscribe(
+        displayChanged: @escaping () -> Void,
+        willSleep: @escaping () -> Void,
+        woke: @escaping () -> Void
+    ) -> [AnyObject] {
         self.displayChanged = displayChanged
+        self.willSleep = willSleep
         self.woke = woke
-        return [NSObject(), NSObject()]
+        return [NSObject(), NSObject(), NSObject()]
     }
 
     func unsubscribe(_ tokens: [AnyObject]) {
@@ -132,6 +138,7 @@ private final class CalibrationTestOwner: RuntimeCalibrationOwner {
     private(set) var sessions: [CalibrationTestSession] = []
     private(set) var latestBands: [NormalizedRect] = []
     private(set) var latestFrame: NSRect?
+    private(set) var latestVisibleFrame: NSRect?
     var onStop: (() -> Void)?
     let log: NSMutableArray
 
@@ -141,6 +148,7 @@ private final class CalibrationTestOwner: RuntimeCalibrationOwner {
 
     func start(
         screenFrame: NSRect,
+        visibleFrame: NSRect,
         bands: [NormalizedRect],
         onSave: @escaping ([NormalizedRect]) throws -> Void,
         onCancel: @escaping () throws -> Void,
@@ -151,6 +159,7 @@ private final class CalibrationTestOwner: RuntimeCalibrationOwner {
         guard try commitGuard() else { throw RuntimeCalibrationTestError.requested }
         latestBands = bands
         latestFrame = screenFrame
+        latestVisibleFrame = visibleFrame
         sessions.append(CalibrationTestSession(onSave: onSave, onCancel: onCancel))
         isEditing = true
     }
@@ -190,7 +199,8 @@ private struct CalibrationRuntimeFixture {
 private func calibrationScreen(
     _ id: String,
     name: String = "Ultrawide",
-    frame: NSRect = NSRect(x: 0, y: 0, width: 3440, height: 1440)
+    frame: NSRect = NSRect(x: 0, y: 0, width: 3440, height: 1440),
+    visibleFrame: NSRect? = nil
 ) -> ConnectedScreen {
     ConnectedScreen(
         display: ConnectedDisplay(
@@ -200,6 +210,7 @@ private func calibrationScreen(
             height: frame.height
         ),
         fullFrame: frame,
+        visibleFrame: visibleFrame,
         nativeScreen: NSObject()
     )
 }
@@ -260,9 +271,11 @@ private func calibrationEvents(_ value: CalibrationRuntimeFixture) -> [String] {
 
 let runtimeCalibrationTests = [
     TestCase(name: "RuntimeCalibration starts from fresh live screen and keeps enabled masks") {
+        let fullFrame = NSRect(x: -3440, y: -200, width: 3440, height: 1440)
+        let visibleFrame = NSRect(x: -3400, y: -150, width: 3300, height: 1352)
         let value = calibrationFixture(
             configuration: calibrationConfig("a"),
-            screens: [calibrationScreen("a")]
+            screens: [calibrationScreen("a", frame: fullFrame, visibleFrame: visibleFrame)]
         )
         value.runtime.start()
         value.log.removeAllObjects()
@@ -271,8 +284,37 @@ let runtimeCalibrationTests = [
         try expectEqual(calibrationEvents(value), ["displays", "editor-start", "displays"])
         try expectEqual(value.masks.committedCount, 3)
         try expectEqual(value.editor.latestBands, calibrationConfig("a").bands)
+        try expectEqual(value.editor.latestFrame, fullFrame)
+        try expectEqual(value.editor.latestVisibleFrame, visibleFrame)
         try expect(value.runtime.snapshot.calibrating)
         try expect(value.runtime.snapshot.menuState.calibrating)
+    },
+    TestCase(name: "RuntimeCalibration visible frame topology change cancels and rebuilds runtime") {
+        let fullFrame = NSRect(x: -3440, y: -200, width: 3440, height: 1440)
+        let originalVisible = NSRect(x: -3440, y: -150, width: 3440, height: 1312)
+        let changedVisible = NSRect(x: -3360, y: -150, width: 3360, height: 1312)
+        let original = calibrationConfig("a")
+        let value = calibrationFixture(
+            configuration: original,
+            screens: [calibrationScreen("a", frame: fullFrame, visibleFrame: originalVisible)]
+        )
+        value.runtime.start()
+        value.runtime.toggleCalibration()
+        value.log.removeAllObjects()
+        value.catalog.screens = [
+            calibrationScreen("a", frame: fullFrame, visibleFrame: changedVisible),
+        ]
+
+        value.runtime.reconcile()
+
+        try expect(!value.runtime.snapshot.calibrating)
+        try expect(!value.editor.isEditing)
+        try expectEqual(value.runtime.snapshot.configuration, original)
+        try expectEqual(value.masks.lastScreenFrame, fullFrame)
+        try expectEqual(
+            calibrationEvents(value).filter { $0 == "editor-stop" || $0 == "mask-prepare" },
+            ["editor-stop", "mask-prepare"]
+        )
     },
     TestCase(name: "RuntimeCalibration checked toggle cancels without changing config") {
         let original = calibrationConfig("a")
@@ -564,19 +606,38 @@ let runtimeCalibrationTests = [
         try expect(!value.runtime.snapshot.calibrating)
         try expectEqual(value.editor.sessions.count, 1)
     },
-    TestCase(name: "RuntimeCalibration wake uses identical and changed topology rules") {
+    TestCase(name: "RuntimeCalibration sleep cancels editor and wake uses fresh topology") {
         let value = calibrationFixture(configuration: calibrationConfig("a"), screens: [calibrationScreen("a")])
         value.runtime.start()
         value.runtime.toggleCalibration()
+        let staleSession = value.editor.sessions[0]
         value.catalog.screens = [calibrationScreen("a")]
+        value.notifications.willSleep?()
+        try expect(!value.runtime.snapshot.calibrating)
         value.notifications.woke?()
-        try expect(value.runtime.snapshot.calibrating)
+        try expect(!value.runtime.snapshot.calibrating)
 
         let moved = NSRect(x: -3440, y: -100, width: 3440, height: 1440)
         value.catalog.screens = [calibrationScreen("a", frame: moved)]
+        value.notifications.willSleep?()
         value.notifications.woke?()
         try expect(!value.runtime.snapshot.calibrating)
         try expectEqual(value.masks.lastScreenFrame, moved)
+        try staleSession.onSave(editedCalibrationBands())
+        try staleSession.onCancel()
+        try expectEqual(value.runtime.snapshot.configuration, calibrationConfig("a"))
+    },
+    TestCase(name: "RuntimeCalibration sleep blocks editor teardown reentrancy") {
+        let value = calibrationFixture(configuration: calibrationConfig("a"), screens: [calibrationScreen("a")])
+        value.runtime.start()
+        value.runtime.toggleCalibration()
+        value.editor.onStop = { value.runtime.toggleCalibration() }
+
+        value.notifications.willSleep?()
+
+        try expect(!value.runtime.snapshot.calibrating)
+        try expect(!value.editor.isEditing)
+        try expectEqual(value.editor.sessions.count, 1)
     },
     TestCase(name: "RuntimeCalibration invalid or too-small frames fail before editor allocation") {
         let frames = [
@@ -592,6 +653,31 @@ let runtimeCalibrationTests = [
             value.runtime.selectDisplay(stableId: "a")
 
             try expect(!value.runtime.snapshot.calibrating)
+            try expect(!calibrationEvents(value).contains("editor-start"))
+            try expectEqual(value.masks.committedCount, 0)
+        }
+    },
+    TestCase(name: "RuntimeCalibration invalid visible frames fail before masks or editor allocation") {
+        let fullFrame = NSRect(x: 0, y: 0, width: 3440, height: 1440)
+        let visibleFrames = [
+            NSRect(x: -1, y: 0, width: 3440, height: 1440),
+            NSRect(x: 0, y: 0, width: 3441, height: 1440),
+            NSRect(x: 0, y: 0, width: 259, height: 1440),
+            NSRect(x: 0, y: 0, width: 3440, height: 179),
+            NSRect(x: CGFloat.nan, y: 0, width: 3440, height: 1440),
+        ]
+        for visibleFrame in visibleFrames {
+            let value = calibrationFixture(
+                configuration: nil,
+                screens: [calibrationScreen("a", frame: fullFrame, visibleFrame: visibleFrame)]
+            )
+            value.runtime.start()
+            value.log.removeAllObjects()
+
+            value.runtime.selectDisplay(stableId: "a")
+
+            try expect(!value.runtime.snapshot.calibrating)
+            try expect(!calibrationEvents(value).contains("mask-prepare"))
             try expect(!calibrationEvents(value).contains("editor-start"))
             try expectEqual(value.masks.committedCount, 0)
         }

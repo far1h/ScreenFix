@@ -34,8 +34,18 @@ or resize it from any white edge, then choose **Save** to persist it. **Cancel**
 choosing the checked **Calibrate** item discards the working copy. A mouse can hold and
 drag; a trackpad can tap, move, and tap again. Neither input style needs a modifier key.
 
-The native app does not request Accessibility permission. Automatic window movement is
-not included yet; use the Hammerspoon version when that behavior is required.
+The masks and calibration editor work without Accessibility permission. Automatic
+window placement needs permission in **System Settings > Privacy & Security >
+Accessibility**. When permission is missing, the menu shows one disabled guidance row
+while the normal controls remain available. ScreenFix rechecks permission and starts
+window correction automatically after access is granted; Reload is not required.
+
+ScreenFix moves ordinary movable application windows to the deterministic nearest safe
+side of the saved bands. It does not inspect window contents or activate applications.
+Protected, custom, tool, full-screen, minimized, hidden, other-display, and non-movable
+windows are excluded. A fixed-size standard window is moved only when its correction
+preserves size. Applications that reject Accessibility writes are left unchanged without
+blocking other applications.
 
 ## Current Command Line Tools limitation
 

@@ -91,6 +91,43 @@ let menuStateTests = [
         )
         try expect(state.status?.hasPrefix("Paused: config error:") == true)
     },
+    TestCase(name: "MenuState untrusted correction shows one actionable status") {
+        let state = MenuState.make(
+            configuration: menuConfig(enabled: true),
+            displayConnected: true,
+            accessibilityTrusted: false,
+            calibrating: false,
+            runtimeError: nil
+        )
+
+        try expectEqual(
+            state.status,
+            "Window correction paused: Allow Accessibility in System Settings"
+        )
+        try expectEqual(state.enabledActionTitle, "Disable")
+        try expect(state.enabledActionEnabled)
+        try expect(state.enabledActionChecked)
+        try expect(state.calibrateEnabled)
+        try expect(state.selectMonitorEnabled)
+        try expect(state.resetEnabled)
+        try expect(state.reloadEnabled)
+        try expect(state.quitEnabled)
+    },
+    TestCase(name: "MenuState runtime errors outrank Accessibility status") {
+        for error in [
+            "Paused: config error: invalid",
+            "Paused: mask error: failed",
+        ] {
+            let state = MenuState.make(
+                configuration: menuConfig(enabled: true),
+                displayConnected: true,
+                accessibilityTrusted: false,
+                calibrating: false,
+                runtimeError: error
+            )
+            try expectEqual(state.status, error)
+        }
+    },
     TestCase(name: "MenuState permanent controls stay enabled") {
         let state = MenuState.make(
             configuration: menuConfig(enabled: true),
