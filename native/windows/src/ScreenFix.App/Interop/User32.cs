@@ -58,4 +58,7 @@ internal static partial class User32
 
     [LibraryImport("user32.dll", SetLastError = true)]
     internal static partial int GetWindowRect(nint window, out NativeRect rectangle);
+
+    [LibraryImport("user32.dll")]
+    internal static partial uint GetDpiForWindow(nint window);
 }
