@@ -1,5 +1,7 @@
 local Controller = require("screenfix.controller")
+local Calibration = require("screenfix.calibration")
 local fake = require("tests.fake_hs")
+local geometry = require("screenfix.geometry")
 local test = require("tests.test_helper")
 
 local function validConfig(enabled)
@@ -177,6 +179,30 @@ local function menuItem(items, title)
             return item
         end
     end
+end
+
+local function installCalibrationAdapter(case, screens)
+    local canvas = fake.canvas()
+    local chooser = fake.chooser()
+    local eventtap = fake.eventtap()
+    local calibration = Calibration.new({
+        canvas = canvas,
+        chooser = chooser,
+        eventtap = eventtap,
+        screens = function()
+            return screens
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+        reportError = function(message)
+            case.lastError = message
+        end,
+    })
+    case.controller.deps.calibration = calibration
+
+    return calibration, canvas, chooser, eventtap
 end
 
 test.test("start prompts for monitor selection without valid configuration", function()
@@ -922,6 +948,314 @@ test.test("old calibration Save cannot overwrite a replacement monitor session",
     test.equal(case.saveCalls[1].screen.uuid, "replacement-uuid")
 end)
 
+test.test("replacement startup failure preserves the active calibration session", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    local replacementScreen = fake.screen("replacement-uuid", "Replacement Display", {
+        x = 0,
+        y = 0,
+        w = 2560,
+        h = 1440,
+    })
+    local replacementValue = validConfig(true)
+    replacementValue.screen.uuid = "replacement-uuid"
+    replacementValue.screen.name = "Replacement Display"
+    replacementValue.screen.width = 2560
+    case.config.defaultForScreen = function()
+        return replacementValue
+    end
+    case.config.findScreen = function(_, value)
+        if value.screen.uuid == "replacement-uuid" then
+            return replacementScreen
+        end
+        return case.screen
+    end
+    case.controller:start()
+    case.controller:calibrate()
+    local oldSession = case.controller.calibrationSession
+    local oldStart = case.calibrationStarts[1]
+    case.calibration.start = function(_, screen, bands, onSave, onCancel)
+        case.calibrationStarts[#case.calibrationStarts + 1] = {
+            screen = screen,
+            bands = bands,
+            onSave = onSave,
+            onCancel = onCancel,
+        }
+        return nil, "candidate startup failure"
+    end
+
+    case.controller:selectMonitor()
+    case.selectCallback(replacementScreen)
+
+    local candidateStart = case.calibrationStarts[2]
+    test.equal(case.controller.calibrationSession, oldSession)
+    test.equal(case.controller.calibrating, true)
+    test.equal(case.controller.calibrationValue, oldSession.target)
+    test.equal(case.controller.calibrationScreen, case.screen)
+    test.equal(case.controller.screen, case.screen)
+    test.equal(case.calibrationStopCount or 0, 0)
+    test.equal(case.lastError, "candidate startup failure")
+
+    candidateStart.onSave(candidateStart.bands)
+    candidateStart.onCancel()
+    test.equal(#case.saveCalls, 0)
+    test.equal(case.controller.calibrationSession, oldSession)
+
+    oldStart.onSave(oldStart.bands)
+    test.equal(#case.saveCalls, 1)
+    test.equal(case.saveCalls[1].screen.uuid, "damaged-uuid")
+    test.equal(case.controller.calibrating, false)
+end)
+
+test.test("replacement commits after startup and keeps callbacks transactional", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    local replacementScreen = fake.screen("replacement-uuid", "Replacement Display", {
+        x = 0,
+        y = 0,
+        w = 2560,
+        h = 1440,
+    })
+    local replacementValue = validConfig(true)
+    replacementValue.screen.uuid = "replacement-uuid"
+    replacementValue.screen.name = "Replacement Display"
+    replacementValue.screen.width = 2560
+    case.config.defaultForScreen = function()
+        return replacementValue
+    end
+    case.config.findScreen = function(_, value)
+        if value.screen.uuid == "replacement-uuid" then
+            return replacementScreen
+        end
+        return case.screen
+    end
+    case.controller:start()
+    case.controller:calibrate()
+    local oldSession = case.controller.calibrationSession
+    local oldStart = case.calibrationStarts[1]
+    local precommitSession
+    local precommitSaveCalls
+    case.calibration.start = function(_, screen, bands, onSave, onCancel)
+        case.calibrationStarts[#case.calibrationStarts + 1] = {
+            screen = screen,
+            bands = bands,
+            onSave = onSave,
+            onCancel = onCancel,
+        }
+        onSave(bands)
+        onCancel()
+        precommitSession = case.controller.calibrationSession
+        precommitSaveCalls = #case.saveCalls
+        return true
+    end
+
+    case.controller:selectMonitor()
+    case.selectCallback(replacementScreen)
+
+    local candidateStart = case.calibrationStarts[2]
+    local candidateSession = case.controller.calibrationSession
+    test.equal(precommitSession, oldSession)
+    test.equal(precommitSaveCalls, 0)
+    test.equal(case.calibrationStopCount or 0, 0)
+    test.equal(case.controller.calibrating, true)
+    test.equal(case.controller.calibrationScreen, replacementScreen)
+    test.equal(case.controller.screen, replacementScreen)
+    test.equal(candidateSession.target.screen.uuid, "replacement-uuid")
+    test.equal(oldSession.token, nil)
+
+    oldStart.onSave(oldStart.bands)
+    oldStart.onCancel()
+    test.equal(#case.saveCalls, 0)
+    test.equal(case.controller.calibrationSession, candidateSession)
+
+    candidateStart.onSave(candidateStart.bands)
+    test.equal(#case.saveCalls, 1)
+    test.equal(case.saveCalls[1].screen.uuid, "replacement-uuid")
+    test.equal(case.controller.calibrating, false)
+end)
+
+test.test("adapter startup cannot resurrect a controller stopped reentrantly", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    case.calibration.start = function()
+        case.controller:stop()
+        return true
+    end
+    case.controller:start()
+
+    local started = case.controller:calibrate()
+
+    test.equal(started, false)
+    test.equal(case.controller.started, false)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationSession, nil)
+    test.equal(case.controller.calibrationValue, nil)
+    test.equal(case.controller.calibrationScreen, nil)
+    test.equal(case.controller.screen, nil)
+    test.equal(case.calibrationStopCount, 1)
+end)
+
+test.test("older startup cannot overwrite a newer reentrant calibration", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    local startCalls = 0
+    local newerSession
+    case.calibration.start = function()
+        startCalls = startCalls + 1
+        if startCalls == 1 then
+            case.controller:calibrate()
+            newerSession = case.controller.calibrationSession
+        end
+        return true
+    end
+    case.controller:start()
+
+    local outerStarted = case.controller:calibrate()
+
+    test.equal(outerStarted, false)
+    test.equal(startCalls, 2)
+    test.equal(case.controller.started, true)
+    test.equal(case.controller.calibrating, true)
+    test.equal(case.controller.calibrationSession, newerSession)
+    test.equal(case.controller.calibrationGeneration, newerSession.token)
+    test.equal(case.calibrationStopCount or 0, 0)
+end)
+
+test.test("failed controller replacement keeps the real calibration editor live", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    local replacementScreen = fake.screen("replacement-uuid", "Replacement Display", {
+        x = 0,
+        y = 0,
+        w = 2560,
+        h = 1440,
+    })
+    local replacementValue = validConfig(true)
+    replacementValue.screen.uuid = "replacement-uuid"
+    replacementValue.screen.name = "Replacement Display"
+    replacementValue.screen.width = 2560
+    case.config.defaultForScreen = function()
+        return replacementValue
+    end
+    case.config.findScreen = function(_, value)
+        if value.screen.uuid == "replacement-uuid" then
+            return replacementScreen
+        end
+        return case.screen
+    end
+    local calibration, canvas, chooser, eventtap = installCalibrationAdapter(
+        case,
+        { replacementScreen }
+    )
+    case.controller:start()
+    case.controller:calibrate()
+    local oldSession = case.controller.calibrationSession
+    local oldEditor = calibration.editorCanvas
+    local oldTap = calibration.eventTap
+    local oldBands = calibration.workingBands
+    canvas.failMethod = "show"
+    canvas.failMethodAt = 2
+
+    case.controller:selectMonitor()
+    local chooserObject = chooser.choosers[1]
+    chooserObject:choose(chooserObject.choicesCalls[1][1])
+
+    test.equal(case.controller.calibrationSession, oldSession)
+    test.equal(case.controller.calibrationScreen, case.screen)
+    test.equal(calibration.editorCanvas, oldEditor)
+    test.equal(calibration.eventTap, oldTap)
+    test.equal(oldEditor.deleteCount, 0)
+    test.equal(oldTap.stopCount, 0)
+    test.equal(canvas.canvases[2].deleteCount, 1)
+    test.equal(eventtap.taps[2].stopCount, 1)
+
+    oldEditor:triggerMouse("mouseDown", 1754, 245)
+    oldTap:emit(eventtap.event.types.leftMouseDragged, { x = -1666, y = 265 })
+    test.equal(oldBands[1].x > 0.43, true)
+    local movedX = oldBands[1].x
+    local candidateMouseCallback = canvas.canvases[2].mouseCallbackCalls[1]
+    candidateMouseCallback(canvas.canvases[2], "mouseDown", "background", 1306, 245)
+    eventtap.taps[2]:emit(eventtap.event.types.leftMouseDragged, { x = 1326, y = 265 })
+    test.equal(oldBands[1].x, movedX)
+end)
+
+test.test("successful controller replacement commits the real editor atomically", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    local replacementScreen = fake.screen("replacement-uuid", "Replacement Display", {
+        x = 0,
+        y = 0,
+        w = 2560,
+        h = 1440,
+    })
+    local replacementValue = validConfig(true)
+    replacementValue.screen.uuid = "replacement-uuid"
+    replacementValue.screen.name = "Replacement Display"
+    replacementValue.screen.width = 2560
+    case.config.defaultForScreen = function()
+        return replacementValue
+    end
+    case.config.findScreen = function(_, value)
+        if value.screen.uuid == "replacement-uuid" then
+            return replacementScreen
+        end
+        return case.screen
+    end
+    local calibration, canvas, chooser, eventtap = installCalibrationAdapter(
+        case,
+        { replacementScreen }
+    )
+    case.controller:start()
+    case.controller:calibrate()
+    local oldSession = case.controller.calibrationSession
+    local oldEditor = calibration.editorCanvas
+    local oldMouseCallback = oldEditor.mouseCallbackFn
+    local oldTap = calibration.eventTap
+    local oldSave = calibration.onSave
+    local oldCancel = calibration.onCancel
+    local realStart = calibration.start
+    local precommitSession
+    local precommitSaveCalls
+    calibration.start = function(self, ...)
+        local started, startError = realStart(self, ...)
+        if started == true then
+            self.onSave(self.workingBands)
+            self.onCancel()
+            precommitSession = case.controller.calibrationSession
+            precommitSaveCalls = #case.saveCalls
+        end
+        return started, startError
+    end
+
+    case.controller:selectMonitor()
+    local chooserObject = chooser.choosers[1]
+    chooserObject:choose(chooserObject.choicesCalls[1][1])
+
+    local candidateSession = case.controller.calibrationSession
+    local candidateEditor = calibration.editorCanvas
+    local candidateTap = calibration.eventTap
+    test.equal(precommitSession, oldSession)
+    test.equal(precommitSaveCalls, 0)
+    test.equal(oldSession.token, nil)
+    test.equal(case.controller.calibrationScreen, replacementScreen)
+    test.equal(case.controller.screen, replacementScreen)
+    test.equal(oldEditor.deleteCount, 1)
+    test.equal(oldTap.stopCount, 1)
+    test.equal(candidateEditor.deleteCount, 0)
+    test.equal(candidateTap.stopCount, 0)
+
+    local before = calibration.workingBands[1]
+    oldMouseCallback(oldEditor, "mouseDown", "background", 1306, 245)
+    oldTap:emit(eventtap.event.types.leftMouseDragged, { x = 1326, y = 265 })
+    oldSave(oldSession.target.bands)
+    oldCancel()
+    test.equal(calibration.workingBands[1], before)
+    test.equal(case.controller.calibrationSession, candidateSession)
+    test.equal(#case.saveCalls, 0)
+
+    candidateEditor:triggerMouse("mouseDown", 1306, 245)
+    candidateTap:emit(eventtap.event.types.leftMouseDragged, { x = 1326, y = 265 })
+    test.equal(calibration.workingBands[1] == before, false)
+    candidateEditor:triggerMouse("mouseDown", 30, 1390)
+    test.equal(#case.saveCalls, 1)
+    test.equal(case.saveCalls[1].screen.uuid, "replacement-uuid")
+    test.equal(case.controller.calibrating, false)
+end)
+
 test.test("stale calibration Cancel cannot clear a replacement session", function()
     local case = newCase({ configuration = validConfig(true), accessibility = true })
     case.controller:start()
@@ -1317,13 +1651,14 @@ test.test("monitor selection does not open calibration after the chosen screen d
     case.selectCallback(case.screen)
 
     test.equal(#case.calibrationStarts, 0)
-    test.equal(case.calibrationStopCount, 1)
-    test.equal(case.controller.calibrating, false)
+    test.equal(case.calibrationStopCount or 0, 0)
+    test.equal(case.controller.calibrating, nil)
     test.equal(case.controller.calibrationValue, nil)
     test.equal(case.controller.calibrationScreen, nil)
     test.equal(case.controller.screen, nil)
-    test.equal(case.overlayDeleteCount, 2)
-    test.equal(#case.notify.notifications, 1)
+    test.equal(case.overlayDeleteCount, 1)
+    test.equal(#case.notify.notifications, 0)
+    test.equal(case.lastError, "selected display is disconnected")
 end)
 
 test.test("monitor selection rejects an ambiguous UUID-less screen without orphan state", function()
@@ -1350,11 +1685,12 @@ test.test("monitor selection rejects an ambiguous UUID-less screen without orpha
     case.selectCallback(ambiguousScreen)
 
     test.equal(#case.calibrationStarts, 0)
-    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrating, nil)
     test.equal(case.controller.calibrationValue, nil)
     test.equal(case.controller.calibrationScreen, nil)
     test.equal(case.controller.screen, nil)
-    test.equal(#case.notify.notifications, 1)
+    test.equal(#case.notify.notifications, 0)
+    test.equal(case.lastError, "selected display is disconnected")
 end)
 
 test.test("monitor selection starts calibration on the resolver's live screen object", function()

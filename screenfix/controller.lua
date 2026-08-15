@@ -102,6 +102,14 @@ local function isCurrentSession(controller, token, target)
         and session.target == target
 end
 
+local function invalidateSession(session)
+    if session then
+        session.token = nil
+        session.screen = nil
+        session.fullFrame = nil
+    end
+end
+
 local function invalidateCalibration(controller, stopAdapter)
     local session = controller.calibrationSession
     controller.calibrationGeneration = controller.calibrationGeneration + 1
@@ -109,11 +117,7 @@ local function invalidateCalibration(controller, stopAdapter)
     controller.calibrating = false
     controller.calibrationValue = nil
     controller.calibrationScreen = nil
-    if session then
-        session.token = nil
-        session.screen = nil
-        session.fullFrame = nil
-    end
+    invalidateSession(session)
     if stopAdapter then
         call(controller.deps.calibration.stop, controller.deps.calibration)
     end
@@ -250,35 +254,38 @@ startCalibration = function(controller, value, screen)
     end
 
     invalidateChooser(controller)
-    if controller.calibrating then
-        invalidateCalibration(controller, true)
-    end
-
+    local previousSession = controller.calibrationSession
     controller.calibrationGeneration = controller.calibrationGeneration + 1
     local target = copyConfig(value)
+    local liveScreen = call(
+        controller.deps.config.findScreen,
+        controller.deps.config,
+        target
+    )
+    if liveScreen == nil then
+        local resolveError = "selected display is disconnected"
+        callFunction(controller.deps.hs.showError, resolveError)
+        return nil, resolveError
+    end
+
+    local fullFrame = screenFrame(liveScreen)
+    if fullFrame == nil then
+        local resolveError = "selected display frame is unavailable"
+        callFunction(controller.deps.hs.showError, resolveError)
+        return nil, resolveError
+    end
+
     local session = {
-        fullFrame = nil,
-        screen = screen,
+        fullFrame = fullFrame,
+        screen = liveScreen,
         target = target,
         token = controller.calibrationGeneration,
     }
-    controller.calibrationSession = session
-    controller.calibrating = true
-    controller.calibrationValue = target
-    controller.calibrationScreen = screen
-    controller:refresh()
-    if controller.calibrating ~= true
-        or controller.calibrationScreen == nil
-        or controller.calibrationScreen ~= controller.screen
-    then
-        return false
-    end
-    screen = controller.calibrationScreen
 
     local started, startError = call(
         controller.deps.calibration.start,
         controller.deps.calibration,
-        screen,
+        liveScreen,
         target.bands,
         function(bands)
             local saved, saveError = controller:saveCalibration(
@@ -295,12 +302,35 @@ startCalibration = function(controller, value, screen)
         end
     )
     if started ~= true then
-        if isCurrentSession(controller, session.token, target) then
-            invalidateCalibration(controller, false)
-            controller:refresh()
-        end
         callFunction(controller.deps.hs.showError, tostring(startError or "Unable to start calibration"))
         return nil, startError
+    end
+
+    if controller.started ~= true
+        or controller.calibrationGeneration ~= session.token
+        or controller.calibrationSession ~= previousSession
+    then
+        local currentSession = controller.calibrationSession
+        if controller.started == true
+            and (currentSession == nil or currentSession == previousSession)
+        then
+            call(controller.deps.calibration.stop, controller.deps.calibration)
+        end
+        return false
+    end
+
+    invalidateSession(previousSession)
+    controller.calibrationSession = session
+    controller.calibrating = true
+    controller.calibrationValue = target
+    controller.calibrationScreen = liveScreen
+    controller.screen = liveScreen
+    controller:refresh()
+    if controller.calibrating ~= true
+        or controller.calibrationScreen == nil
+        or controller.calibrationScreen ~= controller.screen
+    then
+        return false
     end
 
     return true
