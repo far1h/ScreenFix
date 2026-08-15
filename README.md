@@ -4,6 +4,10 @@ ScreenFix is a local Hammerspoon configuration for a display with a damaged vert
 region. It places three calibrated black masks over that region and moves or resizes
 ordinary windows into the usable space on either side.
 
+![A MacBook display with a damaged vertical band](D75077A6-60A3-41E7-998E-AA33DABA7046.PNG)
+
+*The very practical reason ScreenFix exists.*
+
 Software cannot repair physical screen damage or control dead, leaking, or stuck pixels.
 The masks turn responsive pixels black and keep useful content away from the damaged
 region; physically black or colored pixels may remain visible.
