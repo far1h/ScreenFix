@@ -59,6 +59,7 @@ local guard = WindowGuard.new({
 local calibration = Calibration.new({
     canvas = hs.canvas,
     chooser = hs.chooser,
+    eventtap = hs.eventtap,
     screens = function()
         return hs.screen.allScreens()
     end,

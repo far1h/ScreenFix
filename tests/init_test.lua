@@ -58,6 +58,10 @@ local function withBootstrap(options, verify)
         captured.filter = filter
         return filter
     end
+    local eventtap = fake.eventtap()
+    eventtap.checkMouseButtons = function()
+        return { left = false }
+    end
     local hs = {
         caffeinate = {
             watcher = {
@@ -84,11 +88,7 @@ local function withBootstrap(options, verify)
                 captured.dockHideCount = captured.dockHideCount + 1
             end,
         },
-        eventtap = {
-            checkMouseButtons = function()
-                return { left = false }
-            end,
-        },
+        eventtap = eventtap,
         screen = {
             allScreens = function()
                 return screens
@@ -298,6 +298,19 @@ test.test("init assembles exact production dependencies and starts one controlle
 
         test.equal(captured.calibrationDeps.canvas, hs.canvas)
         test.equal(captured.calibrationDeps.chooser, hs.chooser)
+        test.equal(captured.calibrationDeps.eventtap, hs.eventtap)
+        test.equal(
+            captured.calibrationDeps.eventtap.event.types.mouseMoved,
+            hs.eventtap.event.types.mouseMoved
+        )
+        test.equal(
+            captured.calibrationDeps.eventtap.event.types.leftMouseDragged,
+            hs.eventtap.event.types.leftMouseDragged
+        )
+        test.equal(
+            captured.calibrationDeps.eventtap.event.types.leftMouseUp,
+            hs.eventtap.event.types.leftMouseUp
+        )
         test.equal(captured.calibrationDeps.geometry, geometry)
         test.equal(type(captured.calibrationDeps.reportError), "function")
         captured.calibrationDeps.reportError("calibration failure")

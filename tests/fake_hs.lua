@@ -149,6 +149,114 @@ function M.canvas()
     return module
 end
 
+function M.eventtap()
+    local module = {
+        event = {
+            types = {
+                mouseMoved = 5,
+                leftMouseDragged = 6,
+                leftMouseUp = 2,
+            },
+        },
+        failures = {},
+        methodCallCounts = {},
+        newCalls = {},
+        operationLog = {},
+        taps = {},
+    }
+
+    local function record(name, tap)
+        module.methodCallCounts[name] = (module.methodCallCounts[name] or 0) + 1
+        module.operationLog[#module.operationLog + 1] = {
+            name = name,
+            tap = tap,
+        }
+
+        if module.failMethod == name
+            and module.methodCallCounts[name] == (module.failMethodAt or 1)
+        then
+            local message = module.failMessage or (name .. " failure")
+            module.failures[#module.failures + 1] = {
+                name = name,
+                message = message,
+                tap = tap,
+            }
+            error(message, 0)
+        end
+    end
+
+    function module.new(eventTypes, callback)
+        local call = {
+            callback = callback,
+            eventTypes = eventTypes,
+        }
+        module.newCalls[#module.newCalls + 1] = call
+        record("new")
+
+        if module.returnNilFromNew then
+            return nil
+        end
+
+        local tap = {
+            callback = callback,
+            callbackResults = {},
+            eventTypes = eventTypes,
+            startCount = 0,
+            stopCount = 0,
+        }
+
+        function tap:start()
+            self.startCount = self.startCount + 1
+            record("start", self)
+            return self
+        end
+
+        function tap:stop()
+            self.stopCount = self.stopCount + 1
+            record("stop", self)
+            return self
+        end
+
+        function tap:emit(eventType, point)
+            local event = {
+                getTypeCallCount = 0,
+                locationCallCount = 0,
+            }
+
+            function event:getType()
+                self.getTypeCallCount = self.getTypeCallCount + 1
+                return eventType
+            end
+
+            function event:location()
+                self.locationCallCount = self.locationCallCount + 1
+                return point
+            end
+
+            local called, result = pcall(self.callback, event)
+            if called then
+                self.callbackResults[#self.callbackResults + 1] = result
+            end
+            if not called then
+                module.failures[#module.failures + 1] = {
+                    name = "callback",
+                    message = result,
+                    tap = self,
+                }
+                error(result, 0)
+            end
+
+            return result, event
+        end
+
+        call.tap = tap
+        module.taps[#module.taps + 1] = tap
+        return tap
+    end
+
+    return module
+end
+
 function M.chooser()
     local module = {
         choosers = {},

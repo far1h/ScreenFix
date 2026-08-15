@@ -127,6 +127,14 @@ local function deleteEditor(editorCanvas)
     end
 end
 
+local function stopEventTap(eventTap)
+    if eventTap then
+        pcall(function()
+            eventTap:stop()
+        end)
+    end
+end
+
 function M.new(deps)
     return setmetatable({ deps = deps }, Calibration)
 end
@@ -174,8 +182,6 @@ function Calibration:draw()
         frame = { x = 0, y = 0, w = self.fullFrame.w, h = self.fullFrame.h },
         trackMouseByBounds = true,
         trackMouseDown = true,
-        trackMouseUp = true,
-        trackMouseMove = true,
     }
 
     for index, band in ipairs(localBands) do
@@ -317,8 +323,10 @@ end
 function Calibration:stop()
     local chooser = self.screenChooser
     local editorCanvas = self.editorCanvas
+    local eventTap = self.eventTap
     self.screenChooser = nil
     self.editorCanvas = nil
+    self.eventTap = nil
     self.fullFrame = nil
     self.workingBands = nil
     self.onSave = nil
@@ -326,6 +334,7 @@ function Calibration:stop()
     self.drag = nil
 
     deleteChooser(chooser)
+    stopEventTap(eventTap)
     deleteEditor(editorCanvas)
 end
 
@@ -341,6 +350,7 @@ function Calibration:start(screen, bands, onSave, onCancel)
 
     local fullFrame
     local editorCanvas
+    local eventTap
     local allocated, allocationError = pcall(function()
         fullFrame = screen:fullFrame()
         editorCanvas = self.deps.canvas.new(fullFrame)
@@ -356,6 +366,7 @@ function Calibration:start(screen, bands, onSave, onCancel)
     local previous = {
         screenChooser = self.screenChooser,
         editorCanvas = self.editorCanvas,
+        eventTap = self.eventTap,
         fullFrame = self.fullFrame,
         workingBands = self.workingBands,
         onSave = self.onSave,
@@ -376,26 +387,35 @@ function Calibration:start(screen, bands, onSave, onCancel)
         self:draw()
         editorCanvas:level("assistiveTechHigh")
         editorCanvas:clickActivating(true)
-        editorCanvas:canvasMouseEvents(true, true, false, true)
+        editorCanvas:canvasMouseEvents(true, false, false, false)
         editorCanvas:mouseCallback(function(_, message, _, x, y)
             pcall(function()
-                local point = { x = x, y = y }
                 if message == "mouseDown" then
-                    self:beginDrag(point)
-                elseif message == "mouseMove" then
-                    self:updateDrag(point)
-                elseif message == "mouseUp" then
-                    self.drag = nil
+                    self:beginDrag({ x = x, y = y })
                 end
             end)
         end)
+        local eventTypes = self.deps.eventtap.event.types
+        eventTap = self.deps.eventtap.new({
+            eventTypes.mouseMoved,
+            eventTypes.leftMouseDragged,
+            eventTypes.leftMouseUp,
+        }, function(_)
+            return false
+        end)
+        if not eventTap then
+            error("event tap construction failed", 0)
+        end
+        eventTap:start()
         editorCanvas:show()
     end)
 
     if not prepared then
+        stopEventTap(eventTap)
         deleteEditor(editorCanvas)
         self.screenChooser = previous.screenChooser
         self.editorCanvas = previous.editorCanvas
+        self.eventTap = previous.eventTap
         self.fullFrame = previous.fullFrame
         self.workingBands = previous.workingBands
         self.onSave = previous.onSave
@@ -406,7 +426,9 @@ function Calibration:start(screen, bands, onSave, onCancel)
         return nil, prepareError
     end
 
+    self.eventTap = eventTap
     deleteChooser(previous.screenChooser)
+    stopEventTap(previous.eventTap)
     deleteEditor(previous.editorCanvas)
 
     return true
