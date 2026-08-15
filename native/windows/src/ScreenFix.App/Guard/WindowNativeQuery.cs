@@ -59,7 +59,7 @@ public interface IWindowNativeQuery
 
     bool TryGetRoot(nint window, out nint root);
 
-    nint GetOwner(nint window);
+    bool TryGetOwner(nint window, out nint owner);
 
     nint GetShellWindow();
 

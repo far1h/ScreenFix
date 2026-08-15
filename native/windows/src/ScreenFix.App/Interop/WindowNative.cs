@@ -43,7 +43,12 @@ internal sealed partial class WindowNative : IWindowNativeQuery, IWinEventNative
         return root != 0;
     }
 
-    public nint GetOwner(nint window) => GetWindow(window, OwnerWindow);
+    public bool TryGetOwner(nint window, out nint owner)
+    {
+        Marshal.SetLastPInvokeError(0);
+        owner = GetWindow(window, OwnerWindow);
+        return owner != 0 || Marshal.GetLastPInvokeError() == 0;
+    }
 
     nint IWindowNativeQuery.GetShellWindow() => GetShellWindow();
 
@@ -195,7 +200,7 @@ internal sealed partial class WindowNative : IWindowNativeQuery, IWinEventNative
     [LibraryImport("user32.dll", SetLastError = true)]
     private static partial nint GetAncestor(nint window, uint flags);
 
-    [LibraryImport("user32.dll")]
+    [LibraryImport("user32.dll", SetLastError = true)]
     private static partial nint GetWindow(nint window, uint command);
 
     [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]

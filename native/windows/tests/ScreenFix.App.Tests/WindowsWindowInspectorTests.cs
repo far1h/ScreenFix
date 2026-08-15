@@ -184,6 +184,17 @@ public sealed class WindowsWindowInspectorTests
         Assert.Null(result);
     }
 
+    [Fact]
+    public void TryInspect_OwnerQueryFailureReturnsNoPartialFacts()
+    {
+        var query = OrdinaryQuery() with { OwnerSucceeds = false };
+        var inspector = new WindowsWindowInspector(query, screenFixProcessId: 100);
+
+        var result = inspector.TryInspect(new nint(17), Selected());
+
+        Assert.Null(result);
+    }
+
     private static WindowInspection Inspect(
         FakeWindowNativeQuery query,
         RectD? fullBounds = null)
@@ -235,6 +246,8 @@ public sealed class WindowsWindowInspectorTests
 
         public nint Owner { get; set; }
 
+        public bool OwnerSucceeds { get; set; } = true;
+
         public nint ShellWindow { get; set; } = new(1);
 
         public nint DesktopWindow { get; set; } = new(2);
@@ -279,7 +292,11 @@ public sealed class WindowsWindowInspectorTests
             return RootSucceeds;
         }
 
-        public nint GetOwner(nint window) => Owner;
+        public bool TryGetOwner(nint window, out nint owner)
+        {
+            owner = Owner;
+            return OwnerSucceeds;
+        }
 
         public nint GetShellWindow() => ShellWindow;
 
