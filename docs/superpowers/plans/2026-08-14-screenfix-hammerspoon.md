@@ -646,7 +646,7 @@ Test that calibration:
 - sets the editor canvas to `assistiveTechHigh` before input callbacks and `show`, keeping it above `screenSaver` mask canvases;
 - positions that canvas with the monitor's absolute `fullFrame()` while drawing every element in canvas-local coordinates;
 - uses a tracked background surface and `canvasMouseEvents(true, true, false, true)`;
-- draws three black bands, edge handles, Save, and Cancel controls;
+- draws three translucent red bands with bright outlines, white edge handles, the `Drag red bands or white edges` instruction, and fixed Save/Cancel controls;
 - updates a copied working value during mouse movement while the left button is down;
 - calls `onSave(workingBands)` only after validation;
 - calls `onCancel()` without changing saved bands; and
@@ -677,7 +677,7 @@ The editor canvas is positioned with the absolute `screen:fullFrame()`. All canv
 
 Set `editorCanvas:level("assistiveTechHigh")` before mouse callback setup and `show()`. Treat level configuration like the other transactional setup steps: if it fails, delete only the partial replacement and restore the prior editor, callbacks, bands, and controls unchanged.
 
-The bottom background element covers the entire local canvas and has `trackMouseDown`, `trackMouseUp`, and `trackMouseMove`; higher visual elements need no tracking, so the background receives coordinates across the whole editor. Because the callback's `x` and `y` are relative to that tracked full-canvas background element, pass them directly to `editorHit` as a local point. Compute drag deltas from successive local callback positions, then let `dragBand` divide by `fullFrame.w` and `fullFrame.h` when updating normalized values. On mouse down, hit-test Save, Cancel, then band handles/body. On mouse move, update only while a drag is active and the left button remains down. On mouse up, clear the drag state. Redraw from the copied working bands after every change.
+The bottom background element covers the entire local canvas and has `trackMouseDown`, `trackMouseUp`, and `trackMouseMove`. Render editable bands with nonblack translucent red `strokeAndFill` rectangles, keep handles white, and place a high-contrast instruction near the local top margin. Every higher visual element remains untracked, so reverse z-order hit testing lets the background receive coordinates across the whole editor. Because the callback's `x` and `y` are relative to that tracked full-canvas background element, pass them directly to `editorHit` as a local point. Compute drag deltas from successive local callback positions, then let `dragBand` divide by `fullFrame.w` and `fullFrame.h` when updating normalized values. On mouse down, hit-test Save, Cancel, then band handles/body. On mouse move, update only while a drag is active and the left button remains down. On mouse up, clear the drag state. Redraw from the copied working bands after every change.
 
 Keep Save and Cancel at fixed 24-point margins in the usable left area. Give all functions short names that describe one action: `draw`, `beginDrag`, `updateDrag`, `save`, `cancel`, and `stop`.
 

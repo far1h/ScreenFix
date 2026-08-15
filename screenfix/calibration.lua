@@ -5,6 +5,8 @@ local CONTROL_HEIGHT = 40
 local CONTROL_MARGIN = 24
 local CONTROL_WIDTH = 96
 local HANDLE_WIDTH = 8
+local INSTRUCTION_HEIGHT = 40
+local INSTRUCTION_WIDTH = 320
 
 local function copyBands(bands)
     local copied = {}
@@ -179,9 +181,11 @@ function Calibration:draw()
     for index, band in ipairs(localBands) do
         self.editorCanvas[index + 1] = {
             type = "rectangle",
-            action = "fill",
-            fillColor = { white = 0, alpha = 1 },
+            action = "strokeAndFill",
+            fillColor = { red = 0.95, green = 0.12, blue = 0.08, alpha = 0.45 },
             frame = band,
+            strokeColor = { red = 1, green = 0.55, blue = 0.15, alpha = 1 },
+            strokeWidth = 3,
         }
     end
 
@@ -215,6 +219,22 @@ function Calibration:draw()
     self.editorCanvas[18] = label(self.saveFrame, "Save")
     self.editorCanvas[19] = control(self.cancelFrame, { white = 0.25, alpha = 1 })
     self.editorCanvas[20] = label(self.cancelFrame, "Cancel")
+    local instructionFrame = {
+        x = CONTROL_MARGIN,
+        y = CONTROL_MARGIN,
+        w = INSTRUCTION_WIDTH,
+        h = INSTRUCTION_HEIGHT,
+    }
+    self.editorCanvas[21] = {
+        type = "rectangle",
+        action = "strokeAndFill",
+        fillColor = { white = 0, alpha = 0.82 },
+        frame = instructionFrame,
+        roundedRectRadii = { xRadius = 4, yRadius = 4 },
+        strokeColor = { white = 1, alpha = 1 },
+        strokeWidth = 2,
+    }
+    self.editorCanvas[22] = label(instructionFrame, "Drag red bands or white edges")
 end
 
 function Calibration:beginDrag(point)

@@ -67,7 +67,8 @@ Launch Hammerspoon, or choose **Reload Config** if it is already running. The `S
 ## First run
 
 1. Select the damaged display in the chooser.
-2. Move and resize the three black bands until they cover the damaged region.
+2. Drag the translucent red bands or their white edges until they cover the damaged
+   region. The on-screen instruction identifies these drag targets.
 3. Choose **Save**. ScreenFix remembers the display and calibration, switches to
    click-through masks, and starts window protection when Accessibility is available.
 

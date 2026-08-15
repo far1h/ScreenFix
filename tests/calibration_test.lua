@@ -136,6 +136,12 @@ test.test("start uses an absolute canvas with local band coordinates", function(
         w = 688,
         h = 720,
     })
+    test.rect(canvas.canvases[1].elements[21].frame, {
+        x = 24,
+        y = 24,
+        w = 320,
+        h = 40,
+    })
     canvas.canvases[1]:triggerMouse("mouseDown", 1376, 360)
     test.equal(calibration.drag.index, 1)
     test.equal(calibration.drag.part, "top")
@@ -174,6 +180,10 @@ test.test("calibration editor stays above rebuilt masks before input and show", 
     local editorCanvas = canvas.canvases[2]
     test.equal(maskCanvas.levelCalls[1], "screenSaver")
     test.equal(editorCanvas.levelCalls[1], "assistiveTechHigh")
+    test.equal(maskCanvas.elements[1].fillColor.white, 0)
+    test.equal(maskCanvas.elements[1].fillColor.alpha, 1)
+    test.equal(editorCanvas.elements[2].fillColor.red, 0.95)
+    test.equal(editorCanvas.elements[2].fillColor.alpha, 0.45)
     test.equal(
         canvas.windowLevels[editorCanvas.levelCalls[1]]
             > canvas.windowLevels[maskCanvas.levelCalls[1]],
@@ -236,7 +246,7 @@ test.test("start tracks mouse events across the full local background", function
     test.equal(events.move, true)
 end)
 
-test.test("draw renders three black bands, edge handles, and fixed controls", function()
+test.test("draw makes editable bands and instructions visible without tracking them", function()
     local canvas = fake.canvas()
     local calibration = Calibration.new({
         canvas = canvas,
@@ -258,19 +268,46 @@ test.test("draw renders three black bands, edge handles, and fixed controls", fu
     )
 
     local elements = canvas.canvases[1].elements
-    test.equal(#elements, 20)
+    test.equal(#elements, 22)
     for index = 2, 4 do
-        test.equal(elements[index].fillColor.white, 0)
-        test.equal(elements[index].fillColor.alpha, 1)
+        test.equal(elements[index].type, "rectangle")
+        test.equal(elements[index].action, "strokeAndFill")
+        test.equal(elements[index].fillColor.red, 0.95)
+        test.equal(elements[index].fillColor.green, 0.12)
+        test.equal(elements[index].fillColor.blue, 0.08)
+        test.equal(elements[index].fillColor.alpha, 0.45)
+        test.equal(elements[index].strokeColor.red, 1)
+        test.equal(elements[index].strokeColor.green, 0.55)
+        test.equal(elements[index].strokeColor.blue, 0.15)
+        test.equal(elements[index].strokeColor.alpha, 1)
+        test.equal(elements[index].strokeWidth, 3)
     end
     for index = 5, 16 do
         test.equal(elements[index].fillColor.white, 1)
-        test.equal(elements[index].trackMouseDown, nil)
     end
     test.rect(elements[17].frame, { x = 24, y = 736, w = 96, h = 40 })
     test.equal(elements[18].text, "Save")
     test.rect(elements[19].frame, { x = 144, y = 736, w = 96, h = 40 })
     test.equal(elements[20].text, "Cancel")
+    test.rect(elements[21].frame, { x = 24, y = 24, w = 320, h = 40 })
+    test.equal(elements[21].action, "strokeAndFill")
+    test.equal(elements[21].fillColor.white, 0)
+    test.equal(elements[21].fillColor.alpha, 0.82)
+    test.equal(elements[21].strokeColor.white, 1)
+    test.equal(elements[21].strokeColor.alpha, 1)
+    test.equal(elements[21].strokeWidth, 2)
+    test.equal(elements[22].text, "Drag red bands or white edges")
+    test.rect(elements[22].frame, elements[21].frame)
+    test.equal(elements[22].textColor.white, 1)
+    test.equal(elements[22].textColor.alpha, 1)
+    test.equal(elements[21].frame.y + elements[21].frame.h < elements[17].frame.y, true)
+
+    for index = 2, 22 do
+        test.equal(elements[index].trackMouseByBounds, nil)
+        test.equal(elements[index].trackMouseDown, nil)
+        test.equal(elements[index].trackMouseUp, nil)
+        test.equal(elements[index].trackMouseMove, nil)
+    end
 end)
 
 test.test("mouse movement updates a copied band from successive local positions", function()
