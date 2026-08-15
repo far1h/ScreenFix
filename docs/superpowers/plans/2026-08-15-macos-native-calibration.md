@@ -654,10 +654,25 @@ package invocation.
 - [ ] **Step 3: Perform physical mouse and trackpad UAT without risking user config**
 
 The UAT must use the exact ZIP produced and hashed in Step 2, not an older app in
-`/Applications` and not an app left open from an earlier build. In the same shell, bind
-the hashes and extract that artifact into a new uniquely named temporary directory:
+`/Applications` and not an app left open from an earlier build. First use the menu to
+Quit every older ScreenFix instance and verify none remains. Then, before opening the
+UAT app, move any live native config to a unique non-overwriting backup and record its
+byte hash. Keep this terminal open so the restoration variables remain available:
 
 ```bash
+! pgrep -x ScreenFix >/dev/null
+CONFIG_PATH="$HOME/Library/Application Support/ScreenFix/config.json"
+HAD_CONFIG=0
+ORIGINAL_CONFIG_SHA256=''
+CONFIG_BACKUP=''
+if test -f "$CONFIG_PATH"; then
+  HAD_CONFIG=1
+  ORIGINAL_CONFIG_SHA256="$(LC_ALL=C shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')"
+  CONFIG_BACKUP="$CONFIG_PATH.uat-backup.$(date +%Y%m%d%H%M%S)"
+  test ! -e "$CONFIG_BACKUP"
+  mv "$CONFIG_PATH" "$CONFIG_BACKUP"
+fi
+
 ZIP_PATH="$PWD/native/macos/artifacts/ScreenFix-macos-arm64.zip"
 APP_PATH="$PWD/native/macos/artifacts/ScreenFix.app"
 ZIP_SHA256="$(LC_ALL=C shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
@@ -670,10 +685,7 @@ printf 'UAT_ZIP_SHA256=%s\nUAT_EXE_SHA256=%s\nUAT_APP=%s\n' \
   "$ZIP_SHA256" "$EXE_SHA256" "$UAT_DIR/ScreenFix.app"
 ```
 
-Quit every older ScreenFix process before `open`. If
-`~/Library/Application Support/ScreenFix/config.json` exists, move it to a uniquely
-named backup without overwriting anything; restore it only after quitting the UAT app.
-Then verify on the Apple Silicon Mac:
+Only after those commands succeed, perform these checks on the Apple Silicon Mac:
 
 1. first-run Select Monitor opens the editor without persisting before Save;
 2. Save/Cancel and instruction pills match the approved positions and optical centering;
@@ -690,13 +702,32 @@ Then verify on the Apple Silicon Mac:
 12. repeated Reload/Enable/Disable/Calibrate never duplicates panels or menu items; and
 13. clicks reach ordinary apps through masks after exiting calibration.
 
-After UAT, quit the extracted app, recompute both hashes, and require them to equal the
-bound values:
+After UAT, use the menu to Quit the extracted app and verify no ScreenFix process
+remains. Move any test-created config beside the backup for inspection, restore the
+original config if one existed, and prove its bytes are identical. Never overwrite a
+path during restoration:
 
 ```bash
+! pgrep -x ScreenFix >/dev/null
+CONFIG_CREATED=''
+if test -e "$CONFIG_PATH"; then
+  CONFIG_CREATED="$CONFIG_PATH.uat-created.$(date +%Y%m%d%H%M%S)"
+  test ! -e "$CONFIG_CREATED"
+  mv "$CONFIG_PATH" "$CONFIG_CREATED"
+fi
+if test "$HAD_CONFIG" = 1; then
+  test -f "$CONFIG_BACKUP"
+  test ! -e "$CONFIG_PATH"
+  mv "$CONFIG_BACKUP" "$CONFIG_PATH"
+  test "$(LC_ALL=C shasum -a 256 "$CONFIG_PATH" | awk '{print $1}')" = "$ORIGINAL_CONFIG_SHA256"
+else
+  test ! -e "$CONFIG_PATH"
+fi
+
 test "$(LC_ALL=C shasum -a 256 "$ZIP_PATH" | awk '{print $1}')" = "$ZIP_SHA256"
 test "$(LC_ALL=C shasum -a 256 "$UAT_DIR/ScreenFix.app/Contents/MacOS/ScreenFix" | awk '{print $1}')" = "$EXE_SHA256"
-printf 'VERIFIED_ZIP_SHA256=%s\nVERIFIED_EXE_SHA256=%s\n' "$ZIP_SHA256" "$EXE_SHA256"
+printf 'VERIFIED_ZIP_SHA256=%s\nVERIFIED_EXE_SHA256=%s\nUAT_CONFIG=%s\n' \
+  "$ZIP_SHA256" "$EXE_SHA256" "$CONFIG_CREATED"
 ```
 
 Record the temporary app/config paths and restore the original config byte-for-byte.
