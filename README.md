@@ -2,7 +2,7 @@
 
 ScreenFix masks a damaged vertical display region and keeps ordinary windows in the
 usable space on either side. It includes the complete Hammerspoon version and a native
-macOS Phase 1 app; the standalone Windows package is under development.
+Apple Silicon macOS app; the standalone Windows package is under development.
 
 ![A MacBook display with a damaged vertical band](assets/screenfix-damaged-display.png)
 
@@ -51,13 +51,16 @@ region; physically black or colored pixels may remain visible.
    build.
 4. Choose the ScreenFix menu-bar icon, then choose **Select Monitor** and the damaged
    display.
-5. Use **Disable/Enable**, **Reset to Defaults**, **Reload**, or **Quit** as needed.
+5. Move the red bands from their centers or resize them from any white edge. Hold and
+   drag with a mouse, or tap, move, and tap again with a trackpad. No modifier key is
+   required.
+6. Choose **Save** to persist the working copy, or **Cancel** to discard it.
 
-Phase 1 needs neither Hammerspoon nor Accessibility permission. It applies the fixed
-three-band default spanning exactly 1215–1920 on a 3440-wide display. Calibration and
-window movement arrive in Phase 2. This local build supports macOS 13 or later on Apple
-Silicon, not Intel Macs. Warning-free public distribution requires an Apple Developer ID
-and notarization.
+The native app needs neither Hammerspoon nor Accessibility permission. It includes the
+three-band calibration editor and defaults spanning exactly 1215–1920 on a 3440-wide
+display. Automatic window movement remains available only in the Hammerspoon version.
+This local build supports macOS 13 or later on Apple Silicon, not Intel Macs. Warning-free
+public distribution requires an Apple Developer ID and notarization.
 
 ## Hammerspoon version requirements
 

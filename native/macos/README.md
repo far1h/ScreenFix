@@ -1,7 +1,7 @@
 # Native macOS ScreenFix
 
-This directory builds the Hammerspoon-free ScreenFix Phase 1 menu-bar app for macOS 13
-or later on Apple Silicon.
+This directory builds the Hammerspoon-free ScreenFix menu-bar app for macOS 13 or later
+on Apple Silicon.
 
 ## Build and test
 
@@ -24,16 +24,18 @@ The zip is ad-hoc signed. Extract it, drag `ScreenFix.app` to Applications, then
 Control-click the app and choose Open once. A Developer ID signature and Apple
 notarization are required for warning-free public distribution.
 
-## Phase 1 behavior
+## Behavior
 
 The app remembers one display by its Core Graphics UUID, persists JSON in
 `~/Library/Application Support/ScreenFix/config.json`, and draws three opaque,
 click-through black masks. The permanent defaults span exactly 1215–1920 on a
-3440-wide display. It supports Enable/Disable, Select Monitor, Reset to Defaults,
-Reload, and Quit.
+3440-wide display. **Calibrate** edits a working copy: drag a red band from its center
+or resize it from any white edge, then choose **Save** to persist it. **Cancel** or
+choosing the checked **Calibrate** item discards the working copy. A mouse can hold and
+drag; a trackpad can tap, move, and tap again. Neither input style needs a modifier key.
 
-Phase 1 does not request Accessibility permission. Calibration and automatic window
-movement are not included yet; the menu shows only controls that currently work.
+The native app does not request Accessibility permission. Automatic window movement is
+not included yet; use the Hammerspoon version when that behavior is required.
 
 ## Current Command Line Tools limitation
 
