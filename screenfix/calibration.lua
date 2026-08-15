@@ -1,13 +1,18 @@
 local M = {}
 local Calibration = {}
 Calibration.__index = Calibration
-local CONTROL_HEIGHT = 40
+local ACCENT_COLOR = { red = 1, green = 100 / 255, blue = 59 / 255, alpha = 1 }
+local CANCEL_COLOR = { red = 53 / 255, green = 58 / 255, blue = 66 / 255, alpha = 1 }
+local CONTROL_GAP = 12
+local CONTROL_HEIGHT = 42
 local CONTROL_MARGIN = 24
-local CONTROL_WIDTH = 96
+local CONTROL_WIDTH = 104
 local HANDLE_WIDTH = 8
-local INSTRUCTION_HEIGHT = 40
-local INSTRUCTION_WIDTH = 320
+local MIN_CANVAS_HEIGHT = 180
+local MIN_CANVAS_WIDTH = 260
 local MOVEMENT_THRESHOLD = 4
+local NARROW_INSTRUCTION_THRESHOLD = 378
+local SAVE_COLOR = { red = 22 / 255, green = 163 / 255, blue = 74 / 255, alpha = 1 }
 local SNAP_THRESHOLD = 12
 
 local function copyBand(band)
@@ -86,24 +91,68 @@ local function handleFrames(band)
     }
 end
 
-local function control(frame, color)
+local function controlLayout(fullFrame)
+    if fullFrame.w < MIN_CANVAS_WIDTH or fullFrame.h < MIN_CANVAS_HEIGHT then
+        return nil, "display is too small for calibration controls"
+    end
+
+    local controlY = fullFrame.h - CONTROL_MARGIN - CONTROL_HEIGHT
+    local buttonWidth = math.min(
+        CONTROL_WIDTH,
+        math.floor((fullFrame.w - (2 * CONTROL_MARGIN) - CONTROL_GAP) / 2)
+    )
+    local instruction = { x = 24, y = 24, w = 330, h = 42 }
+    local instructionDot = { x = 40, y = 41, w = 8, h = 8 }
+    local instructionText = { x = 58, y = 24, w = 280, h = 42 }
+    local instructionTextSize = 15
+
+    if fullFrame.w < NARROW_INSTRUCTION_THRESHOLD then
+        instruction.w = fullFrame.w - (2 * CONTROL_MARGIN)
+        instruction.h = 58
+        instructionDot.y = instruction.y + math.floor((instruction.h - instructionDot.h) / 2)
+        instructionText.w = instruction.w - 50
+        instructionText.h = instruction.h
+        instructionTextSize = 13
+    end
+
+    return {
+        save = {
+            x = CONTROL_MARGIN,
+            y = controlY,
+            w = buttonWidth,
+            h = CONTROL_HEIGHT,
+        },
+        cancel = {
+            x = CONTROL_MARGIN + buttonWidth + CONTROL_GAP,
+            y = controlY,
+            w = buttonWidth,
+            h = CONTROL_HEIGHT,
+        },
+        instruction = instruction,
+        instructionDot = instructionDot,
+        instructionText = instructionText,
+        instructionTextSize = instructionTextSize,
+    }
+end
+
+local function control(frame, color, radius)
     return {
         type = "rectangle",
         action = "fill",
         fillColor = color,
         frame = frame,
-        roundedRectRadii = { xRadius = 4, yRadius = 4 },
+        roundedRectRadii = { xRadius = radius, yRadius = radius },
     }
 end
 
-local function label(frame, text)
+local function label(frame, text, textSize, alignment)
     return {
         type = "text",
         frame = frame,
         text = text,
-        textAlignment = "center",
+        textAlignment = alignment,
         textColor = { white = 1, alpha = 1 },
-        textSize = 18,
+        textSize = textSize,
     }
 end
 
@@ -254,42 +303,29 @@ local function renderEditor(calibration, session)
         end
     end
 
-    local controlY = session.fullFrame.h - CONTROL_MARGIN - CONTROL_HEIGHT
-    session.saveFrame = {
-        x = CONTROL_MARGIN,
-        y = controlY,
-        w = CONTROL_WIDTH,
-        h = CONTROL_HEIGHT,
-    }
-    session.cancelFrame = {
-        x = CONTROL_MARGIN + CONTROL_WIDTH + CONTROL_MARGIN,
-        y = controlY,
-        w = CONTROL_WIDTH,
-        h = CONTROL_HEIGHT,
-    }
-    session.editorCanvas[17] = control(
-        session.saveFrame,
-        { red = 0.10, green = 0.55, blue = 0.20, alpha = 1 }
-    )
-    session.editorCanvas[18] = label(session.saveFrame, "Save")
-    session.editorCanvas[19] = control(session.cancelFrame, { white = 0.25, alpha = 1 })
-    session.editorCanvas[20] = label(session.cancelFrame, "Cancel")
-    local instructionFrame = {
-        x = CONTROL_MARGIN,
-        y = CONTROL_MARGIN,
-        w = INSTRUCTION_WIDTH,
-        h = INSTRUCTION_HEIGHT,
-    }
+    local layout = session.controlLayout
+    session.saveFrame = copyBand(layout.save)
+    session.cancelFrame = copyBand(layout.cancel)
+    session.editorCanvas[17] = control(layout.save, SAVE_COLOR, 9)
+    session.editorCanvas[18] = label(layout.save, "Save", 16, "center")
+    session.editorCanvas[19] = control(layout.cancel, CANCEL_COLOR, 9)
+    session.editorCanvas[20] = label(layout.cancel, "Cancel", 16, "center")
     session.editorCanvas[21] = {
         type = "rectangle",
         action = "strokeAndFill",
-        fillColor = { white = 0, alpha = 0.82 },
-        frame = instructionFrame,
-        roundedRectRadii = { xRadius = 4, yRadius = 4 },
-        strokeColor = { white = 1, alpha = 1 },
-        strokeWidth = 2,
+        fillColor = { white = 0, alpha = 0.88 },
+        frame = layout.instruction,
+        roundedRectRadii = { xRadius = 10, yRadius = 10 },
+        strokeColor = { white = 1, alpha = 0.28 },
+        strokeWidth = 1,
     }
-    session.editorCanvas[22] = label(instructionFrame, "Drag red bands or white edges")
+    session.editorCanvas[22] = control(layout.instructionDot, ACCENT_COLOR, 4)
+    session.editorCanvas[23] = label(
+        layout.instructionText,
+        "Drag red bands or white edges",
+        layout.instructionTextSize,
+        "left"
+    )
 
     if calibration.session == session then
         calibration.saveFrame = session.saveFrame
@@ -464,6 +500,11 @@ function Calibration:start(screen, bands, onSave, onCancel, commitGuard)
     }
     local allocated, allocationError = pcall(function()
         candidate.fullFrame = screen:fullFrame()
+        local layout, layoutError = controlLayout(candidate.fullFrame)
+        if not layout then
+            error(layoutError, 0)
+        end
+        candidate.controlLayout = layout
         candidate.editorCanvas = self.deps.canvas.new(candidate.fullFrame)
         if not candidate.editorCanvas then
             error("canvas construction failed", 0)

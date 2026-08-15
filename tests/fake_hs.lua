@@ -5,6 +5,9 @@ function M.canvas()
         canvases = {},
         constructorFrames = {},
         operationLog = {},
+        elementAssignmentCount = 0,
+        failElementAssignmentAt = nil,
+        failElementAssignmentMessage = nil,
         windowLevels = {
             assistiveTechHigh = 1500,
             screenSaver = 1000,
@@ -21,6 +24,13 @@ function M.canvas()
         end,
         __newindex = function(canvas, key, value)
             if type(key) == "number" then
+                module.elementAssignmentCount = module.elementAssignmentCount + 1
+                if module.failElementAssignmentAt == module.elementAssignmentCount then
+                    error(
+                        module.failElementAssignmentMessage or "element assignment failure",
+                        0
+                    )
+                end
                 canvas.elements[key] = value
                 canvas.elementAssignments[#canvas.elementAssignments + 1] = {
                     index = key,

@@ -257,12 +257,66 @@ test.test("start uses an absolute canvas with local band coordinates", function(
     test.rect(canvas.canvases[1].elements[21].frame, {
         x = 24,
         y = 24,
-        w = 320,
-        h = 40,
+        w = 330,
+        h = 42,
+    })
+    test.rect(canvas.canvases[1].elements[22].frame, {
+        x = 40,
+        y = 41,
+        w = 8,
+        h = 8,
+    })
+    test.rect(canvas.canvases[1].elements[23].frame, {
+        x = 58,
+        y = 24,
+        w = 280,
+        h = 42,
     })
     canvas.canvases[1]:triggerMouse("mouseDown", 1376, 360)
     test.equal(calibration.drag.index, 1)
     test.equal(calibration.drag.part, "top")
+end)
+
+test.test("narrow negative-origin controls stay inside the local canvas", function()
+    local canvas = fake.canvas()
+    local fullFrame = { x = -500, y = -200, w = 260, h = 180 }
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+
+    local started = calibration:start(
+        fake.screen("narrow", "Narrow Display", fullFrame),
+        validBands(),
+        function() end,
+        function() end
+    )
+
+    test.equal(started, true)
+    test.rect(canvas.constructorFrames[1], fullFrame)
+    local elements = canvas.canvases[1].elements
+    test.rect(elements[17].frame, { x = 24, y = 114, w = 100, h = 42 })
+    test.rect(elements[19].frame, { x = 136, y = 114, w = 100, h = 42 })
+    test.rect(elements[21].frame, { x = 24, y = 24, w = 212, h = 58 })
+    test.rect(elements[22].frame, { x = 40, y = 49, w = 8, h = 8 })
+    test.rect(elements[23].frame, { x = 58, y = 24, w = 162, h = 58 })
+    test.equal(elements[23].text, "Drag red bands or white edges")
+    test.equal(elements[23].textAlignment, "left")
+    test.equal(elements[23].textSize, 13)
+    for _, index in ipairs({ 17, 18, 19, 20, 21, 22, 23 }) do
+        local frame = elements[index].frame
+        test.equal(frame.x >= 0, true)
+        test.equal(frame.y >= 0, true)
+        test.equal(frame.x + frame.w <= fullFrame.w, true)
+        test.equal(frame.y + frame.h <= fullFrame.h, true)
+    end
 end)
 
 test.test("calibration editor stays above rebuilt masks before input and show", function()
@@ -1285,14 +1339,14 @@ test.test("draw makes editable bands and instructions visible without tracking t
     })
 
     calibration:start(
-        fake.screen("display", "Display", { x = 100, y = 50, w = 1000, h = 800 }),
+        fake.screen("display", "Display", { x = 100, y = 50, w = 3440, h = 1440 }),
         validBands(),
         function() end,
         function() end
     )
 
     local elements = canvas.canvases[1].elements
-    test.equal(#elements, 22)
+    test.equal(#elements, 23)
     for index = 2, 4 do
         test.equal(elements[index].type, "rectangle")
         test.equal(elements[index].action, "strokeAndFill")
@@ -1309,30 +1363,98 @@ test.test("draw makes editable bands and instructions visible without tracking t
     for index = 5, 16 do
         test.equal(elements[index].fillColor.white, 1)
     end
-    test.rect(elements[17].frame, { x = 24, y = 736, w = 96, h = 40 })
+    test.rect(elements[17].frame, { x = 24, y = 1374, w = 104, h = 42 })
+    test.equal(elements[17].roundedRectRadii.xRadius, 9)
+    test.equal(elements[17].roundedRectRadii.yRadius, 9)
+    test.equal(elements[17].fillColor.red, 22 / 255)
+    test.equal(elements[17].fillColor.green, 163 / 255)
+    test.equal(elements[17].fillColor.blue, 74 / 255)
+    test.equal(elements[17].fillColor.alpha, 1)
     test.equal(elements[18].text, "Save")
-    test.rect(elements[19].frame, { x = 144, y = 736, w = 96, h = 40 })
+    test.equal(elements[18].textSize, 16)
+    test.rect(elements[19].frame, { x = 140, y = 1374, w = 104, h = 42 })
+    test.equal(elements[19].roundedRectRadii.xRadius, 9)
+    test.equal(elements[19].roundedRectRadii.yRadius, 9)
+    test.equal(elements[19].fillColor.red, 53 / 255)
+    test.equal(elements[19].fillColor.green, 58 / 255)
+    test.equal(elements[19].fillColor.blue, 66 / 255)
+    test.equal(elements[19].fillColor.alpha, 1)
     test.equal(elements[20].text, "Cancel")
-    test.rect(elements[21].frame, { x = 24, y = 24, w = 320, h = 40 })
+    test.equal(elements[20].textSize, 16)
+    test.rect(elements[21].frame, { x = 24, y = 24, w = 330, h = 42 })
     test.equal(elements[21].action, "strokeAndFill")
     test.equal(elements[21].fillColor.white, 0)
-    test.equal(elements[21].fillColor.alpha, 0.82)
+    test.equal(elements[21].fillColor.alpha, 0.88)
     test.equal(elements[21].strokeColor.white, 1)
-    test.equal(elements[21].strokeColor.alpha, 1)
-    test.equal(elements[21].strokeWidth, 2)
-    test.equal(elements[22].text, "Drag red bands or white edges")
-    test.rect(elements[22].frame, elements[21].frame)
-    test.equal(elements[22].textColor.white, 1)
-    test.equal(elements[22].textColor.alpha, 1)
+    test.equal(elements[21].strokeColor.alpha, 0.28)
+    test.equal(elements[21].strokeWidth, 1)
+    test.equal(elements[21].roundedRectRadii.xRadius, 10)
+    test.equal(elements[21].roundedRectRadii.yRadius, 10)
+    test.rect(elements[22].frame, { x = 40, y = 41, w = 8, h = 8 })
+    test.equal(elements[22].fillColor.red, 1)
+    test.equal(elements[22].fillColor.green, 100 / 255)
+    test.equal(elements[22].fillColor.blue, 59 / 255)
+    test.equal(elements[22].fillColor.alpha, 1)
+    test.equal(elements[23].text, "Drag red bands or white edges")
+    test.rect(elements[23].frame, { x = 58, y = 24, w = 280, h = 42 })
+    test.equal(elements[23].textAlignment, "left")
+    test.equal(elements[23].textSize, 15)
+    test.equal(elements[23].textColor.white, 1)
+    test.equal(elements[23].textColor.alpha, 1)
     test.equal(elements[21].frame.y + elements[21].frame.h < elements[17].frame.y, true)
 
-    for index = 2, 22 do
+    for index = 2, 23 do
         test.equal(elements[index].trackMouseByBounds, nil)
         test.equal(elements[index].trackMouseDown, nil)
         test.equal(elements[index].trackMouseUp, nil)
         test.equal(elements[index].trackMouseMove, nil)
     end
 end)
+
+for _, case in ipairs({
+    {
+        name = "Save",
+        point = { x = 126, y = 1375 },
+        expectedFrame = { x = 24, y = 1374, w = 104, h = 42 },
+        renderedIndex = 17,
+        frameName = "saveFrame",
+        saveCalls = 1,
+        cancelCalls = 0,
+    },
+    {
+        name = "Cancel",
+        point = { x = 141, y = 1375 },
+        expectedFrame = { x = 140, y = 1374, w = 104, h = 42 },
+        renderedIndex = 19,
+        frameName = "cancelFrame",
+        saveCalls = 0,
+        cancelCalls = 1,
+    },
+}) do
+    test.test(case.name .. " hit testing retains a fresh copy of the rendered frame", function()
+        local saveCalls = 0
+        local cancelCalls = 0
+        local calibration, editor = startInputCalibration(
+            { x = -3440, y = -200, w = 3440, h = 1440 },
+            function()
+                saveCalls = saveCalls + 1
+            end,
+            function()
+                cancelCalls = cancelCalls + 1
+            end
+        )
+        local elements = editor.elements
+
+        test.rect(calibration[case.frameName], case.expectedFrame)
+        test.rect(elements[case.renderedIndex].frame, case.expectedFrame)
+        test.equal(calibration[case.frameName] == elements[case.renderedIndex].frame, false)
+        editor:triggerMouse("mouseDown", case.point.x, case.point.y)
+
+        test.equal(saveCalls, case.saveCalls)
+        test.equal(cancelCalls, case.cancelCalls)
+        test.equal(calibration.editorCanvas, nil)
+    end)
+end
 
 test.test("Save validates and commits the copied working bands", function()
     local canvas = fake.canvas()
@@ -1737,6 +1859,111 @@ test.test("start rejects invalid bands without construction or input mutation", 
     test.equal(invalid[1].w, 0)
 end)
 
+for _, case in ipairs({
+    { name = "width", frame = { x = -500, y = -200, w = 259, h = 180 } },
+    { name = "height", frame = { x = -500, y = -200, w = 260, h = 179 } },
+}) do
+    test.test("start rejects an undersized display by " .. case.name .. " before allocation", function()
+        local canvas = fake.canvas()
+        local eventtap = fake.eventtap()
+        local bands = validBands()
+        local original = validBands()
+        local calibration = newCalibration({
+            canvas = canvas,
+            chooser = fake.chooser(),
+            eventtap = eventtap,
+            screens = function()
+                return {}
+            end,
+            mouseButtons = function()
+                return {}
+            end,
+            geometry = geometry,
+        })
+
+        local started, startError = calibration:start(
+            fake.screen("small", "Small Display", case.frame),
+            bands,
+            function() end,
+            function() end
+        )
+
+        test.equal(started, nil)
+        test.equal(startError, "display is too small for calibration controls")
+        test.equal(#canvas.constructorFrames, 0)
+        test.equal(#canvas.canvases, 0)
+        test.equal(#eventtap.taps, 0)
+        for index, band in ipairs(original) do
+            test.rect(bands[index], band)
+        end
+    end)
+end
+
+for _, case in ipairs({
+    { name = "width", frame = { x = 1000, y = 0, w = 259, h = 180 } },
+    { name = "height", frame = { x = 1000, y = 0, w = 260, h = 179 } },
+}) do
+    test.test("undersized replacement by " .. case.name .. " preserves active input", function()
+        local canvas = fake.canvas()
+        local eventtap = fake.eventtap()
+        local calibration = newCalibration({
+            canvas = canvas,
+            chooser = fake.chooser(),
+            eventtap = eventtap,
+            screens = function()
+                return {}
+            end,
+            mouseButtons = function()
+                return {}
+            end,
+            geometry = geometry,
+        })
+        local activeScreen = fake.screen(
+            "active",
+            "Active Display",
+            { x = 0, y = 0, w = 1000, h = 800 }
+        )
+        calibration:start(activeScreen, validBands(), function() end, function() end)
+        local oldCanvas = calibration.editorCanvas
+        local oldTap = calibration.eventTap
+        local oldSession = calibration.session
+        local oldMouseCallback = oldCanvas.mouseCallbackFn
+        local oldSaveCallback = calibration.onSave
+        local oldCancelCallback = calibration.onCancel
+        local oldSaveFrame = calibration.saveFrame
+        local oldCancelFrame = calibration.cancelFrame
+        local oldBands = calibration.workingBands
+        local oldToken = calibration.sessionToken
+
+        local started, startError = calibration:start(
+            fake.screen("small", "Small Display", case.frame),
+            validBands(),
+            function() end,
+            function() end
+        )
+
+        test.equal(started, nil)
+        test.equal(startError, "display is too small for calibration controls")
+        test.equal(#canvas.constructorFrames, 1)
+        test.equal(#canvas.canvases, 1)
+        test.equal(#eventtap.taps, 1)
+        test.equal(calibration.editorCanvas, oldCanvas)
+        test.equal(calibration.eventTap, oldTap)
+        test.equal(calibration.session, oldSession)
+        test.equal(oldCanvas.mouseCallbackFn, oldMouseCallback)
+        test.equal(calibration.onSave, oldSaveCallback)
+        test.equal(calibration.onCancel, oldCancelCallback)
+        test.equal(calibration.saveFrame, oldSaveFrame)
+        test.equal(calibration.cancelFrame, oldCancelFrame)
+        test.equal(calibration.workingBands, oldBands)
+        test.equal(calibration.sessionToken, oldToken)
+        test.equal(oldCanvas.deleteCount, 0)
+        test.equal(oldTap.stopCount, 0)
+        test.equal(oldTap:isEnabled(), true)
+        assertActiveMovement(calibration, oldCanvas, oldTap, eventtap.event.types)
+    end)
+end
+
 test.test("start contains draw failures and cleans the partial editor", function()
     local canvas = fake.canvas()
     local original = validBands()
@@ -1847,6 +2074,70 @@ local function replacementFailure(method)
     oldCanvas:triggerMouse("mouseDown", 30, 750)
     test.equal(saveCalls, 1)
 end
+
+test.test("control assignment failure preserves the committed editor", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local firstScreen = fake.screen("first", "First", { x = 0, y = 0, w = 1000, h = 800 })
+    local replacementScreen = fake.screen(
+        "second",
+        "Second",
+        { x = 1000, y = 0, w = 1200, h = 1200 }
+    )
+    calibration:start(firstScreen, validBands(), function() end, function() end)
+    local oldCanvas = calibration.editorCanvas
+    local oldTap = calibration.eventTap
+    local oldSession = calibration.session
+    local oldMouseCallback = oldCanvas.mouseCallbackFn
+    local oldSaveCallback = calibration.onSave
+    local oldCancelCallback = calibration.onCancel
+    local oldSaveFrame = calibration.saveFrame
+    local oldCancelFrame = calibration.cancelFrame
+    local oldBands = calibration.workingBands
+    local oldToken = calibration.sessionToken
+    canvas.failElementAssignmentAt = canvas.elementAssignmentCount + 21
+    canvas.failElementAssignmentMessage = "instruction assignment failed"
+
+    local started, startError = calibration:start(
+        replacementScreen,
+        validBands(),
+        function() end,
+        function() end
+    )
+
+    test.equal(started, nil)
+    test.equal(startError, "instruction assignment failed")
+    test.equal(#canvas.canvases, 2)
+    test.equal(canvas.canvases[2].deleteCount, 1)
+    test.equal(canvas.canvases[2].mouseCallbackFn, nil)
+    test.equal(#eventtap.taps, 1)
+    test.equal(calibration.editorCanvas, oldCanvas)
+    test.equal(calibration.eventTap, oldTap)
+    test.equal(calibration.session, oldSession)
+    test.equal(oldCanvas.mouseCallbackFn, oldMouseCallback)
+    test.equal(calibration.onSave, oldSaveCallback)
+    test.equal(calibration.onCancel, oldCancelCallback)
+    test.equal(calibration.saveFrame, oldSaveFrame)
+    test.equal(calibration.cancelFrame, oldCancelFrame)
+    test.equal(calibration.workingBands, oldBands)
+    test.equal(calibration.sessionToken, oldToken)
+    test.equal(oldCanvas.deleteCount, 0)
+    test.equal(oldTap.stopCount, 0)
+    test.equal(oldTap:isEnabled(), true)
+    assertActiveMovement(calibration, oldCanvas, oldTap, eventtap.event.types)
+end)
 
 test.test("failed replacement show keeps the committed editor live", function()
     replacementFailure("show")
