@@ -15,6 +15,7 @@ enum Main {
                 + displayCatalogTests
                 + menuStateTests
                 + menuModelTests
+                + runtimeCalibrationTests
                 + runtimeControllerTests
         )
     }

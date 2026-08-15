@@ -101,6 +101,8 @@ public struct MenuState: Equatable {
     public let enabledActionTitle: String
     public let enabledActionEnabled: Bool
     public let enabledActionChecked: Bool
+    public let calibrateEnabled: Bool
+    public let calibrating: Bool
     public let resetEnabled: Bool
     public let selectMonitorEnabled: Bool
     public let reloadEnabled: Bool
@@ -109,6 +111,7 @@ public struct MenuState: Equatable {
     public static func make(
         configuration: ScreenFixConfiguration?,
         displayConnected: Bool,
+        calibrating: Bool = false,
         runtimeError: String?
     ) -> MenuState {
         let enabled = configuration?.enabled ?? false
@@ -125,6 +128,8 @@ public struct MenuState: Equatable {
             enabledActionTitle: enabled ? "Disable" : "Enable",
             enabledActionEnabled: configuration != nil,
             enabledActionChecked: enabled,
+            calibrateEnabled: configuration != nil && displayConnected,
+            calibrating: calibrating,
             resetEnabled: configuration != nil && displayConnected,
             selectMonitorEnabled: true,
             reloadEnabled: true,
@@ -175,6 +180,12 @@ public final class MenuModelBuilder {
             title: state.enabledActionTitle,
             isEnabled: state.enabledActionEnabled,
             isChecked: state.enabledActionChecked
+        ))
+        items.append(MenuItemModel(
+            identifier: "calibrate",
+            title: "Calibrate",
+            isEnabled: state.calibrateEnabled,
+            isChecked: state.calibrating
         ))
         let displays = displayProvider()
         let children = displays.enumerated().map { index, display in

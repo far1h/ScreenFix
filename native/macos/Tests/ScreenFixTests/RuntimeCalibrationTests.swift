@@ -1,0 +1,441 @@
+import AppKit
+import ScreenFixApp
+import ScreenFixCore
+
+private enum RuntimeCalibrationTestError: Error {
+    case requested
+}
+
+private final class CalibrationTestStore: RuntimeConfigurationStore {
+    var configuration: ScreenFixConfiguration?
+    var saveError: Error?
+    let log: NSMutableArray
+
+    init(configuration: ScreenFixConfiguration?, log: NSMutableArray) {
+        self.configuration = configuration
+        self.log = log
+    }
+
+    func load() throws -> ScreenFixConfiguration? {
+        log.add("load")
+        return configuration
+    }
+
+    func save(_ configuration: ScreenFixConfiguration) throws {
+        log.add("save")
+        if let saveError { throw saveError }
+        self.configuration = configuration
+    }
+}
+
+private final class CalibrationTestCatalog: RuntimeDisplayCatalog {
+    var screens: [ConnectedScreen]
+    let log: NSMutableArray
+
+    init(screens: [ConnectedScreen], log: NSMutableArray) {
+        self.screens = screens
+        self.log = log
+    }
+
+    func connectedDisplays() -> [ConnectedScreen] {
+        log.add("displays")
+        return screens
+    }
+}
+
+private final class CalibrationTestMasks: RuntimeMaskOwner {
+    var committedCount = 0
+    var failure: Error?
+    var lastScreenFrame: NSRect?
+    let log: NSMutableArray
+
+    init(log: NSMutableArray) {
+        self.log = log
+    }
+
+    func replace(
+        frames: [RectD],
+        screenFrame: NSRect,
+        beforeRetire: () throws -> Void
+    ) throws {
+        log.add("mask-prepare")
+        if let failure { throw failure }
+        for index in 1...3 { log.add("mask-order-\(index)") }
+        try beforeRetire()
+        if committedCount > 0 { log.add("mask-retire") }
+        committedCount = frames.count
+        lastScreenFrame = screenFrame
+    }
+
+    func removeAll() {
+        guard committedCount > 0 else { return }
+        log.add("mask-remove")
+        committedCount = 0
+        lastScreenFrame = nil
+    }
+}
+
+private final class CalibrationTestNotifications: RuntimeNotifications {
+    func subscribe(displayChanged: @escaping () -> Void, woke: @escaping () -> Void) -> [AnyObject] {
+        [NSObject(), NSObject()]
+    }
+
+    func unsubscribe(_ tokens: [AnyObject]) {}
+}
+
+private final class CalibrationTestSession {
+    let onSave: ([NormalizedRect]) throws -> Void
+    let onCancel: () throws -> Void
+
+    init(
+        onSave: @escaping ([NormalizedRect]) throws -> Void,
+        onCancel: @escaping () throws -> Void
+    ) {
+        self.onSave = onSave
+        self.onCancel = onCancel
+    }
+}
+
+private final class CalibrationTestOwner: RuntimeCalibrationOwner {
+    var failStart = false
+    var isEditing = false
+    private(set) var sessions: [CalibrationTestSession] = []
+    private(set) var latestBands: [NormalizedRect] = []
+    private(set) var latestFrame: NSRect?
+    let log: NSMutableArray
+
+    init(log: NSMutableArray) {
+        self.log = log
+    }
+
+    func start(
+        screenFrame: NSRect,
+        bands: [NormalizedRect],
+        onSave: @escaping ([NormalizedRect]) throws -> Void,
+        onCancel: @escaping () throws -> Void,
+        commitGuard: () throws -> Bool
+    ) throws {
+        log.add("editor-start")
+        if failStart { throw RuntimeCalibrationTestError.requested }
+        guard try commitGuard() else { throw RuntimeCalibrationTestError.requested }
+        latestBands = bands
+        latestFrame = screenFrame
+        sessions.append(CalibrationTestSession(onSave: onSave, onCancel: onCancel))
+        isEditing = true
+    }
+
+    func stop() {
+        guard isEditing else { return }
+        log.add("editor-stop")
+        isEditing = false
+    }
+
+    func save(_ bands: [NormalizedRect], session index: Int? = nil) throws {
+        let resolved = index ?? sessions.count - 1
+        try sessions[resolved].onSave(bands)
+        if resolved == sessions.count - 1 { isEditing = false }
+    }
+
+    func cancel(session index: Int? = nil) throws {
+        let resolved = index ?? sessions.count - 1
+        try sessions[resolved].onCancel()
+        if resolved == sessions.count - 1 { isEditing = false }
+    }
+}
+
+private struct CalibrationRuntimeFixture {
+    let log: NSMutableArray
+    let store: CalibrationTestStore
+    let catalog: CalibrationTestCatalog
+    let masks: CalibrationTestMasks
+    let editor: CalibrationTestOwner
+    let runtime: RuntimeController
+}
+
+private func calibrationScreen(
+    _ id: String,
+    name: String = "Ultrawide",
+    frame: NSRect = NSRect(x: 0, y: 0, width: 3440, height: 1440)
+) -> ConnectedScreen {
+    ConnectedScreen(
+        display: ConnectedDisplay(
+            stableId: id,
+            name: name,
+            width: frame.width,
+            height: frame.height
+        ),
+        fullFrame: frame,
+        nativeScreen: NSObject()
+    )
+}
+
+private func calibrationConfig(_ id: String, enabled: Bool = true) -> ScreenFixConfiguration {
+    DefaultConfiguration.make(
+        for: DisplayIdentity(
+            stableId: id,
+            name: "Ultrawide",
+            width: 3440,
+            height: 1440
+        ),
+        enabled: enabled
+    )
+}
+
+private func calibrationFixture(
+    configuration: ScreenFixConfiguration?,
+    screens: [ConnectedScreen]
+) -> CalibrationRuntimeFixture {
+    let log = NSMutableArray()
+    let store = CalibrationTestStore(configuration: configuration, log: log)
+    let catalog = CalibrationTestCatalog(screens: screens, log: log)
+    let masks = CalibrationTestMasks(log: log)
+    let editor = CalibrationTestOwner(log: log)
+    let runtime = RuntimeController(
+        store: store,
+        catalog: catalog,
+        maskOwner: masks,
+        calibrationOwner: editor,
+        notifications: CalibrationTestNotifications(),
+        termination: {},
+        stateDidChange: {}
+    )
+    return CalibrationRuntimeFixture(
+        log: log,
+        store: store,
+        catalog: catalog,
+        masks: masks,
+        editor: editor,
+        runtime: runtime
+    )
+}
+
+private func editedCalibrationBands() -> [NormalizedRect] {
+    [
+        NormalizedRect(x: 0.30, y: 0, w: 0.20, h: 0.30),
+        NormalizedRect(x: 0.30, y: 0.30, w: 0.20, h: 0.40),
+        NormalizedRect(x: 0.30, y: 0.70, w: 0.20, h: 0.30),
+    ]
+}
+
+private func calibrationEvents(_ value: CalibrationRuntimeFixture) -> [String] {
+    value.log.compactMap { $0 as? String }
+}
+
+let runtimeCalibrationTests = [
+    TestCase(name: "RuntimeCalibration starts from fresh live screen and keeps enabled masks") {
+        let value = calibrationFixture(
+            configuration: calibrationConfig("a"),
+            screens: [calibrationScreen("a")]
+        )
+        value.runtime.start()
+        value.log.removeAllObjects()
+        value.runtime.toggleCalibration()
+
+        try expectEqual(calibrationEvents(value), ["displays", "editor-start", "displays"])
+        try expectEqual(value.masks.committedCount, 3)
+        try expectEqual(value.editor.latestBands, calibrationConfig("a").bands)
+        try expect(value.runtime.snapshot.calibrating)
+        try expect(value.runtime.snapshot.menuState.calibrating)
+    },
+    TestCase(name: "RuntimeCalibration checked toggle cancels without changing config") {
+        let original = calibrationConfig("a")
+        let value = calibrationFixture(configuration: original, screens: [calibrationScreen("a")])
+        value.runtime.start()
+        value.runtime.toggleCalibration()
+        value.log.removeAllObjects()
+        value.runtime.toggleCalibration()
+
+        try expectEqual(value.runtime.snapshot.configuration, original)
+        try expect(!value.runtime.snapshot.calibrating)
+        try expectEqual(value.masks.committedCount, 3)
+        try expect(calibrationEvents(value).contains("editor-stop"))
+        try expect(!calibrationEvents(value).contains("save"))
+    },
+    TestCase(name: "RuntimeCalibration disabled Save preserves disabled state and removes temporary masks") {
+        let value = calibrationFixture(
+            configuration: calibrationConfig("a", enabled: false),
+            screens: [calibrationScreen("a")]
+        )
+        value.runtime.start()
+        value.log.removeAllObjects()
+        value.runtime.toggleCalibration()
+        try expectEqual(value.masks.committedCount, 3)
+        try value.editor.save(editedCalibrationBands())
+
+        try expectEqual(value.runtime.snapshot.configuration?.bands, editedCalibrationBands())
+        try expectEqual(value.runtime.snapshot.configuration?.enabled, false)
+        try expectEqual(value.masks.committedCount, 0)
+        try expect(!value.runtime.snapshot.calibrating)
+    },
+    TestCase(name: "RuntimeCalibration Save orders masks saves before retirement then closes editor") {
+        let value = calibrationFixture(configuration: calibrationConfig("a"), screens: [calibrationScreen("a")])
+        value.runtime.start()
+        value.runtime.toggleCalibration()
+        value.log.removeAllObjects()
+        try value.editor.save(editedCalibrationBands())
+
+        let events = calibrationEvents(value)
+        let save = try eventIndex("save", in: events)
+        let retire = try eventIndex("mask-retire", in: events)
+        try expect(save < retire)
+        try expectEqual(value.runtime.snapshot.configuration?.bands, editedCalibrationBands())
+        try expect(!value.runtime.snapshot.calibrating)
+        try expectEqual(value.masks.committedCount, 3)
+    },
+    TestCase(name: "RuntimeCalibration Save failure keeps editor config masks and working session") {
+        let original = calibrationConfig("a")
+        let value = calibrationFixture(configuration: original, screens: [calibrationScreen("a")])
+        value.runtime.start()
+        value.runtime.toggleCalibration()
+        value.store.saveError = RuntimeCalibrationTestError.requested
+        try expectThrows { try value.editor.save(editedCalibrationBands()) }
+
+        try expectEqual(value.runtime.snapshot.configuration, original)
+        try expect(value.runtime.snapshot.calibrating)
+        try expect(value.editor.isEditing)
+        try expectEqual(value.masks.committedCount, 3)
+        try expect(value.runtime.snapshot.menuState.status?.contains("config error") == true)
+    },
+    TestCase(name: "RuntimeCalibration candidate mask failure keeps editor and prior transaction") {
+        let original = calibrationConfig("a")
+        let value = calibrationFixture(configuration: original, screens: [calibrationScreen("a")])
+        value.runtime.start()
+        value.runtime.toggleCalibration()
+        value.masks.failure = RuntimeCalibrationTestError.requested
+        try expectThrows { try value.editor.save(editedCalibrationBands()) }
+
+        try expectEqual(value.runtime.snapshot.configuration, original)
+        try expect(value.runtime.snapshot.calibrating)
+        try expect(value.editor.isEditing)
+        try expectEqual(value.masks.committedCount, 3)
+        try expect(value.runtime.snapshot.menuState.status?.contains("mask error") == true)
+    },
+    TestCase(name: "RuntimeCalibration Cancel discards working changes without saving") {
+        let original = calibrationConfig("a")
+        let value = calibrationFixture(configuration: original, screens: [calibrationScreen("a")])
+        value.runtime.start()
+        value.runtime.toggleCalibration()
+        value.log.removeAllObjects()
+        try value.editor.cancel()
+
+        try expectEqual(value.runtime.snapshot.configuration, original)
+        try expect(!calibrationEvents(value).contains("save"))
+        try expect(!value.runtime.snapshot.calibrating)
+        try expectEqual(value.masks.committedCount, 3)
+    },
+    TestCase(name: "RuntimeCalibration stale callbacks are inert after cancel reload and replacement") {
+        let value = calibrationFixture(
+            configuration: calibrationConfig("a"),
+            screens: [calibrationScreen("a"), calibrationScreen("b", name: "Second")]
+        )
+        value.runtime.start()
+        value.runtime.toggleCalibration()
+        value.runtime.toggleCalibration()
+        let afterCancel = value.runtime.snapshot
+        try value.editor.sessions[0].onSave(editedCalibrationBands())
+        try value.editor.sessions[0].onCancel()
+        try expectEqual(value.runtime.snapshot.configuration, afterCancel.configuration)
+
+        value.runtime.toggleCalibration()
+        value.runtime.reload()
+        let afterReload = value.runtime.snapshot
+        try value.editor.sessions[1].onSave(editedCalibrationBands())
+        try expectEqual(value.runtime.snapshot.configuration, afterReload.configuration)
+
+        value.runtime.selectDisplay(stableId: "b")
+        let afterReplacement = value.runtime.snapshot
+        try value.editor.sessions[1].onCancel()
+        try expectEqual(value.runtime.snapshot.configuration, afterReplacement.configuration)
+    },
+    TestCase(name: "RuntimeCalibration vanished monitor row preserves the active editor transaction") {
+        let original = calibrationConfig("a")
+        let value = calibrationFixture(configuration: original, screens: [calibrationScreen("a")])
+        value.runtime.start()
+        value.runtime.toggleCalibration()
+        let before = value.runtime.snapshot
+
+        value.runtime.selectDisplay(stableId: "vanished-row")
+
+        try expectEqual(value.runtime.snapshot.configuration, before.configuration)
+        try expect(value.runtime.snapshot.calibrating)
+        try expect(value.editor.isEditing)
+        try expectEqual(value.masks.committedCount, 3)
+    },
+    TestCase(name: "RuntimeCalibration editor startup failure preserves ordinary runtime") {
+        let original = calibrationConfig("a")
+        let value = calibrationFixture(configuration: original, screens: [calibrationScreen("a")])
+        value.runtime.start()
+        value.editor.failStart = true
+        value.runtime.toggleCalibration()
+
+        try expectEqual(value.runtime.snapshot.configuration, original)
+        try expectEqual(value.masks.committedCount, 3)
+        try expect(!value.runtime.snapshot.calibrating)
+        try expect(value.runtime.snapshot.menuState.status?.contains("calibration error") == true)
+    },
+    TestCase(name: "RuntimeCalibration first monitor selection is provisional until Save") {
+        let value = calibrationFixture(configuration: nil, screens: [calibrationScreen("b")])
+        value.runtime.start()
+        value.log.removeAllObjects()
+        value.runtime.selectDisplay(stableId: "b")
+
+        try expectEqual(value.runtime.snapshot.configuration, nil)
+        try expect(value.runtime.snapshot.calibrating)
+        try expectEqual(value.masks.committedCount, 3)
+        try expect(!calibrationEvents(value).contains("save"))
+        try value.editor.cancel()
+        try expectEqual(value.runtime.snapshot.configuration, nil)
+        try expectEqual(value.masks.committedCount, 0)
+    },
+    TestCase(name: "RuntimeCalibration replacement monitor Cancel restores prior config and masks") {
+        let original = calibrationConfig("a")
+        let value = calibrationFixture(
+            configuration: original,
+            screens: [calibrationScreen("a"), calibrationScreen("b", name: "Second")]
+        )
+        value.runtime.start()
+        value.runtime.selectDisplay(stableId: "b")
+        try expectEqual(value.runtime.snapshot.configuration, original)
+        try value.editor.cancel()
+
+        try expectEqual(value.runtime.snapshot.configuration, original)
+        try expectEqual(value.masks.committedCount, 3)
+        try expectEqual(value.masks.lastScreenFrame, calibrationScreen("a").fullFrame)
+    },
+    TestCase(name: "RuntimeCalibration provisional Save persists only chosen display and edits") {
+        let original = calibrationConfig("a")
+        let secondFrame = NSRect(x: -2560, y: -400, width: 2560, height: 1440)
+        let value = calibrationFixture(
+            configuration: original,
+            screens: [calibrationScreen("a"), calibrationScreen("b", name: "Second", frame: secondFrame)]
+        )
+        value.runtime.start()
+        value.runtime.selectDisplay(stableId: "b")
+        try value.editor.save(editedCalibrationBands())
+
+        try expectEqual(value.runtime.snapshot.configuration?.display.stableId, "b")
+        try expectEqual(value.runtime.snapshot.configuration?.bands, editedCalibrationBands())
+        try expectEqual(value.masks.lastScreenFrame, secondFrame)
+    },
+    TestCase(name: "RuntimeCalibration provisional editor failure restores prior or empty masks") {
+        for original in [calibrationConfig("a") as ScreenFixConfiguration?, nil] {
+            let screens = original == nil
+                ? [calibrationScreen("b")]
+                : [calibrationScreen("a"), calibrationScreen("b", name: "Second")]
+            let value = calibrationFixture(configuration: original, screens: screens)
+            value.runtime.start()
+            value.editor.failStart = true
+            value.runtime.selectDisplay(stableId: "b")
+
+            try expectEqual(value.runtime.snapshot.configuration, original)
+            try expectEqual(value.masks.committedCount, original == nil ? 0 : 3)
+        }
+    },
+]
+
+private func eventIndex(_ value: String, in events: [String]) throws -> Int {
+    guard let index = events.firstIndex(of: value) else {
+        throw TestFailure(description: "missing event \(value)")
+    }
+    return index
+}

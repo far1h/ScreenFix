@@ -96,6 +96,33 @@ private final class FakeRuntimeMasks: RuntimeMaskOwner {
     }
 }
 
+private final class FakeRuntimeCalibration: RuntimeCalibrationOwner {
+    let log: NSMutableArray
+    var isEditing = false
+
+    init(log: NSMutableArray) {
+        self.log = log
+    }
+
+    func start(
+        screenFrame: NSRect,
+        bands: [NormalizedRect],
+        onSave: @escaping ([NormalizedRect]) throws -> Void,
+        onCancel: @escaping () throws -> Void,
+        commitGuard: () throws -> Bool
+    ) throws {
+        log.add("calibration-start")
+        guard try commitGuard() else { throw FakeRuntimeError.requested }
+        isEditing = true
+    }
+
+    func stop() {
+        guard isEditing else { return }
+        log.add("calibration-stop")
+        isEditing = false
+    }
+}
+
 private final class FakeRuntimeNotifications: RuntimeNotifications {
     let log: NSMutableArray
     var displayChanged: (() -> Void)?
@@ -122,6 +149,7 @@ private struct RuntimeFixture {
     let store: FakeRuntimeStore
     let catalog: FakeRuntimeCatalog
     let masks: FakeRuntimeMasks
+    let calibration: FakeRuntimeCalibration
     let notifications: FakeRuntimeNotifications
     let runtime: RuntimeController
 }
@@ -165,11 +193,13 @@ private func fixture(
     let store = FakeRuntimeStore(configuration: configuration, log: log)
     let catalog = FakeRuntimeCatalog(screens: screens, log: log)
     let masks = FakeRuntimeMasks(log: log)
+    let calibration = FakeRuntimeCalibration(log: log)
     let notifications = FakeRuntimeNotifications(log: log)
     let runtime = RuntimeController(
         store: store,
         catalog: catalog,
         maskOwner: masks,
+        calibrationOwner: calibration,
         notifications: notifications,
         termination: termination,
         stateDidChange: {}
@@ -179,6 +209,7 @@ private func fixture(
         store: store,
         catalog: catalog,
         masks: masks,
+        calibration: calibration,
         notifications: notifications,
         runtime: runtime
     )
@@ -206,20 +237,19 @@ let runtimeControllerTests = [
         try expectEqual(value.masks.committedCount, 0)
         try expect(value.runtime.snapshot.menuState.status?.hasPrefix("Paused: config error:") == true)
     },
-    TestCase(name: "RuntimeController selection saves before retiring old masks") {
+    TestCase(name: "RuntimeController selection opens provisional calibration before saving") {
         let value = fixture(configuration: runtimeConfig("a"), screens: [runtimeDisplay("a"), runtimeDisplay("b", name: "Second")])
         value.runtime.start()
         value.log.removeAllObjects()
         value.runtime.selectDisplay(stableId: "b")
 
-        try expectEqual(Array(runtimeEvents(value).suffix(11)), [
-            "prepare", "order-1", "verify-1", "order-2", "verify-2", "order-3", "verify-3",
-            "save", "close-old-1", "close-old-2", "close-old-3",
-        ])
-        try expectEqual(value.runtime.snapshot.configuration?.display.stableId, "b")
-        try expectEqual(value.runtime.snapshot.configuration?.bands, runtimeConfig("b").bands)
+        try expect(runtimeEvents(value).contains("prepare"))
+        try expect(runtimeEvents(value).contains("calibration-start"))
+        try expect(!runtimeEvents(value).contains("save"))
+        try expectEqual(value.runtime.snapshot.configuration?.display.stableId, "a")
+        try expect(value.runtime.snapshot.calibrating)
     },
-    TestCase(name: "RuntimeController selection save failure preserves old state and masks") {
+    TestCase(name: "RuntimeController provisional selection does not touch a failing store") {
         let value = fixture(configuration: runtimeConfig("a"), screens: [runtimeDisplay("a"), runtimeDisplay("b")])
         value.runtime.start()
         value.store.saveError = FakeRuntimeError.requested
@@ -228,10 +258,8 @@ let runtimeControllerTests = [
 
         try expectEqual(value.runtime.snapshot.configuration?.display.stableId, "a")
         try expectEqual(value.masks.committedCount, 3)
-        try expectEqual(Array(runtimeEvents(value).suffix(4)), [
-            "save", "close-candidate-1", "close-candidate-2", "close-candidate-3",
-        ])
-        try expect(value.runtime.snapshot.menuState.status?.hasPrefix("Paused: config error:") == true)
+        try expect(!runtimeEvents(value).contains("save"))
+        try expect(value.runtime.snapshot.calibrating)
     },
     TestCase(name: "RuntimeController stale monitor choice preserves the live transaction") {
         let value = fixture(configuration: runtimeConfig("a"), screens: [runtimeDisplay("a")])

@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             store: ConfigStore(fileURL: fileURL),
             catalog: catalog,
             maskOwner: MaskPanelController(),
+            calibrationOwner: CalibrationPanelController(),
             notifications: SystemRuntimeNotifications(),
             termination: { NSApplication.shared.terminate(nil) },
             stateDidChange: { [weak self] in self?.menuBar?.refresh() }
