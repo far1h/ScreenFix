@@ -268,9 +268,9 @@ test.test("start uses an absolute canvas with local band coordinates", function(
     })
     test.rect(canvas.canvases[1].elements[23].frame, {
         x = 58,
-        y = 24,
+        y = 36,
         w = 280,
-        h = 42,
+        h = 30,
     })
     canvas.canvases[1]:triggerMouse("mouseDown", 1376, 360)
     test.equal(calibration.drag.index, 1)
@@ -323,7 +323,8 @@ test.test("narrow negative-origin controls stay inside the local canvas", functi
     test.equal(elements[22].fillColor.alpha, 1)
     test.equal(elements[22].roundedRectRadii.xRadius, 4)
     test.equal(elements[22].roundedRectRadii.yRadius, 4)
-    test.rect(elements[23].frame, { x = 58, y = 24, w = 162, h = 58 })
+    test.rect(elements[23].frame, { x = 58, y = 45, w = 162, h = 37 })
+    test.equal(elements[23].frame == calibration.session.controlLayout.instructionText, false)
     test.equal(elements[23].text, "Drag red bands or white edges")
     test.equal(elements[23].textAlignment, "left")
     test.equal(elements[23].textSize, 13)
@@ -1417,7 +1418,8 @@ test.test("draw makes editable bands and instructions visible without tracking t
     test.equal(elements[22].fillColor.blue, 59 / 255)
     test.equal(elements[22].fillColor.alpha, 1)
     test.equal(elements[23].text, "Drag red bands or white edges")
-    test.rect(elements[23].frame, { x = 58, y = 24, w = 280, h = 42 })
+    test.rect(elements[23].frame, { x = 58, y = 36, w = 280, h = 30 })
+    test.equal(elements[23].frame == calibration.session.controlLayout.instructionText, false)
     test.equal(elements[23].textAlignment, "left")
     test.equal(elements[23].textSize, 15)
     test.equal(elements[23].textColor.white, 1)

@@ -5,8 +5,6 @@ local ACCENT_COLOR = { red = 1, green = 100 / 255, blue = 59 / 255, alpha = 1 }
 local CANCEL_COLOR = { red = 53 / 255, green = 58 / 255, blue = 66 / 255, alpha = 1 }
 local CONTROL_GAP = 12
 local CONTROL_HEIGHT = 42
-local CONTROL_LABEL_HEIGHT = 30
-local CONTROL_LABEL_TOP_OFFSET = 12
 local CONTROL_MARGIN = 24
 local CONTROL_WIDTH = 104
 local HANDLE_WIDTH = 8
@@ -147,12 +145,15 @@ local function control(frame, color, radius)
     }
 end
 
-local function controlLabelFrame(frame)
+local function centeredTextFrame(frame, textSize)
+    local lineHeight = textSize + 3
+    local topInset = math.ceil((frame.h - lineHeight) / 2)
+
     return {
         x = frame.x,
-        y = frame.y + CONTROL_LABEL_TOP_OFFSET,
+        y = frame.y + topInset,
         w = frame.w,
-        h = CONTROL_LABEL_HEIGHT,
+        h = frame.h - topInset,
     }
 end
 
@@ -319,14 +320,14 @@ local function renderEditor(calibration, session)
     session.cancelFrame = copyBand(layout.cancel)
     session.editorCanvas[17] = control(layout.save, SAVE_COLOR, 9)
     session.editorCanvas[18] = label(
-        controlLabelFrame(layout.save),
+        centeredTextFrame(layout.save, 16),
         "Save",
         16,
         "center"
     )
     session.editorCanvas[19] = control(layout.cancel, CANCEL_COLOR, 9)
     session.editorCanvas[20] = label(
-        controlLabelFrame(layout.cancel),
+        centeredTextFrame(layout.cancel, 16),
         "Cancel",
         16,
         "center"
@@ -342,7 +343,7 @@ local function renderEditor(calibration, session)
     }
     session.editorCanvas[22] = control(layout.instructionDot, ACCENT_COLOR, 4)
     session.editorCanvas[23] = label(
-        layout.instructionText,
+        centeredTextFrame(layout.instructionText, layout.instructionTextSize),
         "Drag red bands or white edges",
         layout.instructionTextSize,
         "left"
