@@ -1,5 +1,13 @@
 # Calibration Polish Design
 
+## Menu-bar icon
+
+The SF text is replaced by a transparent 36-by-36 monochrome split-ultrawide
+monitor glyph at `assets/screenfix-menubar.png`. Hammerspoon loads it as a template
+icon so macOS supplies the correct light/dark appearance. `init.lua` injects the
+asset path into the controller. If icon loading throws or returns nil, menu creation
+falls back to the `SF` title; the menu remains usable either way.
+
 ## Dropdown reset
 
 The SF menu adds `Reset to Defaults` between `Select Monitor` and `Reload`. It is
@@ -46,7 +54,8 @@ on drop, Cancel, Save, replacement, and stop.
 
 ## Verification
 
-Tests cover menu placement/state/action/error boundaries; reset during calibration;
+Tests cover icon path assembly, template loading, text fallback, menu
+placement/state/action/error boundaries; reset during calibration;
 disabled-state preservation; stale callbacks; all body/edge snap directions;
 screen and peer edges; exact 12-point boundary; outside-threshold behavior; ties;
 20-point minimum; and both held and latched integration. Live acceptance checks a
