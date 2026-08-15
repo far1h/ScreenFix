@@ -20,6 +20,7 @@ public static class DisplayMatcher
         }
 
         var fallbackMatches = connected.Where(display =>
+            display.SupportsNameFallback &&
             StringComparer.Ordinal.Equals(display.Name, saved.Name) &&
             display.Width == saved.Width &&
             display.Height == saved.Height).ToArray();

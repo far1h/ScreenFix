@@ -8,4 +8,5 @@ public sealed record ConnectedDisplay(
     int Width,
     int Height,
     RectD FullBounds,
-    RectD WorkArea);
+    RectD WorkArea,
+    bool SupportsNameFallback = true);
