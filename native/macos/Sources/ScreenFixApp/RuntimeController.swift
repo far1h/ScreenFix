@@ -422,7 +422,6 @@ public final class RuntimeController {
                     lifecycleGeneration: session.lifecycleGeneration
                 ) {
                     calibrationSession = nil
-                    restoreBaseRuntime(base)
                     runtimeError = "Paused: mask error: \(error)"
                 }
                 return
@@ -628,7 +627,15 @@ public final class RuntimeController {
             return
         }
         if base.enabled {
-            replace(with: base, on: screen, persist: false)
+            do {
+                try replaceMasks(for: base, on: screen)
+                displayConnected = true
+                runtimeError = nil
+            } catch {
+                maskOwner.removeAll()
+                displayConnected = true
+                runtimeError = "Paused: mask error: \(error)"
+            }
         } else {
             maskOwner.removeAll()
             displayConnected = true

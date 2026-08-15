@@ -6,6 +6,11 @@ private enum RuntimeCalibrationTestError: Error {
     case requested
 }
 
+private enum CalibrationTestMaskFailurePoint {
+    case prepare
+    case order
+}
+
 private final class CalibrationTestStore: RuntimeConfigurationStore {
     var configuration: ScreenFixConfiguration?
     var saveError: Error?
@@ -48,7 +53,10 @@ private final class CalibrationTestCatalog: RuntimeDisplayCatalog {
 private final class CalibrationTestMasks: RuntimeMaskOwner {
     var committedCount = 0
     var failure: Error?
+    var failureOnReplaceCall: Int?
+    var failurePoint = CalibrationTestMaskFailurePoint.prepare
     var lastScreenFrame: NSRect?
+    private(set) var replaceCount = 0
     let log: NSMutableArray
 
     init(log: NSMutableArray) {
@@ -60,9 +68,17 @@ private final class CalibrationTestMasks: RuntimeMaskOwner {
         screenFrame: NSRect,
         beforeRetire: () throws -> Void
     ) throws {
+        replaceCount += 1
         log.add("mask-prepare")
         if let failure { throw failure }
+        let scheduledFailure = failureOnReplaceCall == replaceCount
+        if scheduledFailure, failurePoint == .prepare {
+            throw RuntimeCalibrationTestError.requested
+        }
         for index in 1...3 { log.add("mask-order-\(index)") }
+        if scheduledFailure, failurePoint == .order {
+            throw RuntimeCalibrationTestError.requested
+        }
         try beforeRetire()
         if committedCount > 0 { log.add("mask-retire") }
         committedCount = frames.count
@@ -450,6 +466,46 @@ let runtimeCalibrationTests = [
 
             try expectEqual(value.runtime.snapshot.configuration, original)
             try expectEqual(value.masks.committedCount, original == nil ? 0 : 3)
+        }
+    },
+    TestCase(name: "RuntimeCalibration provisional editor failure removes masks when rollback fails") {
+        for failurePoint in [CalibrationTestMaskFailurePoint.prepare, .order] {
+            let original = calibrationConfig("a")
+            let second = calibrationScreen("b", name: "Second")
+            let value = calibrationFixture(
+                configuration: original,
+                screens: [calibrationScreen("a"), second]
+            )
+            value.runtime.start()
+            value.editor.failStart = true
+            value.masks.failureOnReplaceCall = 3
+            value.masks.failurePoint = failurePoint
+
+            value.runtime.selectDisplay(stableId: "b")
+
+            try expectEqual(value.runtime.snapshot.configuration, original)
+            try expectEqual(value.masks.committedCount, 0)
+            try expectEqual(value.masks.lastScreenFrame, nil)
+        }
+    },
+    TestCase(name: "RuntimeCalibration provisional Cancel removes masks when rollback fails") {
+        for failurePoint in [CalibrationTestMaskFailurePoint.prepare, .order] {
+            let original = calibrationConfig("a")
+            let second = calibrationScreen("b", name: "Second")
+            let value = calibrationFixture(
+                configuration: original,
+                screens: [calibrationScreen("a"), second]
+            )
+            value.runtime.start()
+            value.runtime.selectDisplay(stableId: "b")
+            value.masks.failureOnReplaceCall = 3
+            value.masks.failurePoint = failurePoint
+
+            try value.editor.cancel()
+
+            try expectEqual(value.runtime.snapshot.configuration, original)
+            try expectEqual(value.masks.committedCount, 0)
+            try expectEqual(value.masks.lastScreenFrame, nil)
         }
     },
     TestCase(name: "RuntimeCalibration identical replacement screen keeps the active editor") {
