@@ -27,6 +27,7 @@ types, callback return values, and injected failures. Expose this exact test con
 ```lua
 local tap = eventtap.new(eventTypes, function(event) ... end)
 tap:start()
+tap:isEnabled()
 tap:stop()
 event:getType()
 event:location()
@@ -50,8 +51,10 @@ Expected: calibration start fails because no event-tap dependency is used and ca
 
 - [ ] **Step 4: Add minimal production construction and assembly**
 
-Create/start the three-event tap during calibration and wire `eventtap = hs.eventtap`
-from `init.lua`. Its callback may initially return `false` without moving anything.
+Create/start the three-event tap during calibration, require `isEnabled()` after
+start, and wire `eventtap = hs.eventtap` from `init.lua`. Hammerspoon can report a
+failed event-tap start without throwing, so disabled-after-start is a transactional
+startup failure. Its callback may initially return `false` without moving anything.
 Disable canvas move/up ownership. Use `event:getType()`, never `event:type()`.
 
 - [ ] **Step 5: Verify construction GREEN**
@@ -150,7 +153,8 @@ Expected: mouse movement, four edge resizes, tap-move-tap, threshold, and all or
 
 - [ ] **Step 1: Write RED replacement/session tests**
 
-Cover candidate constructor/start/configuration failure, successful replacement,
+Cover candidate constructor/start/disabled-after-start/configuration failure,
+successful replacement,
 and stale old callbacks. Candidate failure must preserve a functioning prior editor:
 exercise both its canvas-down and event-tap movement callbacks after rollback.
 Success must stop only the prior tap and stale callbacks must not mutate the new
@@ -207,7 +211,9 @@ Pass `eventtap = hs.eventtap` from `init.lua`. Use `hs.eventtap.event.types.mous
 
 - [ ] **Step 9: Update concise usage text**
 
-README must say: red center moves; white edges resize; mouse uses hold-drag-release; trackpad can use tap-move-tap; no Shift is required.
+README must say: red center moves; white edges resize; mouse uses hold-drag-release;
+trackpad can use tap-move-tap; no Shift is required; and Accessibility permission
+is required for calibration movement as well as window correction.
 
 - [ ] **Step 10: Run automated verification**
 

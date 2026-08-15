@@ -45,9 +45,12 @@ A drag records whether it has moved and whether it is latched:
 
 Each editor and event tap captures a monotonically increasing session token and
 ignores callbacks after that token is invalidated. Candidate startup is
-transactional: failure stops and deletes only the candidate and restores the old
-editor with its event tap still enabled; success retires the old event tap and
-canvas after committing the replacement.
+transactional: after `start()`, calibration verifies `isEnabled()` because
+Hammerspoon reports some event-tap startup failures without throwing. Failure
+stops and deletes only the candidate and restores the old editor with its event
+tap still enabled; success retires the old event tap and canvas after committing
+the replacement. Calibration input therefore requires the same macOS
+Accessibility permission as window correction.
 
 Teardown invalidates the session first, stops and clears its event tap, clears drag
 and editor state, and then deletes the canvas. It is idempotent and contains stop
