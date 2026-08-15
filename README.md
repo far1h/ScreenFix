@@ -1,12 +1,22 @@
 # ScreenFix
 
-ScreenFix is a local Hammerspoon configuration for a display with a damaged vertical
-region. It places three calibrated black masks over that region and moves or resizes
-ordinary windows into the usable space on either side.
+ScreenFix masks a damaged vertical display region and keeps ordinary windows in the
+usable space on either side. The current implementation runs through Hammerspoon;
+standalone Windows and macOS packages are under development.
 
 ![A MacBook display with a damaged vertical band](D75077A6-60A3-41E7-998E-AA33DABA7046.PNG)
 
 *The very practical reason ScreenFix exists.*
+
+## Result
+
+Calibrating the three masks:
+
+![ScreenFix calibration on the damaged ultrawide display](assets/results/screenfix-result-1.jpg)
+
+Saved click-through masks:
+
+![ScreenFix masking the damaged region after saving](assets/results/screenfix-result-2.jpg)
 
 Software cannot repair physical screen damage or control dead, leaking, or stuck pixels.
 The masks turn responsive pixels black and keep useful content away from the damaged
@@ -17,6 +27,7 @@ region; physically black or colored pixels may remain visible.
 ```text
 .
 ├── init.lua                         Loads the modules and owns one ScreenFix runtime.
+├── assets/results/                  Shows calibration and the saved result.
 ├── screenfix/
 │   ├── calibration.lua             Provides monitor selection and the three-band editor.
 │   ├── controller.lua              Coordinates lifecycle, menu actions, and runtime state.
@@ -31,7 +42,24 @@ region; physically black or colored pixels may remain visible.
     └── *_test.lua                  Tests each production module and the entry point.
 ```
 
-## Requirements
+## Install the native macOS app
+
+> The standalone Apple Silicon app is not built yet. These steps apply when a release
+> includes `ScreenFix-macos-arm64.zip`.
+
+1. Download and open `ScreenFix-macos-arm64.zip`.
+2. Drag **ScreenFix.app** into **Applications**.
+3. Open ScreenFix. For an unsigned test build, Control-click the app, choose **Open**,
+   then confirm once. A signed and notarized release opens normally.
+4. When prompted, allow ScreenFix in **System Settings > Privacy & Security >
+   Accessibility**. This permission is needed to move or resize other apps' windows;
+   the black masks work without it.
+5. Choose the ScreenFix menu-bar icon, select the damaged monitor, calibrate the three
+   bands, and choose **Save**.
+
+The native app does not require Hammerspoon or a source checkout.
+
+## Hammerspoon version requirements
 
 - macOS 13 Ventura or later.
 - The [current stable Hammerspoon release](https://www.hammerspoon.org/).
@@ -42,7 +70,7 @@ The black mask and monitor selection work without Accessibility permission. Cali
 movement and window protection remain unavailable until permission is granted. macOS may
 require Hammerspoon to be relaunched afterward.
 
-## Install
+## Install the Hammerspoon version
 
 From the ScreenFix project directory, inspect the destination first:
 
