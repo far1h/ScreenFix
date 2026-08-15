@@ -4,6 +4,7 @@ enum Main {
         runTests(
             defaultConfigurationTests
                 + calibrationGeometryTests
+                + calibrationInteractionTests
                 + maskGeometryTests
                 + configValidatorTests
                 + displaySelectorTests
