@@ -244,8 +244,15 @@ public sealed class RuntimeController : ISystemMessageTarget
     public void ResetDefaults()
     {
         VerifyActive();
-        if (stopped || configuration is null || connectedDisplay is null)
+        if (stopped || configuration is null)
         {
+            return;
+        }
+
+        connectedDisplay = DisplayMatcher.Find(configuration.Display, topology.Enumerate());
+        if (connectedDisplay is null)
+        {
+            Reconcile();
             return;
         }
 

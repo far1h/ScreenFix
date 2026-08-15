@@ -251,6 +251,21 @@ public sealed class RuntimeControllerTests
     }
 
     [Fact]
+    public void ResetDefaults_RereadsLiveDisconnectBeforePersisting()
+    {
+        var config = DefaultConfig();
+        var original = Connected(config.Display);
+        var harness = new Harness(new ConfigLoadResult(config, false, null), [original]);
+        harness.Controller.Start();
+        harness.Topology.Displays = [];
+
+        harness.Controller.ResetDefaults();
+
+        Assert.Equal(0, harness.Config.SaveCount);
+        Assert.Null(harness.Controller.State.ConnectedDisplay);
+    }
+
+    [Fact]
     public void Reload_InvalidCandidateKeepsCommittedConfigurationAndMasks()
     {
         var config = DefaultConfig();
