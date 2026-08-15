@@ -5,6 +5,8 @@ enum Main {
             defaultConfigurationTests
                 + calibrationGeometryTests
                 + calibrationInteractionTests
+                + calibrationLayoutTests
+                + calibrationPanelTests
                 + maskGeometryTests
                 + configValidatorTests
                 + displaySelectorTests

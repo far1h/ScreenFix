@@ -1,28 +1,3 @@
-public struct CalibrationControlLayout: Equatable {
-    public let save: RectD
-    public let cancel: RectD
-    public let instruction: RectD
-    public let instructionDot: RectD
-    public let instructionText: RectD
-    public let instructionTextSize: Double
-
-    public init(
-        save: RectD,
-        cancel: RectD,
-        instruction: RectD,
-        instructionDot: RectD,
-        instructionText: RectD,
-        instructionTextSize: Double
-    ) {
-        self.save = save
-        self.cancel = cancel
-        self.instruction = instruction
-        self.instructionDot = instructionDot
-        self.instructionText = instructionText
-        self.instructionTextSize = instructionTextSize
-    }
-}
-
 public enum CalibrationPointerEvent: Equatable {
     case primaryDown(PointD)
     case primaryDragged(PointD)
