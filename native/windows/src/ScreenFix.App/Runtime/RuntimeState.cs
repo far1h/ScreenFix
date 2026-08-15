@@ -8,6 +8,7 @@ public sealed record RuntimeState(
     ConnectedDisplay? ConnectedDisplay,
     bool InvalidConfiguration,
     bool MaskRenderingFailed,
+    bool WindowCorrectionUnavailable,
     bool IsEditing,
     bool IsStopped,
     long Generation);

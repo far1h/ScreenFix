@@ -5,13 +5,12 @@ namespace ScreenFix.Core.Tests;
 public sealed class MenuStateTests
 {
     [Fact]
-    public void Build_EnabledConnectedStateHasExactOrderAndIntermediateStatus()
+    public void Build_EnabledConnectedAvailableStateHasExactOrderWithoutStatus()
     {
         var rows = MenuState.Build(State());
 
         Assert.Equal(
             [
-                "Paused: Window correction is not available in this build",
                 "Disable",
                 "Calibrate",
                 "Select Monitor",
@@ -23,6 +22,43 @@ public sealed class MenuStateTests
             Labels(rows));
         Assert.True(Row(rows, MenuCommand.ToggleEnabled).IsChecked);
         Assert.All(ActionRows(rows), row => Assert.True(row.IsEnabled));
+    }
+
+    [Fact]
+    public void Build_WindowCorrectionFailureUsesFinalPausedStatus()
+    {
+        var rows = MenuState.Build(State() with
+        {
+            WindowCorrectionUnavailable = true,
+        });
+
+        Assert.Equal(
+            "Paused: Window correction unavailable",
+            Assert.Single(PausedRows(rows)).Label);
+    }
+
+    [Theory]
+    [InlineData(true, false, true, true, "Paused: Invalid configuration")]
+    [InlineData(false, true, true, true, "Paused: Mask rendering failed")]
+    [InlineData(false, false, false, true, "Paused: Select a monitor")]
+    [InlineData(false, false, false, false, "Paused: Select a monitor")]
+    public void Build_HigherPriorityFailureHidesWindowCorrectionFailure(
+        bool invalid,
+        bool maskFailed,
+        bool hasSaved,
+        bool connected,
+        string expected)
+    {
+        var rows = MenuState.Build(State() with
+        {
+            InvalidConfiguration = invalid,
+            MaskRenderingFailed = maskFailed,
+            HasSavedDisplay = hasSaved,
+            DisplayConnected = connected,
+            WindowCorrectionUnavailable = true,
+        });
+
+        Assert.Equal(expected, Assert.Single(PausedRows(rows)).Label);
     }
 
     [Theory]
@@ -117,7 +153,7 @@ public sealed class MenuStateTests
     [Fact]
     public void Build_EmitsAtMostOnePausedRowForEveryBooleanCombination()
     {
-        for (var bits = 0; bits < 64; bits++)
+        for (var bits = 0; bits < 128; bits++)
         {
             var rows = MenuState.Build(new MenuStateInput(
                 Enabled: (bits & 1) != 0,
@@ -125,7 +161,8 @@ public sealed class MenuStateTests
                 DisplayConnected: (bits & 4) != 0,
                 Calibrating: (bits & 8) != 0,
                 InvalidConfiguration: (bits & 16) != 0,
-                MaskRenderingFailed: (bits & 32) != 0));
+                MaskRenderingFailed: (bits & 32) != 0,
+                WindowCorrectionUnavailable: (bits & 64) != 0));
 
             Assert.True(PausedRows(rows).Count() <= 1);
         }
@@ -137,7 +174,8 @@ public sealed class MenuStateTests
         DisplayConnected: true,
         Calibrating: false,
         InvalidConfiguration: false,
-        MaskRenderingFailed: false);
+        MaskRenderingFailed: false,
+        WindowCorrectionUnavailable: false);
 
     private static IEnumerable<MenuRow> PausedRows(IReadOnlyList<MenuRow> rows) =>
         rows.Where(row => row.Label.StartsWith("Paused:", StringComparison.Ordinal));

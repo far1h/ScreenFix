@@ -1,8 +1,11 @@
 using ScreenFix.App.Calibration;
+using ScreenFix.App.Guard;
+using ScreenFix.App.Interop;
 using ScreenFix.App.Lifecycle;
 using ScreenFix.App.Notifications;
 using ScreenFix.App.Overlays;
 using ScreenFix.App.Runtime;
+using ScreenFix.Core.Guard;
 using ScreenFix.Core.Menu;
 
 namespace ScreenFix.App;
@@ -112,16 +115,32 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
 
         var localData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var configPath = Path.Combine(localData, "ScreenFix", "config.json");
+        var native = new WindowNative();
+        var clock = new SystemClock();
+        var delay = new WinFormsUiDelay();
+        var guard = new WindowGuard(
+            new WinEventSourceFactory(native, uiBridge),
+            new GuardScheduler(delay),
+            new WindowCorrector(
+                new WindowsWindowInspector(
+                    native,
+                    checked((uint)Environment.ProcessId)),
+                native,
+                clock,
+                new GuardMemory(),
+                delay));
+        lifetime.OwnGuard(guard.Dispose);
         controller = new RuntimeController(
             new RuntimeConfigStore(configPath),
             new RuntimeDisplayTopology(),
             new RuntimeMaskOverlayHost(overlaySet),
+            guard,
             calibration,
             new WinFormsMonitorPickerHost(),
             menu,
             uiBridge,
             notices!,
-            new SystemClock());
+            clock);
         targetBridge.Connect(controller);
         lifetime.OwnControllerCallbacks(() =>
         {

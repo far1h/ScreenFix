@@ -34,7 +34,7 @@ public sealed class RuntimeControllerTests
     }
 
     [Fact]
-    public void Start_EnabledConnectedConfigurationRendersThreeMasks()
+    public void Start_EnabledConnectedConfigurationRendersThreeMasksWithoutPausedStatus()
     {
         var config = DefaultConfig();
         var display = Connected(config.Display);
@@ -43,9 +43,7 @@ public sealed class RuntimeControllerTests
         harness.Controller.Start();
 
         Assert.Equal(3, Assert.Single(harness.Overlays.Replacements).Count);
-        Assert.Equal(
-            "Paused: Window correction is not available in this build",
-            harness.StatusLabel);
+        Assert.Null(harness.StatusLabel);
     }
 
     [Fact]
@@ -282,7 +280,7 @@ public sealed class RuntimeControllerTests
 
         Assert.False(harness.Config.LastSaved!.Enabled);
         Assert.False(harness.Calibration.IsEditing);
-        Assert.True(harness.Overlays.ClearCount >= 2);
+        Assert.Equal(1, harness.Overlays.ClearCount);
     }
 
     [Fact]
@@ -545,7 +543,7 @@ public sealed class RuntimeControllerTests
 
         Assert.False(harness.Calibration.IsEditing);
         Assert.Equal(0, harness.Config.SaveCount);
-        Assert.True(harness.Overlays.ClearCount >= 2);
+        Assert.Equal(1, harness.Overlays.ClearCount);
 
         harness.Controller.Resume();
         harness.Controller.Resume();
@@ -657,6 +655,7 @@ public sealed class RuntimeControllerTests
                 Config,
                 Topology,
                 Overlays,
+                Guard,
                 Calibration,
                 Picker,
                 Menu,
@@ -670,6 +669,8 @@ public sealed class RuntimeControllerTests
         public FakeTopology Topology { get; }
 
         public FakeOverlayHost Overlays { get; }
+
+        public FakeWindowGuard Guard { get; } = new();
 
         public FakeMenuHost Menu { get; }
 
@@ -715,6 +716,34 @@ public sealed class RuntimeControllerTests
         public IReadOnlyList<ConnectedDisplay> Displays { get; set; } = displays;
 
         public IReadOnlyList<ConnectedDisplay> Enumerate() => Displays;
+
+        public bool TryGetMonitorHandle(
+            ConnectedDisplay display,
+            out nint monitorHandle)
+        {
+            monitorHandle = new nint(77);
+            return Displays.Contains(display);
+        }
+    }
+
+    private sealed class FakeWindowGuard : ScreenFix.App.Guard.IWindowGuard
+    {
+        public RuntimeOperationResult Start(
+            ScreenFix.App.Guard.SelectedMonitor selectedMonitor,
+            IReadOnlyList<RectD> maskBands) =>
+            RuntimeOperationResult.Success();
+
+        public void Pause()
+        {
+        }
+
+        public void Stop()
+        {
+        }
+
+        public void Dispose()
+        {
+        }
     }
 
     private sealed class FakeOverlayHost : IMaskOverlayHost
