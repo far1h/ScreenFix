@@ -2,10 +2,11 @@ using ScreenFix.Core.Configuration;
 using ScreenFix.Core.Displays;
 using ScreenFix.Core.Geometry;
 using ScreenFix.Core.Menu;
+using ScreenFix.App.Notifications;
 
 namespace ScreenFix.App.Runtime;
 
-public sealed class RuntimeController
+public sealed class RuntimeController : ISystemMessageTarget
 {
     private readonly IRuntimeConfigStore configStore;
     private readonly IDisplayTopology topology;
@@ -23,6 +24,7 @@ public sealed class RuntimeController
     private bool disconnectedFailureEpisode;
     private bool maskFailureEpisode;
     private bool stopped;
+    private bool suspended;
     private long generation;
 
     public RuntimeController(
@@ -100,10 +102,62 @@ public sealed class RuntimeController
     public void ReconcileDisplays()
     {
         VerifyActive();
-        if (!stopped)
+        if (stopped || suspended)
         {
-            Reconcile();
+            return;
         }
+
+        if (calibration.IsEditing)
+        {
+            EndEditing();
+        }
+
+        Reconcile();
+    }
+
+    public void Suspend()
+    {
+        VerifyActive();
+        if (stopped || suspended)
+        {
+            return;
+        }
+
+        suspended = true;
+        generation++;
+        pendingConfiguration = null;
+        picker.Stop();
+        calibration.Stop();
+        overlays.Clear();
+    }
+
+    public void Resume()
+    {
+        VerifyActive();
+        if (stopped || !suspended)
+        {
+            return;
+        }
+
+        suspended = false;
+        generation++;
+        Reconcile();
+    }
+
+    public void CancelEditorForDpiChange()
+    {
+        VerifyActive();
+        if (stopped || suspended)
+        {
+            return;
+        }
+
+        if (calibration.IsEditing)
+        {
+            EndEditing();
+        }
+
+        Reconcile();
     }
 
     public void SelectMonitor()

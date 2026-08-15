@@ -335,6 +335,46 @@ public sealed class RuntimeControllerTests
     }
 
     [Fact]
+    public void ReconcileDisplays_WhileEditingCancelsWorkingCopyAndRestoresMasks()
+    {
+        var config = DefaultConfig();
+        var harness = new Harness(
+            new ConfigLoadResult(config, false, null),
+            [Connected(config.Display)]);
+        harness.Controller.Start();
+        harness.Controller.Calibrate();
+
+        harness.Controller.ReconcileDisplays();
+
+        Assert.False(harness.Calibration.IsEditing);
+        Assert.Equal(2, harness.Overlays.Replacements.Count);
+        Assert.Equal(0, harness.Config.SaveCount);
+    }
+
+    [Fact]
+    public void SuspendAndResume_CloseTransientResourcesThenRestoreMasksOnce()
+    {
+        var config = DefaultConfig();
+        var harness = new Harness(
+            new ConfigLoadResult(config, false, null),
+            [Connected(config.Display)]);
+        harness.Controller.Start();
+        harness.Controller.Calibrate();
+
+        harness.Controller.Suspend();
+        harness.Controller.Suspend();
+
+        Assert.False(harness.Calibration.IsEditing);
+        Assert.Equal(0, harness.Config.SaveCount);
+        Assert.True(harness.Overlays.ClearCount >= 2);
+
+        harness.Controller.Resume();
+        harness.Controller.Resume();
+
+        Assert.Equal(2, harness.Overlays.Replacements.Count);
+    }
+
+    [Fact]
     public void StalePickerCallbackCannotStartCalibration()
     {
         var display = Connected(DefaultConfig().Display);
