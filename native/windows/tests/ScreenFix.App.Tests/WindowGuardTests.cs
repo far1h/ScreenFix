@@ -156,6 +156,97 @@ public sealed class WindowGuardTests
         Assert.Equal(2, source.StopCount);
     }
 
+    [Fact]
+    public void Start_RetriesFailedReplacementRetirementWithoutDoubleRelease()
+    {
+        var oldSource = new FakeEventSource([], "old")
+        {
+            ReleaseFailuresRemaining = 1,
+        };
+        var replacement = new FakeEventSource([], "replacement");
+        using var guard = CreateGuard(
+            new FakeEventSourceFactory(oldSource, replacement),
+            new FakeScheduler([]),
+            new FakeCorrector([]));
+        Assert.True(guard.Start(Selected(), Masks()).IsSuccess);
+
+        Assert.True(guard.Start(
+            Selected(),
+            [new RectD(300, 0, 300, 800)]).IsSuccess);
+        Assert.False(oldSource.IsReleaseComplete);
+
+        Assert.True(guard.Start(
+            Selected(),
+            [new RectD(300, 0, 300, 800)]).IsSuccess);
+        Assert.True(guard.Start(
+            Selected(),
+            [new RectD(300, 0, 300, 800)]).IsSuccess);
+
+        Assert.True(oldSource.IsReleaseComplete);
+        Assert.Equal(2, oldSource.StopCount);
+        Assert.Equal(0, replacement.StopCount);
+    }
+
+    [Fact]
+    public void Stop_RetriesWrongThreadRetirementOnTheInstallingThread()
+    {
+        var source = new FakeEventSource([])
+        {
+            RequireInstallingThreadForRelease = true,
+        };
+        using var guard = CreateGuard(
+            new FakeEventSourceFactory(source),
+            new FakeScheduler([]),
+            new FakeCorrector([]));
+        Assert.True(guard.Start(Selected(), Masks()).IsSuccess);
+
+        var thread = new Thread(guard.Stop);
+        thread.Start();
+        thread.Join();
+
+        Assert.False(source.IsReleaseComplete);
+        Assert.Equal(0, source.ReleaseAttemptCount);
+
+        guard.Stop();
+        guard.Stop();
+
+        Assert.True(source.IsReleaseComplete);
+        Assert.Equal(1, source.ReleaseAttemptCount);
+    }
+
+    [Fact]
+    public void Stop_RetainsFailedNativeHookAndRootsCallbackUntilExactRetry()
+    {
+        var native = new WinEventHookOwnershipTests.FakeWinEventNativeApi();
+        native.UnhookFailuresRemaining[new nint(2)] = 1;
+        var source = new WinEventHookSet(
+            native,
+            new WinEventHookOwnershipTests.FakeDispatcher());
+        using var guard = CreateGuard(
+            new SingleEventSourceFactory(source),
+            new FakeScheduler([]),
+            new FakeCorrector([]));
+        Assert.True(guard.Start(Selected(), Masks()).IsSuccess);
+
+        guard.Stop();
+
+        Assert.Equal(1, source.RetainedHookCount);
+        Assert.True(source.IsCallbackRooted);
+
+        guard.Stop();
+        guard.Stop();
+
+        Assert.Equal(0, source.RetainedHookCount);
+        Assert.False(source.IsCallbackRooted);
+        Assert.Equal(
+            [1L, 2, 3, 4, 5, 6, 7, 2],
+            native.UnhookAttempts.Select(handle => handle.ToInt64()));
+        Assert.Equal(
+            [1L, 3, 4, 5, 6, 7, 2],
+            native.Unhooked.Select(handle => handle.ToInt64()));
+        Assert.All(native.CallbacksAliveDuringUnhook, Assert.True);
+    }
+
     [Theory]
     [InlineData(0, 0, 0)]
     [InlineData(17, 1, 0)]
@@ -502,6 +593,12 @@ public sealed class WindowGuardTests
         }
     }
 
+    private sealed class SingleEventSourceFactory(IWinEventSource source)
+        : IWinEventSourceFactory
+    {
+        public IWinEventSource Create() => source;
+    }
+
     private sealed class FakeEventSource(
         List<string> order,
         string name = "") : IWinEventSource
@@ -520,11 +617,17 @@ public sealed class WindowGuardTests
 
         public bool IsReleaseComplete { get; private set; } = true;
 
+        public bool RequireInstallingThreadForRelease { get; set; }
+
+        public int ReleaseAttemptCount { get; private set; }
+
         public bool RaiseDuringStop { get; set; }
 
         public bool ThrowOnStart { get; set; }
 
         public bool ThrowOnStop { get; set; }
+
+        private int installingThreadId;
 
         public RuntimeOperationResult Start(
             long generation,
@@ -537,6 +640,7 @@ public sealed class WindowGuardTests
 
             this.generation = generation;
             callback = signal;
+            installingThreadId = Environment.CurrentManagedThreadId;
             IsReleaseComplete = false;
             order.Add(name.Length == 0 ? "hook-start" : $"hook-start-{name}");
             foreach (var item in StartSignals)
@@ -566,6 +670,13 @@ public sealed class WindowGuardTests
         public void Dispose()
         {
             Stop();
+            if (RequireInstallingThreadForRelease &&
+                Environment.CurrentManagedThreadId != installingThreadId)
+            {
+                return;
+            }
+
+            ReleaseAttemptCount++;
             if (ReleaseFailuresRemaining > 0)
             {
                 ReleaseFailuresRemaining--;

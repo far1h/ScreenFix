@@ -208,7 +208,7 @@ public sealed class WinEventHookOwnershipTests
         Assert.All(signals, signal => Assert.Equal(WinEventId.Seed, signal.EventType));
     }
 
-    private sealed class FakeWinEventNativeApi : IWinEventNativeApi
+    internal sealed class FakeWinEventNativeApi : IWinEventNativeApi
     {
         private long nextHook = 1;
 
@@ -299,7 +299,7 @@ public sealed class WinEventHookOwnershipTests
         }
     }
 
-    private sealed class FakeDispatcher : IUiDispatcher
+    internal sealed class FakeDispatcher : IUiDispatcher
     {
         private readonly List<Action> pending = [];
 
@@ -316,7 +316,7 @@ public sealed class WinEventHookOwnershipTests
         }
     }
 
-    private sealed record HookRegistration(
+    internal sealed record HookRegistration(
         uint EventMinimum,
         uint EventMaximum,
         NativeWinEventCallback Callback,
