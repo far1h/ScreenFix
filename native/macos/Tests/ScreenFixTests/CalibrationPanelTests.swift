@@ -268,6 +268,37 @@ let calibrationPanelTests = [
         view.stopTracking()
         try expectEqual(view.trackingAreas.count, 0)
     },
+    TestCase(name: "CalibrationPanel narrow instruction renders both wrapped lines") {
+        _ = NSApplication.shared
+        let frame = NSRect(x: 0, y: 0, width: 260, height: 180)
+        let view = CalibrationView(frame: frame)
+        guard let controls = CalibrationControlLayout.make(width: 260, height: 180),
+              let bitmap = view.bitmapImageRepForCachingDisplay(in: frame) else {
+            throw TestFailure(description: "expected narrow calibration rendering resources")
+        }
+        view.update(bands: [], controls: controls)
+        view.cacheDisplay(in: frame, to: bitmap)
+
+        let scale = Double(bitmap.pixelsWide) / frame.width
+        let text = controls.instructionText
+        let yRange = Int(text.y * scale)..<Int(text.bottom * scale)
+        let brightRows = yRange.filter { y in
+            (0..<bitmap.pixelsWide).contains { x in
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
+                    return false
+                }
+                return color.alphaComponent > 0.8
+                    && color.redComponent > 0.8
+                    && color.greenComponent > 0.8
+                    && color.blueComponent > 0.8
+            }
+        }
+        guard let first = brightRows.first, let last = brightRows.last else {
+            throw TestFailure(description: "expected rendered instruction glyphs")
+        }
+        let glyphHeight = Double(last - first + 1) / scale
+        try expect(glyphHeight >= 24, "expected two visible instruction lines, got \(glyphHeight)pt")
+    },
     TestCase(name: "CalibrationPanel reentrant commit guard cannot replace a newer editor") {
         let log = NSMutableArray()
         let surfaces = NSMutableArray()

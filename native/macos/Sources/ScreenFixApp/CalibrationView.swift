@@ -177,30 +177,38 @@ public final class CalibrationView: NSView {
 
     private func drawLeftLabel(_ value: String, in frame: RectD, size: Double) {
         let attributes = textAttributes(size: size)
-        let measured = measuredBounds(value, attributes: attributes)
+        let measured = measuredBounds(value, width: frame.width, attributes: attributes)
         let target = NSRect(
             x: frame.x,
             y: frame.y + (frame.height - measured.height) / 2,
             width: frame.width,
             height: measured.height
         )
-        (value as NSString).draw(in: target, withAttributes: attributes)
+        NSAttributedString(string: value, attributes: attributes).draw(
+            with: target,
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        )
     }
 
     private func textAttributes(size: Double) -> [NSAttributedString.Key: Any] {
-        [
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        return [
             .font: NSFont.systemFont(ofSize: size, weight: .semibold),
             .foregroundColor: NSColor.white,
+            .paragraphStyle: paragraph,
         ]
     }
 
     private func measuredBounds(
         _ value: String,
+        width: Double = CGFloat.greatestFiniteMagnitude,
         attributes: [NSAttributedString.Key: Any]
     ) -> NSRect {
         (value as NSString).boundingRect(
             with: NSSize(
-                width: CGFloat.greatestFiniteMagnitude,
+                width: width,
                 height: CGFloat.greatestFiniteMagnitude
             ),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
