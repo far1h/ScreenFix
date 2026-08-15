@@ -7,6 +7,7 @@ local CONTROL_WIDTH = 96
 local HANDLE_WIDTH = 8
 local INSTRUCTION_HEIGHT = 40
 local INSTRUCTION_WIDTH = 320
+local MOVEMENT_THRESHOLD = 4
 
 local function copyBands(bands)
     local copied = {}
@@ -252,11 +253,18 @@ function Calibration:beginDrag(point)
         self:cancel()
         return
     end
+    if self.drag and self.drag.latched then
+        self.drag = nil
+        return
+    end
 
     local bands = self.deps.geometry.localBands(self.fullFrame, self.workingBands)
     local hit = self.deps.geometry.editorHit(point, bands, HANDLE_WIDTH)
     if hit then
-        hit.lastPoint = point
+        hit.pressPoint = { x = point.x, y = point.y }
+        hit.lastPoint = { x = point.x, y = point.y }
+        hit.moved = false
+        hit.latched = false
     end
     self.drag = hit
 end
@@ -266,9 +274,14 @@ function Calibration:updateDrag(point)
         return
     end
 
-    local buttons = self.deps.mouseButtons()
-    if not buttons.left then
-        return
+    if not self.drag.moved then
+        local pressDeltaX = point.x - self.drag.pressPoint.x
+        local pressDeltaY = point.y - self.drag.pressPoint.y
+        if pressDeltaX * pressDeltaX + pressDeltaY * pressDeltaY
+            < MOVEMENT_THRESHOLD * MOVEMENT_THRESHOLD
+        then
+            return
+        end
     end
 
     local delta = {
@@ -282,6 +295,7 @@ function Calibration:updateDrag(point)
         self.fullFrame
     )
     self.drag.lastPoint = { x = point.x, y = point.y }
+    self.drag.moved = true
     self:draw()
 end
 
@@ -401,7 +415,32 @@ function Calibration:start(screen, bands, onSave, onCancel)
             eventTypes.leftMouseDragged,
             eventTypes.leftMouseUp,
         }, function(event)
-            event:getType()
+            local dispatched, dispatchError = pcall(function()
+                local eventType = event:getType()
+                local point = event:location()
+                local localPoint = {
+                    x = point.x - self.fullFrame.x,
+                    y = point.y - self.fullFrame.y,
+                }
+
+                if eventType == eventTypes.leftMouseDragged then
+                    self:updateDrag(localPoint)
+                elseif eventType == eventTypes.mouseMoved
+                    and self.drag
+                    and self.drag.latched
+                then
+                    self:updateDrag(localPoint)
+                elseif eventType == eventTypes.leftMouseUp then
+                    if self.drag and self.drag.moved then
+                        self.drag = nil
+                    elseif self.drag then
+                        self.drag.latched = true
+                    end
+                end
+            end)
+            if not dispatched then
+                self:report(dispatchError)
+            end
             return false
         end)
         if not eventTap then

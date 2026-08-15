@@ -17,6 +17,85 @@ local function validBands()
     }
 end
 
+local function startInputCalibration(fullFrame, onSave, onCancel)
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    calibration:start(
+        fake.screen("display", "Display", fullFrame),
+        validBands(),
+        onSave or function() end,
+        onCancel or function() end
+    )
+
+    return calibration, canvas.canvases[1], eventtap.taps[1], eventtap.event.types
+end
+
+local function emitLocal(tap, eventType, fullFrame, point)
+    local result, event = tap:emit(eventType, {
+        x = fullFrame.x + point.x,
+        y = fullFrame.y + point.y,
+    })
+    test.equal(result, false)
+
+    return result, event
+end
+
+local function rectNear(actual, expected)
+    for _, key in ipairs({ "x", "y", "w", "h" }) do
+        test.equal(math.abs(actual[key] - expected[key]) < 0.000000001, true)
+    end
+end
+
+local heldDragCases = {
+    {
+        name = "body",
+        press = { x = 500, y = 400 },
+        moved = { x = 530, y = 424 },
+        postPress = { x = 530, y = 424 },
+        expected = { x = 0.43, y = 0.28, w = 0.20, h = 0.50 },
+    },
+    {
+        name = "left",
+        press = { x = 400, y = 400 },
+        moved = { x = 700, y = 400 },
+        postPress = { x = 580, y = 400 },
+        expected = { x = 0.58, y = 0.25, w = 0.02, h = 0.50 },
+    },
+    {
+        name = "right",
+        press = { x = 600, y = 400 },
+        moved = { x = 300, y = 400 },
+        postPress = { x = 420, y = 400 },
+        expected = { x = 0.40, y = 0.25, w = 0.02, h = 0.50 },
+    },
+    {
+        name = "top",
+        press = { x = 600, y = 200 },
+        moved = { x = 600, y = 700 },
+        postPress = { x = 600, y = 580 },
+        expected = { x = 0.40, y = 0.725, w = 0.20, h = 0.025 },
+    },
+    {
+        name = "bottom",
+        press = { x = 600, y = 600 },
+        moved = { x = 600, y = 100 },
+        postPress = { x = 600, y = 220 },
+        expected = { x = 0.40, y = 0.25, w = 0.20, h = 0.025 },
+    },
+}
+
 test.test("selectScreen presents one serializable chooser row per screen", function()
     local canvas = fake.canvas()
     local chooser = fake.chooser()
@@ -264,6 +343,215 @@ test.test("start gives canvas only mouse-down ownership and starts one movement 
     test.equal(callbackResult, false)
     test.equal(tap.callbackResults[1], false)
     test.equal(event.getTypeCallCount, 1)
+end)
+
+for _, case in ipairs(heldDragCases) do
+    test.test("held event drag updates the " .. case.name .. " and drops on release", function()
+        local fullFrame = { x = -100, y = -50, w = 1000, h = 800 }
+        local calibration, editor, tap, eventTypes = startInputCalibration(fullFrame)
+
+        editor:triggerMouse("mouseDown", case.press.x, case.press.y)
+        test.equal(calibration.drag.part, case.name)
+        local dragResult, dragEvent = emitLocal(
+            tap,
+            eventTypes.leftMouseDragged,
+            fullFrame,
+            case.moved
+        )
+
+        test.equal(dragResult, false)
+        test.equal(dragEvent.locationCallCount, 1)
+        rectNear(calibration.workingBands[1], case.expected)
+        local upResult, upEvent = emitLocal(tap, eventTypes.leftMouseUp, fullFrame, case.moved)
+        test.equal(upResult, false)
+        test.equal(upEvent.locationCallCount, 1)
+        test.equal(calibration.drag, nil)
+        emitLocal(tap, eventTypes.mouseMoved, fullFrame, case.press)
+        rectNear(calibration.workingBands[1], case.expected)
+    end)
+end
+
+for _, case in ipairs(heldDragCases) do
+    test.test("latched pointer movement updates the " .. case.name, function()
+        local fullFrame = { x = -100, y = -50, w = 1000, h = 800 }
+        local calibration, editor, tap, eventTypes = startInputCalibration(fullFrame)
+
+        editor:triggerMouse("mouseDown", case.press.x, case.press.y)
+        local upResult, upEvent = emitLocal(tap, eventTypes.leftMouseUp, fullFrame, case.press)
+
+        test.equal(upResult, false)
+        test.equal(upEvent.locationCallCount, 1)
+        test.equal(calibration.drag.part, case.name)
+        test.equal(calibration.drag.latched, true)
+        emitLocal(tap, eventTypes.leftMouseUp, fullFrame, case.press)
+        test.equal(calibration.drag.latched, true)
+        local moveResult, moveEvent = emitLocal(tap, eventTypes.mouseMoved, fullFrame, case.moved)
+        test.equal(moveResult, false)
+        test.equal(moveEvent.locationCallCount, 1)
+        rectNear(calibration.workingBands[1], case.expected)
+        test.equal(calibration.drag.latched, true)
+        editor:triggerMouse("mouseDown", case.press.x, case.press.y)
+        test.equal(calibration.drag, nil)
+        emitLocal(tap, eventTypes.leftMouseUp, fullFrame, case.press)
+        emitLocal(tap, eventTypes.mouseMoved, fullFrame, case.press)
+        rectNear(calibration.workingBands[1], case.expected)
+        editor:triggerMouse("mouseDown", case.postPress.x, case.postPress.y)
+        test.equal(calibration.drag.part, case.name)
+    end)
+end
+
+test.test("movement does not ratchet below threshold and becomes incremental at four points", function()
+    local fullFrame = { x = -100, y = -50, w = 1000, h = 800 }
+    local calibration, editor, tap, eventTypes = startInputCalibration(fullFrame)
+    local original = validBands()[1]
+
+    editor:triggerMouse("mouseDown", 500, 400)
+    for _, point in ipairs({
+        { x = 501, y = 401 },
+        { x = 502, y = 402 },
+        { x = 503, y = 400 },
+    }) do
+        emitLocal(tap, eventTypes.leftMouseDragged, fullFrame, point)
+        test.rect(calibration.workingBands[1], original)
+        test.equal(calibration.drag.moved, false)
+    end
+
+    emitLocal(tap, eventTypes.leftMouseDragged, fullFrame, { x = 504, y = 400 })
+    rectNear(calibration.workingBands[1], {
+        x = 0.404,
+        y = 0.25,
+        w = 0.20,
+        h = 0.50,
+    })
+    emitLocal(tap, eventTypes.leftMouseDragged, fullFrame, { x = 505, y = 402 })
+    rectNear(calibration.workingBands[1], {
+        x = 0.405,
+        y = 0.2525,
+        w = 0.20,
+        h = 0.50,
+    })
+end)
+
+test.test("movement threshold uses Euclidean distance for diagonal input", function()
+    local fullFrame = { x = -100, y = -50, w = 1000, h = 800 }
+    local calibration, editor, tap, eventTypes = startInputCalibration(fullFrame)
+
+    editor:triggerMouse("mouseDown", 500, 400)
+    emitLocal(tap, eventTypes.leftMouseDragged, fullFrame, { x = 502, y = 403 })
+    test.rect(calibration.workingBands[1], validBands()[1])
+    emitLocal(tap, eventTypes.leftMouseUp, fullFrame, { x = 502, y = 403 })
+    test.equal(calibration.drag.latched, true)
+    emitLocal(tap, eventTypes.mouseMoved, fullFrame, { x = 503, y = 403 })
+    rectNear(calibration.workingBands[1], {
+        x = 0.403,
+        y = 0.25375,
+        w = 0.20,
+        h = 0.50,
+    })
+end)
+
+for _, case in ipairs({
+    { name = "Save", point = { x = 30, y = 750 }, saveCalls = 1, cancelCalls = 0 },
+    { name = "Cancel", point = { x = 150, y = 750 }, saveCalls = 0, cancelCalls = 1 },
+}) do
+    test.test(case.name .. " executes immediately while movement is latched", function()
+        local saveCalls = 0
+        local cancelCalls = 0
+        local fullFrame = { x = -100, y = -50, w = 1000, h = 800 }
+        local calibration, editor, tap, eventTypes = startInputCalibration(
+            fullFrame,
+            function()
+                saveCalls = saveCalls + 1
+            end,
+            function()
+                cancelCalls = cancelCalls + 1
+            end
+        )
+        calibration.workingBands[3] = { x = 0.02, y = 0.90, w = 0.25, h = 0.08 }
+        calibration:draw()
+        editor:triggerMouse("mouseDown", 500, 400)
+        emitLocal(tap, eventTypes.leftMouseUp, fullFrame, { x = 500, y = 400 })
+        test.equal(calibration.drag.latched, true)
+
+        editor:triggerMouse("mouseDown", case.point.x, case.point.y)
+
+        test.equal(saveCalls, case.saveCalls)
+        test.equal(cancelCalls, case.cancelCalls)
+        test.equal(calibration.editorCanvas, nil)
+    end)
+end
+
+for _, case in ipairs({
+    { name = "empty space", point = { x = 800, y = 700 } },
+    { name = "another target", point = { x = 500, y = 160 }, index = 2, part = "body" },
+    { name = "the same target", point = { x = 500, y = 400 }, index = 1, part = "body" },
+}) do
+    test.test("a tap on " .. case.name .. " only drops latched movement", function()
+        local fullFrame = { x = -100, y = -50, w = 1000, h = 800 }
+        local calibration, editor, tap, eventTypes = startInputCalibration(fullFrame)
+
+        editor:triggerMouse("mouseDown", 500, 400)
+        emitLocal(tap, eventTypes.leftMouseUp, fullFrame, { x = 500, y = 400 })
+        test.equal(calibration.drag.latched, true)
+
+        editor:triggerMouse("mouseDown", case.point.x, case.point.y)
+        test.equal(calibration.drag, nil)
+
+        editor:triggerMouse("mouseDown", case.point.x, case.point.y)
+        if case.index then
+            test.equal(calibration.drag.index, case.index)
+            test.equal(calibration.drag.part, case.part)
+        else
+            test.equal(calibration.drag, nil)
+        end
+    end)
+end
+
+test.test("movement callback contains and reports dispatch errors", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local reports = {}
+    local failingGeometry = {
+        localBands = geometry.localBands,
+        editorHit = geometry.editorHit,
+        dragBand = function()
+            error("drag failed", 0)
+        end,
+    }
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = failingGeometry,
+        reportError = function(message)
+            reports[#reports + 1] = message
+        end,
+    })
+    local fullFrame = { x = -100, y = -50, w = 1000, h = 800 }
+    calibration:start(
+        fake.screen("display", "Display", fullFrame),
+        validBands(),
+        function() end,
+        function() end
+    )
+    canvas.canvases[1]:triggerMouse("mouseDown", 500, 400)
+
+    local result = emitLocal(
+        eventtap.taps[1],
+        eventtap.event.types.leftMouseDragged,
+        fullFrame,
+        { x = 510, y = 410 }
+    )
+
+    test.equal(result, false)
+    test.equal(reports[1], "drag failed")
+    test.rect(calibration.workingBands[1], validBands()[1])
 end)
 
 test.test("event-tap construction failure cleans the candidate editor", function()
