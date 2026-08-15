@@ -415,7 +415,7 @@ function Calibration:stop()
     end
 end
 
-function Calibration:start(screen, bands, onSave, onCancel)
+function Calibration:start(screen, bands, onSave, onCancel, commitGuard)
     if type(onSave) ~= "function" or type(onCancel) ~= "function" then
         return nil, "calibration callbacks must be functions"
     end
@@ -511,6 +511,15 @@ function Calibration:start(screen, bands, onSave, onCancel)
         stopEventTap(candidate.eventTap)
         deleteEditor(candidate.editorCanvas)
         return nil, prepareError
+    end
+
+    if commitGuard then
+        local guarded, canCommit = pcall(commitGuard)
+        if not guarded or canCommit ~= true then
+            stopEventTap(candidate.eventTap)
+            deleteEditor(candidate.editorCanvas)
+            return nil, "calibration start superseded"
+        end
     end
 
     local previousChooser = self.screenChooser

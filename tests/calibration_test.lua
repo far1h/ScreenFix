@@ -1395,6 +1395,96 @@ test.test("failed replacement mouse-event setup keeps the committed editor live"
     replacementFailure("canvasMouseEvents")
 end)
 
+test.test("a rejected commit guard cleans only the prepared candidate", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    calibration:start(screen, validBands(), function() end, function() end)
+    local oldCanvas = calibration.editorCanvas
+    local oldTap = calibration.eventTap
+    local oldBands = calibration.workingBands
+
+    local started, startError = calibration:start(
+        screen,
+        validBands(),
+        function() end,
+        function() end,
+        function()
+            return false
+        end
+    )
+
+    test.equal(started, nil)
+    test.equal(startError, "calibration start superseded")
+    test.equal(canvas.canvases[2].showCount, 1)
+    test.equal(canvas.canvases[2].deleteCount, 1)
+    test.equal(eventtap.taps[2].stopCount, 1)
+    test.equal(eventtap.taps[2]:isEnabled(), false)
+    test.equal(calibration.editorCanvas, oldCanvas)
+    test.equal(calibration.eventTap, oldTap)
+    test.equal(calibration.workingBands, oldBands)
+    test.equal(oldCanvas.deleteCount, 0)
+    test.equal(oldTap.stopCount, 0)
+    test.equal(oldTap:isEnabled(), true)
+    assertActiveMovement(calibration, oldCanvas, oldTap, eventtap.event.types)
+end)
+
+test.test("a throwing commit guard is contained and preserves active input", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    calibration:start(screen, validBands(), function() end, function() end)
+    local oldCanvas = calibration.editorCanvas
+    local oldTap = calibration.eventTap
+
+    local safe, started, startError = pcall(function()
+        return calibration:start(
+            screen,
+            validBands(),
+            function() end,
+            function() end,
+            function()
+                error("commit guard failure", 0)
+            end
+        )
+    end)
+
+    test.equal(safe, true)
+    test.equal(started, nil)
+    test.equal(startError, "calibration start superseded")
+    test.equal(canvas.canvases[2].deleteCount, 1)
+    test.equal(eventtap.taps[2].stopCount, 1)
+    test.equal(calibration.editorCanvas, oldCanvas)
+    test.equal(calibration.eventTap, oldTap)
+    test.equal(oldCanvas.deleteCount, 0)
+    test.equal(oldTap.stopCount, 0)
+    test.equal(oldTap:isEnabled(), true)
+end)
+
 test.test("successful replacement retires old input and rejects its captured callbacks", function()
     local canvas = fake.canvas()
     local eventtap = fake.eventtap()

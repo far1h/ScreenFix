@@ -1117,6 +1117,85 @@ test.test("older startup cannot overwrite a newer reentrant calibration", functi
     test.equal(case.calibrationStopCount or 0, 0)
 end)
 
+test.test("real adapter preparation cannot orphan input after controller stop", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    local calibration, canvas, _, eventtap = installCalibrationAdapter(case, {})
+    local realNew = canvas.new
+    canvas.new = function(frame)
+        local editor = realNew(frame)
+        local realShow = editor.show
+        editor.show = function(self)
+            local result = realShow(self)
+            case.controller:stop()
+            return result
+        end
+        return editor
+    end
+    case.controller:start()
+
+    local started, startError = case.controller:calibrate()
+
+    test.equal(started, nil)
+    test.equal(startError, "calibration start superseded")
+    test.equal(case.controller.started, false)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationSession, nil)
+    test.equal(calibration.editorCanvas, nil)
+    test.equal(calibration.eventTap, nil)
+    test.equal(canvas.canvases[1].showCount, 1)
+    test.equal(canvas.canvases[1].deleteCount, 1)
+    test.equal(eventtap.taps[1].stopCount, 1)
+    test.equal(eventtap.taps[1]:isEnabled(), false)
+end)
+
+test.test("real adapter keeps the newest reentrant controller calibration", function()
+    local case = newCase({ configuration = validConfig(true), accessibility = true })
+    local calibration, canvas, _, eventtap = installCalibrationAdapter(case, {})
+    local realNew = canvas.new
+    local nestedStarted
+    local nestedError
+    local newerSession
+    canvas.new = function(frame)
+        local editor = realNew(frame)
+        if #canvas.canvases == 1 then
+            local realShow = editor.show
+            editor.show = function(self)
+                local result = realShow(self)
+                nestedStarted, nestedError = case.controller:calibrate()
+                newerSession = case.controller.calibrationSession
+                return result
+            end
+        end
+        return editor
+    end
+    case.controller:start()
+
+    local outerStarted, outerError = case.controller:calibrate()
+
+    test.equal(nestedStarted, true)
+    test.equal(nestedError, nil)
+    test.equal(outerStarted, nil)
+    test.equal(outerError, "calibration start superseded")
+    test.equal(case.controller.calibrationSession, newerSession)
+    test.equal(case.controller.calibrationGeneration, newerSession.token)
+    test.equal(calibration.editorCanvas, canvas.canvases[2])
+    test.equal(calibration.eventTap, eventtap.taps[2])
+    test.equal(canvas.canvases[1].deleteCount, 1)
+    test.equal(eventtap.taps[1].stopCount, 1)
+    test.equal(eventtap.taps[1]:isEnabled(), false)
+    test.equal(canvas.canvases[2].deleteCount, 0)
+    test.equal(eventtap.taps[2].stopCount, 0)
+    test.equal(eventtap.taps[2]:isEnabled(), true)
+
+    local before = calibration.workingBands[1]
+    canvas.canvases[1]:triggerMouse("mouseDown", 1754, 245)
+    eventtap.taps[1]:emit(eventtap.event.types.leftMouseDragged, { x = -1666, y = 265 })
+    test.equal(calibration.workingBands[1], before)
+    canvas.canvases[2]:triggerMouse("mouseDown", 1754, 245)
+    eventtap.taps[2]:emit(eventtap.event.types.leftMouseDragged, { x = -1666, y = 265 })
+    test.equal(calibration.workingBands[1] == before, false)
+end)
+
 test.test("failed controller replacement keeps the real calibration editor live", function()
     local case = newCase({ configuration = validConfig(true), accessibility = true })
     local replacementScreen = fake.screen("replacement-uuid", "Replacement Display", {

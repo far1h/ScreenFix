@@ -299,6 +299,11 @@ startCalibration = function(controller, value, screen)
         end,
         function()
             cancelCalibration(controller, session.token, target)
+        end,
+        function()
+            return controller.started == true
+                and controller.calibrationGeneration == session.token
+                and controller.calibrationSession == previousSession
         end
     )
     if started ~= true then
