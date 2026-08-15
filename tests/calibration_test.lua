@@ -400,6 +400,28 @@ for _, case in ipairs(heldDragCases) do
     end)
 end
 
+test.test("duplicate release after latched movement preserves the selection", function()
+    local fullFrame = { x = -100, y = -50, w = 1000, h = 800 }
+    local calibration, editor, tap, eventTypes = startInputCalibration(fullFrame)
+
+    editor:triggerMouse("mouseDown", 500, 400)
+    emitLocal(tap, eventTypes.leftMouseUp, fullFrame, { x = 500, y = 400 })
+    emitLocal(tap, eventTypes.mouseMoved, fullFrame, { x = 510, y = 410 })
+    test.equal(calibration.drag.latched, true)
+    test.equal(calibration.drag.moved, true)
+
+    emitLocal(tap, eventTypes.leftMouseUp, fullFrame, { x = 510, y = 410 })
+
+    test.equal(calibration.drag.latched, true)
+    test.equal(calibration.drag.moved, true)
+    rectNear(calibration.workingBands[1], {
+        x = 0.41,
+        y = 0.2625,
+        w = 0.20,
+        h = 0.50,
+    })
+end)
+
 test.test("movement does not ratchet below threshold and becomes incremental at four points", function()
     local fullFrame = { x = -100, y = -50, w = 1000, h = 800 }
     local calibration, editor, tap, eventTypes = startInputCalibration(fullFrame)

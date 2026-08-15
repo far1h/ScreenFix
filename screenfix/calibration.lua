@@ -431,10 +431,12 @@ function Calibration:start(screen, bands, onSave, onCancel)
                 then
                     self:updateDrag(localPoint)
                 elseif eventType == eventTypes.leftMouseUp then
-                    if self.drag and self.drag.moved then
-                        self.drag = nil
-                    elseif self.drag then
-                        self.drag.latched = true
+                    if self.drag and not self.drag.latched then
+                        if self.drag.moved then
+                            self.drag = nil
+                        else
+                            self.drag.latched = true
+                        end
                     end
                 end
             end)
