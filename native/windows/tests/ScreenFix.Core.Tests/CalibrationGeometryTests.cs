@@ -210,6 +210,42 @@ public sealed class CalibrationGeometryTests
     }
 
     [Fact]
+    public void SnapBand_HorizontalResizeIgnoresShortHeight()
+    {
+        var raw = new RectD(0.2, 0.4, 0.4, 0.1);
+        RectD[] bands = [raw, new RectD(0.61, 0, 0.2, 0.2)];
+
+        var result = CalibrationGeometry.SnapBand(
+            raw,
+            0,
+            DragPart.Right,
+            bands,
+            FullFrame,
+            12,
+            20);
+
+        AssertRect(new RectD(0.2, 0.4, 0.41, 0.1), result);
+    }
+
+    [Fact]
+    public void SnapBand_VerticalResizeIgnoresNarrowWidth()
+    {
+        var raw = new RectD(0.4, 0.2, 0.1, 0.4);
+        RectD[] bands = [raw, new RectD(0, 0.61, 0.2, 0.2)];
+
+        var result = CalibrationGeometry.SnapBand(
+            raw,
+            0,
+            DragPart.Bottom,
+            bands,
+            FullFrame,
+            12,
+            20);
+
+        AssertRect(new RectD(0.4, 0.2, 0.1, 0.41), result);
+    }
+
+    [Fact]
     public void SnapBand_ScreenEdgeWinsEqualDistanceTie()
     {
         var raw = new RectD(0.1, 0.4, 0.2, 0.2);

@@ -238,7 +238,7 @@ public static class CalibrationGeometry
             var candidate = CorrectedRect(rect, horizontal, trailing, target, resizePart);
 
             if (distance <= threshold + tolerance &&
-                IsSnapCandidate(candidate, fullFrame, tolerance, minimumSize) &&
+                IsSnapCandidate(candidate, fullFrame, tolerance, resizePart, minimumSize) &&
                 (bestDistance is null || distance < bestDistance.Value - tolerance))
             {
                 best = candidate;
@@ -348,11 +348,28 @@ public static class CalibrationGeometry
         RectD rect,
         RectD fullFrame,
         double tolerance,
-        double? minimumSize) =>
-        IsNormalizedRect(rect) &&
-        (minimumSize is null ||
-            ((rect.Width * fullFrame.Width) + tolerance >= minimumSize.Value &&
-             (rect.Height * fullFrame.Height) + tolerance >= minimumSize.Value));
+        DragPart? resizePart,
+        double? minimumSize)
+    {
+        if (!IsNormalizedRect(rect))
+        {
+            return false;
+        }
+
+        if (minimumSize is null)
+        {
+            return true;
+        }
+
+        return resizePart switch
+        {
+            DragPart.Left or DragPart.Right =>
+                (rect.Width * fullFrame.Width) + tolerance >= minimumSize.Value,
+            DragPart.Top or DragPart.Bottom =>
+                (rect.Height * fullFrame.Height) + tolerance >= minimumSize.Value,
+            _ => false,
+        };
+    }
 
     private static bool IsNormalizedRect(RectD rect) =>
         IsFiniteRect(rect) &&
