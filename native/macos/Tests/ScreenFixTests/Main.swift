@@ -7,6 +7,8 @@ enum Main {
                 + configValidatorTests
                 + displaySelectorTests
                 + configStoreTests
+                + maskPanelTests
+                + displayCatalogTests
         )
     }
 }
