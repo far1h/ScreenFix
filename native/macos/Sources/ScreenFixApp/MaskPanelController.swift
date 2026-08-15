@@ -18,6 +18,10 @@ public final class MaskPanel: NSPanel, MaskWindow {
     public override var canBecomeKey: Bool { false }
     public override var canBecomeMain: Bool { false }
 
+    public override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+
     public func orderAndVerify() throws {
         orderFrontRegardless()
         guard isVisible else { throw MaskPanelError.notVisible }

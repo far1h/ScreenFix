@@ -97,6 +97,22 @@ let maskPanelTests = [
         try expect(panel.level.rawValue > NSWindow.Level.normal.rawValue)
         try expect(panel.level != .screenSaver)
     },
+    TestCase(name: "MaskPanel does not constrain a full-frame mask to visibleFrame") {
+        _ = NSApplication.shared
+        guard let screen = NSScreen.main else {
+            throw TestFailure(description: "main screen unavailable")
+        }
+        let requested = NSRect(
+            x: screen.frame.minX,
+            y: screen.frame.maxY - 100,
+            width: 100,
+            height: 100
+        )
+        let panel = MaskPanelFactory().make(frame: requested)
+        defer { panel.close() }
+
+        try expectEqual(panel.constrainFrameRect(requested, to: screen), requested)
+    },
     TestCase(name: "MaskPanel prepare creates exactly three converted candidates") {
         let log = NSMutableArray()
         let controller = makeController(log: log)
