@@ -859,6 +859,7 @@ test.test("late calibration Save after stop cannot write configuration", functio
 
     test.equal(callbackOk, true)
     test.equal(#case.saveCalls, 0)
+    test.equal(case.calibrationStopCount, 1)
     test.equal(case.controller.started, false)
     test.equal(case.controller.calibrating, false)
 end)

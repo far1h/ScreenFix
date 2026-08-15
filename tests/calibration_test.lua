@@ -58,6 +58,19 @@ local function rectNear(actual, expected)
     end
 end
 
+local function assertActiveMovement(calibration, editor, tap, eventTypes)
+    editor:triggerMouse("mouseDown", 500, 400)
+    local result = tap:emit(eventTypes.leftMouseDragged, { x = 520, y = 420 })
+
+    test.equal(result, false)
+    rectNear(calibration.workingBands[1], {
+        x = 0.42,
+        y = 0.275,
+        w = 0.20,
+        h = 0.50,
+    })
+end
+
 local heldDragCases = {
     {
         name = "body",
@@ -576,6 +589,162 @@ test.test("movement callback contains and reports dispatch errors", function()
     test.rect(calibration.workingBands[1], validBands()[1])
 end)
 
+for _, case in ipairs({
+    {
+        name = "event type",
+        message = "get type failed",
+        event = function()
+            return {
+                getType = function()
+                    error("get type failed", 0)
+                end,
+            }
+        end,
+    },
+    {
+        name = "event location",
+        message = "location failed",
+        event = function(eventTypes)
+            return {
+                getType = function()
+                    return eventTypes.leftMouseDragged
+                end,
+                location = function()
+                    error("location failed", 0)
+                end,
+            }
+        end,
+    },
+}) do
+    test.test(case.name .. " errors return false, report once, and keep input live", function()
+        local canvas = fake.canvas()
+        local eventtap = fake.eventtap()
+        local reportCalls = 0
+        local reported
+        local calibration = newCalibration({
+            canvas = canvas,
+            chooser = fake.chooser(),
+            eventtap = eventtap,
+            screens = function()
+                return {}
+            end,
+            mouseButtons = function()
+                return {}
+            end,
+            geometry = geometry,
+            reportError = function(message)
+                reportCalls = reportCalls + 1
+                reported = message
+                error("report failed", 0)
+            end,
+        })
+        calibration:start(
+            fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 }),
+            validBands(),
+            function() end,
+            function() end
+        )
+        local editor = canvas.canvases[1]
+        local tap = eventtap.taps[1]
+        editor:triggerMouse("mouseDown", 500, 400)
+
+        local safe, result = pcall(tap.callback, case.event(eventtap.event.types))
+
+        test.equal(safe, true)
+        test.equal(result, false)
+        test.equal(reportCalls, 1)
+        test.equal(reported, case.message)
+        test.equal(calibration.editorCanvas, editor)
+        test.equal(calibration.eventTap, tap)
+        test.equal(editor.deleteCount, 0)
+        test.equal(tap.stopCount, 0)
+        tap:emit(eventtap.event.types.leftMouseDragged, { x = 520, y = 420 })
+        test.equal(calibration.workingBands[1].x > 0.40, true)
+    end)
+end
+
+for _, case in ipairs({
+    { name = "drag calculation", message = "drag failed", drawFailure = false },
+    { name = "editor redraw", message = "draw failed", drawFailure = true },
+}) do
+    test.test(case.name .. " errors return false, report once, and recover", function()
+        local canvas = fake.canvas()
+        local eventtap = fake.eventtap()
+        local failOperation = true
+        local failNextDraw = false
+        local reportCalls = 0
+        local reported
+        local failingGeometry = {
+            editorHit = geometry.editorHit,
+            localBands = function(...)
+                if failNextDraw then
+                    failNextDraw = false
+                    failOperation = false
+                    error(case.message, 0)
+                end
+                return geometry.localBands(...)
+            end,
+            dragBand = function(...)
+                if failOperation and not case.drawFailure then
+                    failOperation = false
+                    error(case.message, 0)
+                end
+                local band = geometry.dragBand(...)
+                if failOperation and case.drawFailure then
+                    failNextDraw = true
+                end
+                return band
+            end,
+        }
+        local calibration = newCalibration({
+            canvas = canvas,
+            chooser = fake.chooser(),
+            eventtap = eventtap,
+            screens = function()
+                return {}
+            end,
+            mouseButtons = function()
+                return {}
+            end,
+            geometry = failingGeometry,
+            reportError = function(message)
+                reportCalls = reportCalls + 1
+                reported = message
+                error("report failed", 0)
+            end,
+        })
+        calibration:start(
+            fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 }),
+            validBands(),
+            function() end,
+            function() end
+        )
+        local editor = canvas.canvases[1]
+        local tap = eventtap.taps[1]
+        editor:triggerMouse("mouseDown", 500, 400)
+
+        local firstResult = tap:emit(
+            eventtap.event.types.leftMouseDragged,
+            { x = 520, y = 420 }
+        )
+
+        test.equal(firstResult, false)
+        test.equal(reportCalls, 1)
+        test.equal(reported, case.message)
+        test.equal(calibration.editorCanvas, editor)
+        test.equal(calibration.eventTap, tap)
+        test.equal(editor.deleteCount, 0)
+        test.equal(tap.stopCount, 0)
+        local secondResult = tap:emit(
+            eventtap.event.types.leftMouseDragged,
+            { x = 530, y = 430 }
+        )
+        test.equal(secondResult, false)
+        test.equal(reportCalls, 1)
+        test.equal(calibration.workingBands[1].x > 0.40, true)
+    end)
+end
+
 test.test("event-tap construction failure cleans the candidate editor", function()
     local canvas = fake.canvas()
     local eventtap = fake.eventtap()
@@ -610,6 +779,40 @@ test.test("event-tap construction failure cleans the candidate editor", function
     test.equal(calibration.editorCanvas, nil)
 end)
 
+test.test("event-tap replacement construction failure preserves active input", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    calibration:start(screen, validBands(), function() end, function() end)
+    local activeCanvas = calibration.editorCanvas
+    local activeTap = calibration.eventTap
+    eventtap.failMethod = "new"
+    eventtap.failMethodAt = 2
+
+    local started, startError = calibration:start(screen, validBands(), function() end, function() end)
+
+    test.equal(started, nil)
+    test.equal(startError, "new failure")
+    test.equal(calibration.editorCanvas, activeCanvas)
+    test.equal(calibration.eventTap, activeTap)
+    test.equal(activeCanvas.deleteCount, 0)
+    test.equal(activeTap.stopCount, 0)
+    test.equal(canvas.canvases[2].deleteCount, 1)
+    assertActiveMovement(calibration, activeCanvas, activeTap, eventtap.event.types)
+end)
+
 test.test("event-tap start failure stops the candidate and preserves the active editor", function()
     local canvas = fake.canvas()
     local eventtap = fake.eventtap()
@@ -642,6 +845,7 @@ test.test("event-tap start failure stops the candidate and preserves the active 
     test.equal(activeTap.stopCount, 0)
     test.equal(eventtap.taps[2].stopCount, 1)
     test.equal(canvas.canvases[2].deleteCount, 1)
+    assertActiveMovement(calibration, activeCanvas, activeTap, eventtap.event.types)
 end)
 
 test.test("disabled event tap after start is stopped and preserves the active editor", function()
@@ -677,6 +881,7 @@ test.test("disabled event tap after start is stopped and preserves the active ed
     test.equal(eventtap.taps[2].stopCount, 1)
     test.equal(eventtap.taps[2]:isEnabled(), false)
     test.equal(canvas.canvases[2].deleteCount, 1)
+    assertActiveMovement(calibration, activeCanvas, activeTap, eventtap.event.types)
 end)
 
 test.test("draw makes editable bands and instructions visible without tracking them", function()
@@ -768,6 +973,9 @@ test.test("Save validates and commits the copied working bands", function()
         function() end
     )
     local editor = canvas.canvases[1]
+    local tap = calibration.eventTap
+    local mouseCallback = editor.mouseCallbackFn
+    local working = calibration.workingBands
     calibration.workingBands[1].x = 0.50
     calibration.workingBands[1].y = 0.30
     editor:triggerMouse("mouseDown", 30, 750)
@@ -775,6 +983,11 @@ test.test("Save validates and commits the copied working bands", function()
     test.equal(committed == original, false)
     test.rect(committed[1], { x = 0.50, y = 0.30, w = 0.20, h = 0.50 })
     test.rect(original[1], { x = 0.40, y = 0.25, w = 0.20, h = 0.50 })
+    test.equal(tap.stopCount, 1)
+    test.equal(editor.deleteCount, 1)
+    mouseCallback(editor, "mouseDown", "background", 500, 400)
+    test.equal(tap:emit(tap.eventTypes[2], { x = 520, y = 420 }), false)
+    test.rect(working[1], { x = 0.50, y = 0.30, w = 0.20, h = 0.50 })
 end)
 
 test.test("Save rejects invalid working bands without callbacks or input mutation", function()
@@ -847,6 +1060,7 @@ test.test("Save reports callback failure and keeps the editor state live", funct
         onCancel
     )
     local editor = canvas.canvases[1]
+    local tap = calibration.eventTap
     local working = calibration.workingBands
     local saved, saveError = calibration:save()
 
@@ -855,10 +1069,13 @@ test.test("Save reports callback failure and keeps the editor state live", funct
     test.equal(received == working, false)
     test.equal(reports[1], "save failed")
     test.equal(calibration.editorCanvas, editor)
+    test.equal(calibration.eventTap, tap)
     test.equal(calibration.workingBands, working)
     test.equal(calibration.onCancel, onCancel)
     test.equal(type(editor.mouseCallbackFn), "function")
     test.equal(editor.deleteCount, 0)
+    test.equal(tap.stopCount, 0)
+    test.equal(tap:isEnabled(), true)
     test.rect(working[1], { x = 0.40, y = 0.25, w = 0.20, h = 0.50 })
     calibration:cancel()
     test.equal(cancelCalls, 1)
@@ -965,6 +1182,9 @@ test.test("Cancel discards working changes and calls only onCancel", function()
         end
     )
     local editor = canvas.canvases[1]
+    local tap = calibration.eventTap
+    local mouseCallback = editor.mouseCallbackFn
+    local working = calibration.workingBands
     calibration.workingBands[1].x = 0.50
     calibration.workingBands[1].y = 0.30
     editor:triggerMouse("mouseDown", 150, 750)
@@ -972,7 +1192,11 @@ test.test("Cancel discards working changes and calls only onCancel", function()
     test.equal(saveCalls, 0)
     test.equal(cancelCalls, 1)
     test.equal(editor.deleteCount, 1)
+    test.equal(tap.stopCount, 1)
     test.rect(original[1], { x = 0.40, y = 0.25, w = 0.20, h = 0.50 })
+    mouseCallback(editor, "mouseDown", "background", 500, 400)
+    test.equal(tap:emit(tap.eventTypes[2], { x = 520, y = 420 }), false)
+    test.rect(working[1], { x = 0.50, y = 0.30, w = 0.20, h = 0.50 })
 end)
 
 test.test("stop deletes chooser and canvas and clears callbacks idempotently", function()
@@ -1076,10 +1300,12 @@ end)
 
 local function replacementFailure(method)
     local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
     local saveCalls = 0
     local calibration = newCalibration({
         canvas = canvas,
         chooser = fake.chooser(),
+        eventtap = eventtap,
         screens = function()
             return {}
         end,
@@ -1095,6 +1321,7 @@ local function replacementFailure(method)
     end, function() end)
     local oldCanvas = calibration.editorCanvas
     local oldCallback = oldCanvas.mouseCallbackFn
+    local oldTap = calibration.eventTap
     local oldBands = calibration.workingBands
     local oldSaveFrame = calibration.saveFrame
     local oldCancelFrame = calibration.cancelFrame
@@ -1122,6 +1349,7 @@ local function replacementFailure(method)
         or method .. " failure"
     test.equal(startError, expectedError)
     test.equal(calibration.editorCanvas, oldCanvas)
+    test.equal(calibration.eventTap, oldTap)
     test.equal(oldCanvas.mouseCallbackFn, oldCallback)
     test.equal(calibration.workingBands, oldBands)
     test.equal(calibration.saveFrame, oldSaveFrame)
@@ -1132,7 +1360,13 @@ local function replacementFailure(method)
         test.equal(replacementCanvas.deleteCount, 1)
         test.equal(replacementCanvas.mouseCallbackFn, nil)
     end
-    test.rect(oldBands[1], { x = 0.40, y = 0.25, w = 0.20, h = 0.50 })
+    local replacementTap = eventtap.taps[2]
+    if replacementTap then
+        test.equal(replacementTap.stopCount, 1)
+    end
+    test.equal(oldTap.stopCount, 0)
+    test.equal(oldTap:isEnabled(), true)
+    assertActiveMovement(calibration, oldCanvas, oldTap, eventtap.event.types)
     oldCanvas:triggerMouse("mouseDown", 30, 750)
     test.equal(saveCalls, 1)
 end
@@ -1151,4 +1385,254 @@ end)
 
 test.test("failed replacement level keeps the committed editor live", function()
     replacementFailure("level")
+end)
+
+test.test("failed replacement click activation keeps the committed editor live", function()
+    replacementFailure("clickActivating")
+end)
+
+test.test("failed replacement mouse-event setup keeps the committed editor live", function()
+    replacementFailure("canvasMouseEvents")
+end)
+
+test.test("successful replacement retires old input and rejects its captured callbacks", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    calibration:start(screen, validBands(), function() end, function() end)
+    local oldCanvas = canvas.canvases[1]
+    local oldMouseCallback = oldCanvas.mouseCallbackFn
+    local oldTap = eventtap.taps[1]
+
+    calibration:start(screen, validBands(), function() end, function() end)
+
+    test.equal(oldTap.stopCount, 1)
+    test.equal(oldCanvas.deleteCount, 1)
+    oldMouseCallback(oldCanvas, "mouseDown", "background", 500, 400)
+    test.equal(calibration.drag, nil)
+
+    local newCanvas = canvas.canvases[2]
+    local newTap = eventtap.taps[2]
+    newCanvas:triggerMouse("mouseDown", 500, 400)
+    local before = calibration.workingBands[1]
+    local oldResult = oldTap:emit(eventtap.event.types.leftMouseDragged, { x = 520, y = 420 })
+    test.equal(oldResult, false)
+    test.equal(calibration.workingBands[1], before)
+    local newResult = newTap:emit(eventtap.event.types.leftMouseDragged, { x = 520, y = 420 })
+    test.equal(newResult, false)
+    test.equal(calibration.workingBands[1] == before, false)
+end)
+
+test.test("replacement commit survives prior tap-stop and canvas-delete failures", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    calibration:start(screen, validBands(), function() end, function() end)
+    local oldCanvas = canvas.canvases[1]
+    local oldTap = eventtap.taps[1]
+    eventtap.failMethod = "stop"
+    canvas.failMethod = "delete"
+
+    local safe, started = pcall(function()
+        return calibration:start(screen, validBands(), function() end, function() end)
+    end)
+
+    test.equal(safe, true)
+    test.equal(started, true)
+    test.equal(calibration.editorCanvas, canvas.canvases[2])
+    test.equal(calibration.eventTap, eventtap.taps[2])
+    test.equal(oldTap.stopCount, 1)
+    test.equal(oldCanvas.deleteCount, 1)
+    test.equal(eventtap.taps[2].stopCount, 0)
+    test.equal(canvas.canvases[2].deleteCount, 0)
+    assertActiveMovement(
+        calibration,
+        canvas.canvases[2],
+        eventtap.taps[2],
+        eventtap.event.types
+    )
+end)
+
+test.test("candidate staging leaves the active session live and candidate callbacks dormant", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    calibration:start(screen, validBands(), function() end, function() end)
+    local oldToken = calibration.sessionToken
+    local oldBands = calibration.workingBands
+    local oldMouseCallback = canvas.canvases[1].mouseCallbackFn
+    local oldTap = eventtap.taps[1]
+    local originalNew = eventtap.new
+    eventtap.new = function(eventTypes, callback)
+        local tap = originalNew(eventTypes, callback)
+        if #eventtap.newCalls == 2 then
+            local candidateCanvas = canvas.canvases[2]
+            candidateCanvas.mouseCallbackFn(candidateCanvas, "mouseDown", "background", 500, 400)
+            tap:emit(eventtap.event.types.leftMouseDragged, { x = 520, y = 420 })
+            oldMouseCallback(canvas.canvases[1], "mouseDown", "background", 500, 400)
+            oldTap:emit(eventtap.event.types.leftMouseDragged, { x = 520, y = 420 })
+        end
+        return tap
+    end
+
+    calibration:start(screen, validBands(), function() end, function() end)
+
+    test.equal(calibration.sessionToken > oldToken, true)
+    rectNear(oldBands[1], { x = 0.42, y = 0.275, w = 0.20, h = 0.50 })
+    test.rect(calibration.workingBands[1], validBands()[1])
+    test.equal(calibration.drag, nil)
+end)
+
+test.test("Save does not stop a replacement started reentrantly by onSave", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    calibration:start(screen, validBands(), function()
+        calibration:start(screen, validBands(), function() end, function() end)
+    end, function() end)
+
+    local saved = calibration:save()
+
+    test.equal(saved, true)
+    test.equal(calibration.editorCanvas, canvas.canvases[2])
+    test.equal(calibration.eventTap, eventtap.taps[2])
+    test.equal(canvas.canvases[1].deleteCount, 1)
+    test.equal(eventtap.taps[1].stopCount, 1)
+    test.equal(canvas.canvases[2].deleteCount, 0)
+    test.equal(eventtap.taps[2].stopCount, 0)
+end)
+
+test.test("stop invalidates input before resilient ordered teardown", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local fullFrame = { x = 0, y = 0, w = 1000, h = 800 }
+    calibration:start(
+        fake.screen("display", "Display", fullFrame),
+        validBands(),
+        function() end,
+        function() end
+    )
+    local editor = canvas.canvases[1]
+    local tap = eventtap.taps[1]
+    local bands = calibration.workingBands
+    local mouseCallback = editor.mouseCallbackFn
+    local tapSnapshot
+    local deleteSnapshot
+    local originalTapStop = tap.stop
+    tap.stop = function(self)
+        tapSnapshot = {
+            token = calibration.sessionToken,
+            eventTap = calibration.eventTap,
+            editorCanvas = calibration.editorCanvas,
+            fullFrame = calibration.fullFrame,
+        }
+        return originalTapStop(self)
+    end
+    local originalDelete = editor.delete
+    editor.delete = function(self)
+        deleteSnapshot = {
+            session = calibration.session,
+            editorCanvas = calibration.editorCanvas,
+            fullFrame = calibration.fullFrame,
+            workingBands = calibration.workingBands,
+            onSave = calibration.onSave,
+            onCancel = calibration.onCancel,
+            drag = calibration.drag,
+            saveFrame = calibration.saveFrame,
+            cancelFrame = calibration.cancelFrame,
+            mouseCallback = self.mouseCallbackFn,
+        }
+        return originalDelete(self)
+    end
+    eventtap.failMethod = "stop"
+    canvas.failMethod = "delete"
+
+    local firstSafe = pcall(function()
+        calibration:stop()
+    end)
+    local secondSafe = pcall(function()
+        calibration:stop()
+    end)
+
+    test.equal(firstSafe, true)
+    test.equal(secondSafe, true)
+    test.equal(tapSnapshot.token, nil)
+    test.equal(tapSnapshot.eventTap, nil)
+    test.equal(tapSnapshot.editorCanvas, editor)
+    test.equal(tapSnapshot.fullFrame, fullFrame)
+    test.equal(deleteSnapshot.session, nil)
+    test.equal(deleteSnapshot.editorCanvas, nil)
+    test.equal(deleteSnapshot.fullFrame, nil)
+    test.equal(deleteSnapshot.workingBands, nil)
+    test.equal(deleteSnapshot.onSave, nil)
+    test.equal(deleteSnapshot.onCancel, nil)
+    test.equal(deleteSnapshot.drag, nil)
+    test.equal(deleteSnapshot.saveFrame, nil)
+    test.equal(deleteSnapshot.cancelFrame, nil)
+    test.equal(deleteSnapshot.mouseCallback, nil)
+    test.equal(tap.stopCount, 1)
+    test.equal(editor.deleteCount, 1)
+    mouseCallback(editor, "mouseDown", "background", 500, 400)
+    test.equal(tap:emit(eventtap.event.types.leftMouseDragged, { x = 520, y = 420 }), false)
+    test.rect(bands[1], validBands()[1])
 end)

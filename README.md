@@ -31,12 +31,12 @@ region; physically black or colored pixels may remain visible.
 
 - macOS 13 Ventura or later.
 - The [current stable Hammerspoon release](https://www.hammerspoon.org/).
-- Accessibility permission for moving and resizing windows: System Settings >
-  Privacy & Security > Accessibility > Hammerspoon.
+- Accessibility permission for calibration pointer movement and for moving or resizing
+  windows: System Settings > Privacy & Security > Accessibility > Hammerspoon.
 
-The black mask, monitor selection, and calibration work without Accessibility permission.
-Until permission is granted, the `SF` menu reports that window protection is paused.
-macOS may require Hammerspoon to be relaunched after permission is granted.
+The black mask and monitor selection work without Accessibility permission. Calibration
+movement and window protection remain unavailable until permission is granted. macOS may
+require Hammerspoon to be relaunched afterward.
 
 ## Install
 
@@ -67,9 +67,11 @@ Launch Hammerspoon, or choose **Reload Config** if it is already running. The `S
 ## First run
 
 1. Select the damaged display in the chooser.
-2. Drag the translucent red bands or their white edges until they cover the damaged
-   region. The on-screen instruction identifies these drag targets.
-3. Choose **Save**. ScreenFix remembers the display and calibration, switches to
+2. Move a band from its red center, or resize it from a white edge, until it covers the
+   damaged region.
+3. With a mouse, hold, drag, and release. With a trackpad, tap the target once, move the
+   pointer without holding, then tap again. No Shift key is needed.
+4. Choose **Save**. ScreenFix remembers the display and calibration, switches to
    click-through masks, and starts window protection when Accessibility is available.
 
 Choose **Calibrate** again from the `SF` menu, or choose the gray **Cancel**

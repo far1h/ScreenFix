@@ -136,8 +136,41 @@ local function stopEventTap(eventTap)
     end
 end
 
+local function syncSession(calibration, session)
+    calibration.session = session
+    calibration.editorCanvas = session.editorCanvas
+    calibration.eventTap = session.eventTap
+    calibration.fullFrame = session.fullFrame
+    calibration.workingBands = session.workingBands
+    calibration.onSave = session.onSave
+    calibration.onCancel = session.onCancel
+    calibration.drag = session.drag
+    calibration.saveFrame = session.saveFrame
+    calibration.cancelFrame = session.cancelFrame
+end
+
+local function clearSession(calibration)
+    calibration.session = nil
+    calibration.editorCanvas = nil
+    calibration.eventTap = nil
+    calibration.fullFrame = nil
+    calibration.workingBands = nil
+    calibration.onSave = nil
+    calibration.onCancel = nil
+    calibration.drag = nil
+    calibration.saveFrame = nil
+    calibration.cancelFrame = nil
+end
+
+local function setDrag(calibration, session, drag)
+    session.drag = drag
+    if calibration.session == session then
+        calibration.drag = drag
+    end
+end
+
 function M.new(deps)
-    return setmetatable({ deps = deps }, Calibration)
+    return setmetatable({ deps = deps, nextSessionToken = 0 }, Calibration)
 end
 
 function Calibration:selectScreen(onSelect)
@@ -174,19 +207,22 @@ function Calibration:selectScreen(onSelect)
     return true
 end
 
-function Calibration:draw()
-    local localBands = self.deps.geometry.localBands(self.fullFrame, self.workingBands)
-    self.editorCanvas[1] = {
+local function renderEditor(calibration, session)
+    local localBands = calibration.deps.geometry.localBands(
+        session.fullFrame,
+        session.workingBands
+    )
+    session.editorCanvas[1] = {
         type = "rectangle",
         action = "fill",
         fillColor = { white = 0, alpha = 0 },
-        frame = { x = 0, y = 0, w = self.fullFrame.w, h = self.fullFrame.h },
+        frame = { x = 0, y = 0, w = session.fullFrame.w, h = session.fullFrame.h },
         trackMouseByBounds = true,
         trackMouseDown = true,
     }
 
     for index, band in ipairs(localBands) do
-        self.editorCanvas[index + 1] = {
+        session.editorCanvas[index + 1] = {
             type = "rectangle",
             action = "strokeAndFill",
             fillColor = { red = 0.95, green = 0.12, blue = 0.08, alpha = 0.45 },
@@ -199,7 +235,7 @@ function Calibration:draw()
     local elementIndex = 5
     for _, band in ipairs(localBands) do
         for _, frame in ipairs(handleFrames(band)) do
-            self.editorCanvas[elementIndex] = {
+            session.editorCanvas[elementIndex] = {
                 type = "rectangle",
                 action = "fill",
                 fillColor = { white = 1, alpha = 1 },
@@ -209,30 +245,33 @@ function Calibration:draw()
         end
     end
 
-    local controlY = self.fullFrame.h - CONTROL_MARGIN - CONTROL_HEIGHT
-    self.saveFrame = {
+    local controlY = session.fullFrame.h - CONTROL_MARGIN - CONTROL_HEIGHT
+    session.saveFrame = {
         x = CONTROL_MARGIN,
         y = controlY,
         w = CONTROL_WIDTH,
         h = CONTROL_HEIGHT,
     }
-    self.cancelFrame = {
+    session.cancelFrame = {
         x = CONTROL_MARGIN + CONTROL_WIDTH + CONTROL_MARGIN,
         y = controlY,
         w = CONTROL_WIDTH,
         h = CONTROL_HEIGHT,
     }
-    self.editorCanvas[17] = control(self.saveFrame, { red = 0.10, green = 0.55, blue = 0.20, alpha = 1 })
-    self.editorCanvas[18] = label(self.saveFrame, "Save")
-    self.editorCanvas[19] = control(self.cancelFrame, { white = 0.25, alpha = 1 })
-    self.editorCanvas[20] = label(self.cancelFrame, "Cancel")
+    session.editorCanvas[17] = control(
+        session.saveFrame,
+        { red = 0.10, green = 0.55, blue = 0.20, alpha = 1 }
+    )
+    session.editorCanvas[18] = label(session.saveFrame, "Save")
+    session.editorCanvas[19] = control(session.cancelFrame, { white = 0.25, alpha = 1 })
+    session.editorCanvas[20] = label(session.cancelFrame, "Cancel")
     local instructionFrame = {
         x = CONTROL_MARGIN,
         y = CONTROL_MARGIN,
         w = INSTRUCTION_WIDTH,
         h = INSTRUCTION_HEIGHT,
     }
-    self.editorCanvas[21] = {
+    session.editorCanvas[21] = {
         type = "rectangle",
         action = "strokeAndFill",
         fillColor = { white = 0, alpha = 0.82 },
@@ -241,42 +280,59 @@ function Calibration:draw()
         strokeColor = { white = 1, alpha = 1 },
         strokeWidth = 2,
     }
-    self.editorCanvas[22] = label(instructionFrame, "Drag red bands or white edges")
+    session.editorCanvas[22] = label(instructionFrame, "Drag red bands or white edges")
+
+    if calibration.session == session then
+        calibration.saveFrame = session.saveFrame
+        calibration.cancelFrame = session.cancelFrame
+    end
 end
 
-function Calibration:beginDrag(point)
-    if contains(self.saveFrame, point) then
-        self:save()
+function Calibration:draw()
+    if self.session then
+        renderEditor(self, self.session)
+    end
+end
+
+local function beginDrag(calibration, session, point)
+    if contains(session.saveFrame, point) then
+        calibration:save()
         return
     end
-    if contains(self.cancelFrame, point) then
-        self:cancel()
+    if contains(session.cancelFrame, point) then
+        calibration:cancel()
         return
     end
-    if self.drag and self.drag.latched then
-        self.drag = nil
+    if session.drag and session.drag.latched then
+        setDrag(calibration, session, nil)
         return
     end
 
-    local bands = self.deps.geometry.localBands(self.fullFrame, self.workingBands)
-    local hit = self.deps.geometry.editorHit(point, bands, HANDLE_WIDTH)
+    local bands = calibration.deps.geometry.localBands(session.fullFrame, session.workingBands)
+    local hit = calibration.deps.geometry.editorHit(point, bands, HANDLE_WIDTH)
     if hit then
         hit.pressPoint = { x = point.x, y = point.y }
         hit.lastPoint = { x = point.x, y = point.y }
         hit.moved = false
         hit.latched = false
     end
-    self.drag = hit
+    setDrag(calibration, session, hit)
 end
 
-function Calibration:updateDrag(point)
-    if not self.drag then
+function Calibration:beginDrag(point)
+    if self.session then
+        beginDrag(self, self.session, point)
+    end
+end
+
+local function updateDrag(calibration, session, point)
+    if not session.drag then
         return
     end
 
-    if not self.drag.moved then
-        local pressDeltaX = point.x - self.drag.pressPoint.x
-        local pressDeltaY = point.y - self.drag.pressPoint.y
+    if not session.drag.moved then
+        local pressDeltaX = point.x - session.drag.pressPoint.x
+        local pressDeltaY = point.y - session.drag.pressPoint.y
         if pressDeltaX * pressDeltaX + pressDeltaY * pressDeltaY
             < MOVEMENT_THRESHOLD * MOVEMENT_THRESHOLD
         then
@@ -285,18 +341,24 @@ function Calibration:updateDrag(point)
     end
 
     local delta = {
-        x = point.x - self.drag.lastPoint.x,
-        y = point.y - self.drag.lastPoint.y,
+        x = point.x - session.drag.lastPoint.x,
+        y = point.y - session.drag.lastPoint.y,
     }
-    self.workingBands[self.drag.index] = self.deps.geometry.dragBand(
-        self.workingBands[self.drag.index],
-        self.drag,
+    session.workingBands[session.drag.index] = calibration.deps.geometry.dragBand(
+        session.workingBands[session.drag.index],
+        session.drag,
         delta,
-        self.fullFrame
+        session.fullFrame
     )
-    self.drag.lastPoint = { x = point.x, y = point.y }
-    self.drag.moved = true
-    self:draw()
+    session.drag.lastPoint = { x = point.x, y = point.y }
+    session.drag.moved = true
+    renderEditor(calibration, session)
+end
+
+function Calibration:updateDrag(point)
+    if self.session then
+        updateDrag(self, self.session, point)
+    end
 end
 
 function Calibration:report(err)
@@ -306,6 +368,7 @@ function Calibration:report(err)
 end
 
 function Calibration:save()
+    local invokingToken = self.sessionToken
     local valid, validationError = validateBands(self.workingBands)
     if not valid then
         return nil, validationError
@@ -319,7 +382,9 @@ function Calibration:save()
         return nil, callbackError
     end
 
-    self:stop()
+    if self.sessionToken == invokingToken then
+        self:stop()
+    end
     return true
 end
 
@@ -336,20 +401,18 @@ end
 
 function Calibration:stop()
     local chooser = self.screenChooser
-    local editorCanvas = self.editorCanvas
+    local session = self.session
     local eventTap = self.eventTap
+    self.sessionToken = nil
     self.screenChooser = nil
-    self.editorCanvas = nil
     self.eventTap = nil
-    self.fullFrame = nil
-    self.workingBands = nil
-    self.onSave = nil
-    self.onCancel = nil
-    self.drag = nil
+    stopEventTap(eventTap)
+    clearSession(self)
 
     deleteChooser(chooser)
-    stopEventTap(eventTap)
-    deleteEditor(editorCanvas)
+    if session then
+        deleteEditor(session.editorCanvas)
+    end
 end
 
 function Calibration:start(screen, bands, onSave, onCancel)
@@ -362,80 +425,69 @@ function Calibration:start(screen, bands, onSave, onCancel)
         return nil, validationError
     end
 
-    local fullFrame
-    local editorCanvas
-    local eventTap
+    self.nextSessionToken = self.nextSessionToken + 1
+    local candidateToken = self.nextSessionToken
+
+    local candidate = {
+        token = candidateToken,
+        workingBands = copyBands(bands),
+        onSave = onSave,
+        onCancel = onCancel,
+    }
     local allocated, allocationError = pcall(function()
-        fullFrame = screen:fullFrame()
-        editorCanvas = self.deps.canvas.new(fullFrame)
-        if not editorCanvas then
+        candidate.fullFrame = screen:fullFrame()
+        candidate.editorCanvas = self.deps.canvas.new(candidate.fullFrame)
+        if not candidate.editorCanvas then
             error("canvas construction failed", 0)
         end
     end)
     if not allocated then
-        deleteEditor(editorCanvas)
+        deleteEditor(candidate.editorCanvas)
         return nil, allocationError
     end
 
-    local previous = {
-        screenChooser = self.screenChooser,
-        editorCanvas = self.editorCanvas,
-        eventTap = self.eventTap,
-        fullFrame = self.fullFrame,
-        workingBands = self.workingBands,
-        onSave = self.onSave,
-        onCancel = self.onCancel,
-        drag = self.drag,
-        saveFrame = self.saveFrame,
-        cancelFrame = self.cancelFrame,
-    }
-    self.screenChooser = nil
-    self.editorCanvas = editorCanvas
-    self.fullFrame = fullFrame
-    self.workingBands = copyBands(bands)
-    self.onSave = onSave
-    self.onCancel = onCancel
-    self.drag = nil
-
     local prepared, prepareError = pcall(function()
-        self:draw()
-        editorCanvas:level("assistiveTechHigh")
-        editorCanvas:clickActivating(true)
-        editorCanvas:canvasMouseEvents(true, false, false, false)
-        editorCanvas:mouseCallback(function(_, message, _, x, y)
+        renderEditor(self, candidate)
+        candidate.editorCanvas:level("assistiveTechHigh")
+        candidate.editorCanvas:clickActivating(true)
+        candidate.editorCanvas:canvasMouseEvents(true, false, false, false)
+        candidate.editorCanvas:mouseCallback(function(_, message, _, x, y)
             pcall(function()
-                if message == "mouseDown" then
-                    self:beginDrag({ x = x, y = y })
+                if self.sessionToken == candidateToken and message == "mouseDown" then
+                    beginDrag(self, candidate, { x = x, y = y })
                 end
             end)
         end)
         local eventTypes = self.deps.eventtap.event.types
-        eventTap = self.deps.eventtap.new({
+        candidate.eventTap = self.deps.eventtap.new({
             eventTypes.mouseMoved,
             eventTypes.leftMouseDragged,
             eventTypes.leftMouseUp,
         }, function(event)
             local dispatched, dispatchError = pcall(function()
+                if self.sessionToken ~= candidateToken then
+                    return
+                end
                 local eventType = event:getType()
                 local point = event:location()
                 local localPoint = {
-                    x = point.x - self.fullFrame.x,
-                    y = point.y - self.fullFrame.y,
+                    x = point.x - candidate.fullFrame.x,
+                    y = point.y - candidate.fullFrame.y,
                 }
 
                 if eventType == eventTypes.leftMouseDragged then
-                    self:updateDrag(localPoint)
+                    updateDrag(self, candidate, localPoint)
                 elseif eventType == eventTypes.mouseMoved
-                    and self.drag
-                    and self.drag.latched
+                    and candidate.drag
+                    and candidate.drag.latched
                 then
-                    self:updateDrag(localPoint)
+                    updateDrag(self, candidate, localPoint)
                 elseif eventType == eventTypes.leftMouseUp then
-                    if self.drag and not self.drag.latched then
-                        if self.drag.moved then
-                            self.drag = nil
+                    if candidate.drag and not candidate.drag.latched then
+                        if candidate.drag.moved then
+                            setDrag(self, candidate, nil)
                         else
-                            self.drag.latched = true
+                            candidate.drag.latched = true
                         end
                     end
                 end
@@ -445,36 +497,32 @@ function Calibration:start(screen, bands, onSave, onCancel)
             end
             return false
         end)
-        if not eventTap then
+        if not candidate.eventTap then
             error("event tap construction failed", 0)
         end
-        eventTap:start()
-        if not eventTap:isEnabled() then
+        candidate.eventTap:start()
+        if not candidate.eventTap:isEnabled() then
             error("event tap failed to start", 0)
         end
-        editorCanvas:show()
+        candidate.editorCanvas:show()
     end)
 
     if not prepared then
-        stopEventTap(eventTap)
-        deleteEditor(editorCanvas)
-        self.screenChooser = previous.screenChooser
-        self.editorCanvas = previous.editorCanvas
-        self.eventTap = previous.eventTap
-        self.fullFrame = previous.fullFrame
-        self.workingBands = previous.workingBands
-        self.onSave = previous.onSave
-        self.onCancel = previous.onCancel
-        self.drag = previous.drag
-        self.saveFrame = previous.saveFrame
-        self.cancelFrame = previous.cancelFrame
+        stopEventTap(candidate.eventTap)
+        deleteEditor(candidate.editorCanvas)
         return nil, prepareError
     end
 
-    self.eventTap = eventTap
-    deleteChooser(previous.screenChooser)
-    stopEventTap(previous.eventTap)
-    deleteEditor(previous.editorCanvas)
+    local previousChooser = self.screenChooser
+    local previousSession = self.session
+    self.screenChooser = nil
+    self.sessionToken = candidateToken
+    syncSession(self, candidate)
+    deleteChooser(previousChooser)
+    if previousSession then
+        stopEventTap(previousSession.eventTap)
+        deleteEditor(previousSession.editorCanvas)
+    end
 
     return true
 end
