@@ -1,4 +1,6 @@
 local M = {}
+-- Covers normalized floating drift after scaling, without masking real sub-point gaps.
+local POINT_TOLERANCE_FACTOR = 2 ^ -48
 local SNAP_PARTS = {
     body = true,
     bottom = true,
@@ -117,25 +119,31 @@ local function isPositiveInteger(value)
     return isFiniteNumber(value) and value >= 1 and value % 1 == 0
 end
 
-local function isSnapCandidate(rect, fullFrame)
-    return withinUnitBounds(rect)
-        and rect.w * fullFrame.w >= 20
-        and rect.h * fullFrame.h >= 20
+local function pointTolerance(pointScale)
+    return pointScale * POINT_TOLERANCE_FACTOR
 end
 
-local function correctedRect(rect, axis, edge, correction, target)
+local function isSnapCandidate(rect, fullFrame)
+    return withinUnitBounds(rect)
+        and rect.w * fullFrame.w + pointTolerance(fullFrame.w) >= 20
+        and rect.h * fullFrame.h + pointTolerance(fullFrame.h) >= 20
+end
+
+local function correctedRect(rect, axis, edge, target, resizeEdge)
     local result = copyRect(rect)
     local position = axis == "x" and "x" or "y"
     local size = axis == "x" and "w" or "h"
 
-    if edge == "body" then
-        result[position] = result[position] + correction
-    elseif edge == "leading" then
+    if resizeEdge == "leading" then
         local fixedEnd = result[position] + result[size]
         result[position] = target
         result[size] = fixedEnd - target
-    else
+    elseif resizeEdge == "trailing" then
         result[size] = target - result[position]
+    elseif edge == "leading" then
+        result[position] = target
+    else
+        result[position] = target - result[size]
     end
 
     return result
@@ -145,6 +153,7 @@ local function snapAxis(rect, axis, edges, targets, thresholdPoints, fullFrame, 
     local position = axis == "x" and "x" or "y"
     local size = axis == "x" and "w" or "h"
     local pointScale = fullFrame[size]
+    local tolerancePoints = pointTolerance(pointScale)
     local best
     local bestDistance
 
@@ -157,14 +166,14 @@ local function snapAxis(rect, axis, edges, targets, thresholdPoints, fullFrame, 
             local correction = target - edgePosition
             local distance = math.abs(correction)
             local distancePoints = distance * pointScale
-            local candidate = correctedRect(rect, axis, resizeEdge or "body", correction, target)
+            local candidate = correctedRect(rect, axis, edge, target, resizeEdge)
 
-            if distancePoints <= thresholdPoints
+            if distancePoints <= thresholdPoints + tolerancePoints
                 and isSnapCandidate(candidate, fullFrame)
-                and (not bestDistance or distance < bestDistance)
+                and (not bestDistance or distancePoints < bestDistance - tolerancePoints)
             then
                 best = candidate
-                bestDistance = distance
+                bestDistance = distancePoints
             end
         end
     end

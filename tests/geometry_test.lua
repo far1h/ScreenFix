@@ -448,9 +448,41 @@ test.test("snapBand classifies identical represented peer corrections consistent
         12
     )
 
-    test.rect(constructed, constructedRaw)
-    test.rect(literal, literalRaw)
+    test.equal(constructed.x, constructedTarget)
+    test.equal(literal.x, literalTarget)
 end)
+
+local exactPointGapCases = {
+    { width = 3440, start = 1711 },
+    { width = 1920, start = 965 },
+}
+
+for _, case in ipairs(exactPointGapCases) do
+    local gapCase = case
+
+    test.test("snapBand accepts an integer 12-point peer gap on " .. gapCase.width, function()
+        local target = (gapCase.start + 12) / gapCase.width
+        local raw = {
+            x = gapCase.start / gapCase.width,
+            y = 0.20,
+            w = 0.20,
+            h = 0.20,
+        }
+        local snapped = geometry.snapBand(
+            raw,
+            2,
+            "body",
+            {
+                { x = target, y = 0.70, w = 0.20, h = 0.10 },
+                raw,
+            },
+            { x = 0, y = 0, w = gapCase.width, h = 1000 },
+            12
+        )
+
+        test.equal(snapped.x, target)
+    end)
+end
 
 test.test("snapBand aligns x with a vertically stacked peer and excludes the active band", function()
     local peer = { x = 0.40, y = 0.10, w = 0.20, h = 0.20 }
@@ -480,6 +512,52 @@ test.test("snapBand aligns y with a side-by-side peer", function()
     )
 
     test.rect(snapped, { x = 0.70, y = 0.40, w = 0.20, h = 0.20 })
+end)
+
+test.test("snapBand constructs a trailing screen seam directly from its target", function()
+    local width = 3440
+    local raw = {
+        x = 1 / width,
+        y = 0.20,
+        w = (width - 1) / width,
+        h = 0.20,
+    }
+    local snapped = geometry.snapBand(
+        raw,
+        1,
+        "body",
+        { raw },
+        { x = 0, y = 0, w = width, h = 1000 },
+        12
+    )
+
+    test.equal(snapped.x, 1 - raw.w)
+    test.equal(snapped.x + snapped.w, 1)
+end)
+
+test.test("snapBand constructs a trailing peer seam directly from its target", function()
+    local width = 3440
+    local target = 58 / width
+    local raw = {
+        x = 20 / width,
+        y = 0.20,
+        w = 50 / width,
+        h = 0.20,
+    }
+    local snapped = geometry.snapBand(
+        raw,
+        2,
+        "body",
+        {
+            { x = target, y = 0.70, w = 0.20, h = 0.10 },
+            raw,
+        },
+        { x = 0, y = 0, w = width, h = 1000 },
+        12
+    )
+
+    test.equal(snapped.x, target - raw.w)
+    test.equal(snapped.x + snapped.w, target)
 end)
 
 test.test("snapBand aligns every resize handle with peer starts and ends", function()
@@ -566,6 +644,25 @@ test.test("snapBand prefers screen start to screen end on an equal correction", 
         "body",
         {},
         { x = 0, y = 0, w = 1024, h = 1000 },
+        12
+    )
+
+    test.equal(snapped.x, 0)
+end)
+
+test.test("snapBand preserves screen target order for a conceptual equal-distance tie", function()
+    local width = 1920
+    local snapped = geometry.snapBand(
+        {
+            x = 12 / width,
+            y = 0.20,
+            w = (width - 24) / width,
+            h = 0.20,
+        },
+        1,
+        "body",
+        {},
+        { x = 0, y = 0, w = width, h = 1000 },
         12
     )
 
@@ -770,6 +867,50 @@ for _, case in ipairs(exactResizeCases) do
     end)
 end
 
+local integerPointResizeCases = {
+    {
+        part = "left",
+        raw = { x = 92 / 3440, y = 0.20, w = 30 / 3440, h = 0.20 },
+        peer = { x = 102 / 3440, y = 0.70, w = 0.30, h = 0.10 },
+        target = 102 / 3440,
+    },
+    {
+        part = "right",
+        raw = { x = 102 / 3440, y = 0.20, w = 30 / 3440, h = 0.20 },
+        peer = { x = 122 / 3440, y = 0.70, w = 0.30, h = 0.10 },
+        target = 122 / 3440,
+    },
+    {
+        part = "top",
+        raw = { x = 0.20, y = 90 / 1920, w = 0.20, h = 30 / 1920 },
+        peer = { x = 0.70, y = 100 / 1920, w = 0.10, h = 0.30 },
+        target = 100 / 1920,
+    },
+    {
+        part = "bottom",
+        raw = { x = 0.20, y = 100 / 1920, w = 0.20, h = 30 / 1920 },
+        peer = { x = 0.70, y = 120 / 1920, w = 0.10, h = 0.30 },
+        target = 120 / 1920,
+    },
+}
+
+for _, case in ipairs(integerPointResizeCases) do
+    local resizeCase = case
+
+    test.test("snapBand accepts an integer 20-point " .. resizeCase.part .. " resize", function()
+        local snapped = geometry.snapBand(
+            resizeCase.raw,
+            2,
+            resizeCase.part,
+            { resizeCase.peer },
+            { x = 0, y = 0, w = 3440, h = 1920 },
+            12
+        )
+
+        test.equal(resizedEdge(snapped, resizeCase.part), resizeCase.target)
+    end)
+end
+
 test.test("snapBand rejects a resize result just below 20 points wide", function()
     local raw = { x = 0.50, y = 0.20, w = 0.025, h = 0.20 }
     local snapped = geometry.snapBand(
@@ -784,7 +925,7 @@ test.test("snapBand rejects a resize result just below 20 points wide", function
     test.rect(snapped, raw)
 end)
 
-test.test("snapBand rejects an adversarial resize below 20 rendered points", function()
+test.test("snapBand accepts a 20-point resize within machine-scale drift", function()
     local raw = { x = 0.002, y = 0.20, w = 0.025, h = 0.20 }
     local snapped = geometry.snapBand(
         raw,
@@ -795,7 +936,8 @@ test.test("snapBand rejects an adversarial resize below 20 rendered points", fun
         12
     )
 
-    test.rect(snapped, raw)
+    test.equal(snapped.x + snapped.w, 0.022)
+    test.equal(snapped.w, 0.022 - raw.x)
 end)
 
 local subMinimumResizeCases = {
