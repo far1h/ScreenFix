@@ -260,9 +260,10 @@ test.test("start gives canvas only mouse-down ownership and starts one movement 
     test.equal(tap.eventTypes[2], eventtap.event.types.leftMouseDragged)
     test.equal(tap.eventTypes[3], eventtap.event.types.leftMouseUp)
     test.equal(tap.startCount, 1)
-    local callbackResult = tap:emit(eventtap.event.types.mouseMoved, { x = 10, y = 20 })
+    local callbackResult, event = tap:emit(eventtap.event.types.mouseMoved, { x = 10, y = 20 })
     test.equal(callbackResult, false)
     test.equal(tap.callbackResults[1], false)
+    test.equal(event.getTypeCallCount, 1)
 end)
 
 test.test("event-tap construction failure cleans the candidate editor", function()
@@ -330,6 +331,41 @@ test.test("event-tap start failure stops the candidate and preserves the active 
     test.equal(activeCanvas.deleteCount, 0)
     test.equal(activeTap.stopCount, 0)
     test.equal(eventtap.taps[2].stopCount, 1)
+    test.equal(canvas.canvases[2].deleteCount, 1)
+end)
+
+test.test("disabled event tap after start is stopped and preserves the active editor", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = geometry,
+    })
+    local screen = fake.screen("display", "Display", { x = 0, y = 0, w = 1000, h = 800 })
+    calibration:start(screen, validBands(), function() end, function() end)
+    local activeCanvas = calibration.editorCanvas
+    local activeTap = calibration.eventTap
+    eventtap.startEnabled = false
+
+    local started, startError = calibration:start(screen, validBands(), function() end, function() end)
+
+    test.equal(started, nil)
+    test.equal(startError, "event tap failed to start")
+    test.equal(calibration.editorCanvas, activeCanvas)
+    test.equal(calibration.eventTap, activeTap)
+    test.equal(activeCanvas.deleteCount, 0)
+    test.equal(activeTap.stopCount, 0)
+    test.equal(eventtap.taps[2].startCount, 1)
+    test.equal(eventtap.taps[2].stopCount, 1)
+    test.equal(eventtap.taps[2]:isEnabled(), false)
     test.equal(canvas.canvases[2].deleteCount, 1)
 end)
 

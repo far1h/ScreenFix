@@ -400,13 +400,17 @@ function Calibration:start(screen, bands, onSave, onCancel)
             eventTypes.mouseMoved,
             eventTypes.leftMouseDragged,
             eventTypes.leftMouseUp,
-        }, function(_)
+        }, function(event)
+            event:getType()
             return false
         end)
         if not eventTap then
             error("event tap construction failed", 0)
         end
         eventTap:start()
+        if not eventTap:isEnabled() then
+            error("event tap failed to start", 0)
+        end
         editorCanvas:show()
     end)
 

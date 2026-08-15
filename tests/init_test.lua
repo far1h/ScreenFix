@@ -298,6 +298,9 @@ test.test("init assembles exact production dependencies and starts one controlle
 
         test.equal(captured.calibrationDeps.canvas, hs.canvas)
         test.equal(captured.calibrationDeps.chooser, hs.chooser)
+        test.equal(hs.eventtap.event.types.mouseMoved, 5)
+        test.equal(hs.eventtap.event.types.leftMouseDragged, 6)
+        test.equal(hs.eventtap.event.types.leftMouseUp, 2)
         test.equal(captured.calibrationDeps.eventtap, hs.eventtap)
         test.equal(
             captured.calibrationDeps.eventtap.event.types.mouseMoved,

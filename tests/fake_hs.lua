@@ -200,6 +200,7 @@ function M.eventtap()
         local tap = {
             callback = callback,
             callbackResults = {},
+            enabled = false,
             eventTypes = eventTypes,
             startCount = 0,
             stopCount = 0,
@@ -208,13 +209,20 @@ function M.eventtap()
         function tap:start()
             self.startCount = self.startCount + 1
             record("start", self)
+            self.enabled = module.startEnabled ~= false
             return self
         end
 
         function tap:stop()
             self.stopCount = self.stopCount + 1
             record("stop", self)
+            self.enabled = false
             return self
+        end
+
+        function tap:isEnabled()
+            record("isEnabled", self)
+            return self.enabled
         end
 
         function tap:emit(eventType, point)
