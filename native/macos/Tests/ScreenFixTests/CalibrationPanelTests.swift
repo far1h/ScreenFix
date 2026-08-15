@@ -17,6 +17,7 @@ private final class FakeCalibrationSurface: CalibrationSurface {
     var onClose: (() -> Void)?
     private(set) var handler: ((CalibrationPointerEvent) -> Void)?
     private(set) var renderedBands: [NormalizedRect] = []
+    private(set) var renderedControls: CalibrationControlLayout?
 
     init(
         identifier: Int,
@@ -44,6 +45,7 @@ private final class FakeCalibrationSurface: CalibrationSurface {
         log.add("render-\(identifier)")
         if failRender { throw FakeCalibrationError.requested }
         renderedBands = bands
+        renderedControls = controls
     }
 
     func orderAndVerify() throws {
@@ -122,6 +124,52 @@ let calibrationPanelTests = [
             "create-1", "configure-1", "render-1", "order-1", "visible-1", "close-90",
         ])
         try expect(controller.isEditing)
+    },
+    TestCase(name: "CalibrationPanel converts negative-origin visible frame into flipped safe controls") {
+        let log = NSMutableArray()
+        let surfaces = NSMutableArray()
+        let controller = makeCalibrationController(log: log, surfaces: surfaces)
+        let visibleFrame = NSRect(x: -920, y: -150, width: 820, height: 712)
+
+        let prepared = try controller.prepare(
+            screenFrame: panelFrame,
+            visibleFrame: visibleFrame,
+            bands: panelBands,
+            onSave: { _ in },
+            onCancel: {}
+        )
+        try controller.commit(prepared)
+
+        let surface = try requireSurface(surfaces.firstObject as? FakeCalibrationSurface)
+        let controls = try requirePanelLayout(surface.renderedControls)
+        try expectEqual(surface.frame, panelFrame)
+        try expectEqual(surface.renderedBands, panelBands)
+        try expectEqual(controls.instruction, RectD(x: 104, y: 62, width: 330, height: 42))
+        try expectEqual(controls.save, RectD(x: 104, y: 684, width: 104, height: 42))
+        try expectEqual(controls.cancel, RectD(x: 220, y: 684, width: 104, height: 42))
+    },
+    TestCase(name: "CalibrationPanel rejects invalid visible frame before allocating a surface") {
+        let invalidVisibleFrames = [
+            NSRect(x: -1_001, y: -200, width: 1_001, height: 800),
+            NSRect(x: -1_000, y: -201, width: 1_000, height: 801),
+            NSRect(x: -1_000, y: -200, width: 259, height: 800),
+            NSRect(x: -1_000, y: -200, width: 1_000, height: 179),
+            NSRect(x: CGFloat.nan, y: -200, width: 1_000, height: 800),
+        ]
+        for visibleFrame in invalidVisibleFrames {
+            let log = NSMutableArray()
+            let controller = makeCalibrationController(log: log)
+            try expectThrows {
+                _ = try controller.prepare(
+                    screenFrame: panelFrame,
+                    visibleFrame: visibleFrame,
+                    bands: panelBands,
+                    onSave: { _ in },
+                    onCancel: {}
+                )
+            }
+            try expectEqual(panelEvents(log), [])
+        }
     },
     TestCase(name: "CalibrationPanel preparation failures close only candidate and preserve old") {
         for failure in ["create", "configure", "render", "order"] {
@@ -400,4 +448,11 @@ let calibrationPanelTests = [
 private func requireSurface(_ surface: FakeCalibrationSurface?) throws -> FakeCalibrationSurface {
     guard let surface else { throw TestFailure(description: "expected calibration surface") }
     return surface
+}
+
+private func requirePanelLayout(
+    _ layout: CalibrationControlLayout?
+) throws -> CalibrationControlLayout {
+    guard let layout else { throw TestFailure(description: "expected rendered calibration controls") }
+    return layout
 }

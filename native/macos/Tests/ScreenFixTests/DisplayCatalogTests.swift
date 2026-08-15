@@ -65,6 +65,7 @@ let displayCatalogTests = [
         try expectEqual(result.display.height, 1440)
         try expectEqual(result.fullFrame.origin.x, -3440)
         try expectEqual(result.fullFrame.origin.y, -900)
+        try expectEqual(result.visibleFrame, NSRect(x: -3400, y: -850, width: 3300, height: 1300))
         try expectEqual(
             result.topLeftFullFrame,
             RectD(x: -3440, y: 900, width: 3440, height: 1440)

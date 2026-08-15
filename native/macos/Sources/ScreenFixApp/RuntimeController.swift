@@ -37,6 +37,7 @@ extension MaskPanelController: RuntimeMaskOwner {
 public protocol RuntimeCalibrationOwner: AnyObject {
     func start(
         screenFrame: NSRect,
+        visibleFrame: NSRect,
         bands: [NormalizedRect],
         onSave: @escaping ([NormalizedRect]) throws -> Void,
         onCancel: @escaping () throws -> Void,
@@ -48,6 +49,7 @@ public protocol RuntimeCalibrationOwner: AnyObject {
 extension CalibrationPanelController: RuntimeCalibrationOwner {
     public func start(
         screenFrame: NSRect,
+        visibleFrame: NSRect,
         bands: [NormalizedRect],
         onSave: @escaping ([NormalizedRect]) throws -> Void,
         onCancel: @escaping () throws -> Void,
@@ -55,6 +57,7 @@ extension CalibrationPanelController: RuntimeCalibrationOwner {
     ) throws {
         let prepared = try prepare(
             screenFrame: screenFrame,
+            visibleFrame: visibleFrame,
             bands: bands,
             onSave: onSave,
             onCancel: onCancel
@@ -190,6 +193,7 @@ private struct RuntimeCalibrationSession {
     let base: ScreenFixConfiguration?
     let screenStableId: String?
     let screenFrame: NSRect
+    let visibleFrame: NSRect
     let pausedGuardTarget: WindowGuardTarget?
 }
 
@@ -568,7 +572,10 @@ public final class RuntimeController {
         base: ScreenFixConfiguration?,
         needsTemporaryMasks: Bool
     ) {
-        guard Self.isValidCalibrationFrame(screen.fullFrame) else {
+        guard Self.isValidCalibrationFrames(
+            screenFrame: screen.fullFrame,
+            visibleFrame: screen.visibleFrame
+        ) else {
             runtimeError = "Paused: calibration error: display is too small or invalid"
             return
         }
@@ -580,6 +587,7 @@ public final class RuntimeController {
             base: base,
             screenStableId: screen.display.stableId,
             screenFrame: screen.fullFrame,
+            visibleFrame: screen.visibleFrame,
             pausedGuardTarget: availableGuardTarget
         )
         calibrationSession = session
@@ -607,6 +615,7 @@ public final class RuntimeController {
         do {
             try calibrationOwner.start(
                 screenFrame: screen.fullFrame,
+                visibleFrame: screen.visibleFrame,
                 bands: target.bands,
                 onSave: { [weak self] bands in
                     guard let self else { return }
@@ -630,7 +639,8 @@ public final class RuntimeController {
                           ) else {
                         return false
                     }
-                    return self.liveScreen(for: session)?.fullFrame == session.screenFrame
+                    guard let screen = self.liveScreen(for: session) else { return false }
+                    return Self.matchesCalibrationTopology(screen, session: session)
                 }
             )
             guard isCurrentCalibration(
@@ -681,7 +691,7 @@ public final class RuntimeController {
         }
         let screens = catalog.connectedDisplays()
         guard let screen = liveScreen(for: session, from: screens),
-              screen.fullFrame == session.screenFrame else {
+              Self.matchesCalibrationTopology(screen, session: session) else {
             let error = RuntimeCalibrationCommitError.displayChanged
             runtimeError = "Paused: calibration error: display changed"
             stateDidChange()
@@ -807,11 +817,14 @@ public final class RuntimeController {
     private func reconcileCalibrationTopology() -> Bool {
         guard let session = calibrationSession else { return false }
         guard let screen = liveScreen(for: session),
-              Self.isValidCalibrationFrame(screen.fullFrame) else {
+              Self.isValidCalibrationFrames(
+                  screenFrame: screen.fullFrame,
+                  visibleFrame: screen.visibleFrame
+              ) else {
             _ = cancelCalibrationAndRestore()
             return true
         }
-        if screen.fullFrame == session.screenFrame {
+        if Self.matchesCalibrationTopology(screen, session: session) {
             displayConnected = true
             runtimeError = nil
             return true
@@ -987,10 +1000,29 @@ public final class RuntimeController {
         windowGuardOwner.stop()
     }
 
-    private static func isValidCalibrationFrame(_ frame: NSRect) -> Bool {
+    private static func isValidCalibrationFrames(
+        screenFrame: NSRect,
+        visibleFrame: NSRect
+    ) -> Bool {
+        isFinite(screenFrame) && isFinite(visibleFrame)
+            && screenFrame.width >= 260 && screenFrame.height >= 180
+            && visibleFrame.width >= 260 && visibleFrame.height >= 180
+            && visibleFrame.minX >= screenFrame.minX
+            && visibleFrame.minY >= screenFrame.minY
+            && visibleFrame.maxX <= screenFrame.maxX
+            && visibleFrame.maxY <= screenFrame.maxY
+    }
+
+    private static func isFinite(_ frame: NSRect) -> Bool {
         frame.origin.x.isFinite && frame.origin.y.isFinite
             && frame.width.isFinite && frame.height.isFinite
-            && frame.width >= 260 && frame.height >= 180
+    }
+
+    private static func matchesCalibrationTopology(
+        _ screen: ConnectedScreen,
+        session: RuntimeCalibrationSession
+    ) -> Bool {
+        screen.fullFrame == session.screenFrame && screen.visibleFrame == session.visibleFrame
     }
 
     private func reconcileLoadedConfiguration(_ desired: ScreenFixConfiguration?) {

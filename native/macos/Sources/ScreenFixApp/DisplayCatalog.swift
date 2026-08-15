@@ -44,6 +44,7 @@ public struct ScreenSnapshot {
 public struct ConnectedScreen {
     public let display: ConnectedDisplay
     public let fullFrame: NSRect
+    public let visibleFrame: NSRect
     public let topLeftFullFrame: RectD
     public let topLeftVisibleFrame: RectD
     public let nativeScreen: AnyObject
@@ -51,6 +52,7 @@ public struct ConnectedScreen {
     public init(
         display: ConnectedDisplay,
         fullFrame: NSRect,
+        visibleFrame: NSRect? = nil,
         topLeftFullFrame: RectD? = nil,
         topLeftVisibleFrame: RectD? = nil,
         nativeScreen: AnyObject
@@ -63,6 +65,7 @@ public struct ConnectedScreen {
         )
         self.display = display
         self.fullFrame = fullFrame
+        self.visibleFrame = visibleFrame ?? fullFrame
         self.topLeftFullFrame = topLeftFullFrame ?? fallback
         self.topLeftVisibleFrame = topLeftVisibleFrame ?? fallback
         self.nativeScreen = nativeScreen
@@ -134,6 +137,7 @@ public final class DisplayCatalog {
             return ConnectedScreen(
                 display: display,
                 fullFrame: snapshot.fullFrame,
+                visibleFrame: snapshot.visibleFrame,
                 topLeftFullFrame: topLeftFullFrame,
                 topLeftVisibleFrame: topLeftVisibleFrame,
                 nativeScreen: snapshot.nativeScreen

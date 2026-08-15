@@ -106,6 +106,7 @@ private final class FakeRuntimeCalibration: RuntimeCalibrationOwner {
 
     func start(
         screenFrame: NSRect,
+        visibleFrame: NSRect,
         bands: [NormalizedRect],
         onSave: @escaping ([NormalizedRect]) throws -> Void,
         onCancel: @escaping () throws -> Void,
