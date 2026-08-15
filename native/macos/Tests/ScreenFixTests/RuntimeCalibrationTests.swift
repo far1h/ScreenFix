@@ -95,6 +95,7 @@ private final class CalibrationTestMasks: RuntimeMaskOwner {
 
 private final class CalibrationTestNotifications: RuntimeNotifications {
     var displayChanged: (() -> Void)?
+    var willSleep: (() -> Void)?
     var woke: (() -> Void)?
     let log: NSMutableArray
 
@@ -102,10 +103,15 @@ private final class CalibrationTestNotifications: RuntimeNotifications {
         self.log = log
     }
 
-    func subscribe(displayChanged: @escaping () -> Void, woke: @escaping () -> Void) -> [AnyObject] {
+    func subscribe(
+        displayChanged: @escaping () -> Void,
+        willSleep: @escaping () -> Void,
+        woke: @escaping () -> Void
+    ) -> [AnyObject] {
         self.displayChanged = displayChanged
+        self.willSleep = willSleep
         self.woke = woke
-        return [NSObject(), NSObject()]
+        return [NSObject(), NSObject(), NSObject()]
     }
 
     func unsubscribe(_ tokens: [AnyObject]) {
@@ -564,19 +570,26 @@ let runtimeCalibrationTests = [
         try expect(!value.runtime.snapshot.calibrating)
         try expectEqual(value.editor.sessions.count, 1)
     },
-    TestCase(name: "RuntimeCalibration wake uses identical and changed topology rules") {
+    TestCase(name: "RuntimeCalibration sleep cancels editor and wake uses fresh topology") {
         let value = calibrationFixture(configuration: calibrationConfig("a"), screens: [calibrationScreen("a")])
         value.runtime.start()
         value.runtime.toggleCalibration()
+        let staleSession = value.editor.sessions[0]
         value.catalog.screens = [calibrationScreen("a")]
+        value.notifications.willSleep?()
+        try expect(!value.runtime.snapshot.calibrating)
         value.notifications.woke?()
-        try expect(value.runtime.snapshot.calibrating)
+        try expect(!value.runtime.snapshot.calibrating)
 
         let moved = NSRect(x: -3440, y: -100, width: 3440, height: 1440)
         value.catalog.screens = [calibrationScreen("a", frame: moved)]
+        value.notifications.willSleep?()
         value.notifications.woke?()
         try expect(!value.runtime.snapshot.calibrating)
         try expectEqual(value.masks.lastScreenFrame, moved)
+        try staleSession.onSave(editedCalibrationBands())
+        try staleSession.onCancel()
+        try expectEqual(value.runtime.snapshot.configuration, calibrationConfig("a"))
     },
     TestCase(name: "RuntimeCalibration invalid or too-small frames fail before editor allocation") {
         let frames = [

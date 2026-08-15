@@ -126,17 +126,23 @@ private final class FakeRuntimeCalibration: RuntimeCalibrationOwner {
 private final class FakeRuntimeNotifications: RuntimeNotifications {
     let log: NSMutableArray
     var displayChanged: (() -> Void)?
+    var willSleep: (() -> Void)?
     var woke: (() -> Void)?
 
     init(log: NSMutableArray) {
         self.log = log
     }
 
-    func subscribe(displayChanged: @escaping () -> Void, woke: @escaping () -> Void) -> [AnyObject] {
+    func subscribe(
+        displayChanged: @escaping () -> Void,
+        willSleep: @escaping () -> Void,
+        woke: @escaping () -> Void
+    ) -> [AnyObject] {
         log.add("subscribe")
         self.displayChanged = displayChanged
+        self.willSleep = willSleep
         self.woke = woke
-        return [NSObject(), NSObject()]
+        return [NSObject(), NSObject(), NSObject()]
     }
 
     func unsubscribe(_ tokens: [AnyObject]) {
@@ -441,6 +447,7 @@ let runtimeControllerTests = [
         let stale = value.notifications.displayChanged
         value.log.removeAllObjects()
         value.notifications.displayChanged?()
+        value.notifications.willSleep?()
         value.notifications.woke?()
         try expectEqual(runtimeEvents(value).filter { $0 == "prepare" }.count, 2)
 

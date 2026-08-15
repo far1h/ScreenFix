@@ -23,6 +23,7 @@ enum Main {
                 + menuStateTests
                 + menuModelTests
                 + runtimeCalibrationTests
+                + runtimeWindowGuardTests
                 + runtimeControllerTests
         )
     }

@@ -68,38 +68,86 @@ extension CalibrationPanelController: RuntimeCalibrationOwner {
     }
 }
 
+public protocol RuntimeAccessibilityTrustOwner: AnyObject {
+    var isTrusted: Bool { get }
+    @discardableResult
+    func reconcile(needsPermission: Bool) -> Bool
+    func stop()
+}
+
+extension AccessibilityTrustController: RuntimeAccessibilityTrustOwner {}
+
+public protocol RuntimeWindowGuardOwner: AnyObject {
+    func start(target: WindowGuardTarget)
+    func stop()
+}
+
+extension WindowGuardController: RuntimeWindowGuardOwner {}
+
+private final class NoopRuntimeAccessibilityTrustOwner: RuntimeAccessibilityTrustOwner {
+    var isTrusted: Bool { true }
+
+    func reconcile(needsPermission: Bool) -> Bool {
+        needsPermission
+    }
+
+    func stop() {}
+}
+
+private final class NoopRuntimeWindowGuardOwner: RuntimeWindowGuardOwner {
+    func start(target: WindowGuardTarget) {}
+    func stop() {}
+}
+
 public protocol RuntimeNotifications: AnyObject {
     func subscribe(
         displayChanged: @escaping () -> Void,
+        willSleep: @escaping () -> Void,
         woke: @escaping () -> Void
     ) -> [AnyObject]
     func unsubscribe(_ tokens: [AnyObject])
 }
 
 public final class SystemRuntimeNotifications: RuntimeNotifications {
-    public init() {}
+    private let defaultCenter: NotificationCenter
+    private let workspaceCenter: NotificationCenter
+
+    public init(
+        defaultCenter: NotificationCenter = .default,
+        workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter
+    ) {
+        self.defaultCenter = defaultCenter
+        self.workspaceCenter = workspaceCenter
+    }
 
     public func subscribe(
         displayChanged: @escaping () -> Void,
+        willSleep: @escaping () -> Void,
         woke: @escaping () -> Void
     ) -> [AnyObject] {
-        let screenToken = NotificationCenter.default.addObserver(
+        let screenToken = defaultCenter.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
         ) { _ in displayChanged() }
-        let wakeToken = NSWorkspace.shared.notificationCenter.addObserver(
+        let sleepToken = workspaceCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { _ in willSleep() }
+        let wakeToken = workspaceCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil,
             queue: .main
         ) { _ in woke() }
-        return [screenToken as AnyObject, wakeToken as AnyObject]
+        return [screenToken as AnyObject, sleepToken as AnyObject, wakeToken as AnyObject]
     }
 
     public func unsubscribe(_ tokens: [AnyObject]) {
-        guard tokens.count == 2 else { return }
-        NotificationCenter.default.removeObserver(tokens[0])
-        NSWorkspace.shared.notificationCenter.removeObserver(tokens[1])
+        guard tokens.count == 3 else { return }
+        defaultCenter.removeObserver(tokens[0])
+        workspaceCenter.removeObserver(tokens[1])
+        workspaceCenter.removeObserver(tokens[2])
     }
 }
 
@@ -139,6 +187,7 @@ private struct RuntimeCalibrationSession {
     let base: ScreenFixConfiguration?
     let screenStableId: String?
     let screenFrame: NSRect
+    let pausedGuardTarget: WindowGuardTarget?
 }
 
 public final class RuntimeController {
@@ -146,6 +195,8 @@ public final class RuntimeController {
     private let catalog: RuntimeDisplayCatalog
     private let maskOwner: RuntimeMaskOwner
     private let calibrationOwner: RuntimeCalibrationOwner
+    private let accessibilityTrustOwner: RuntimeAccessibilityTrustOwner
+    private let windowGuardOwner: RuntimeWindowGuardOwner
     private let notifications: RuntimeNotifications
     private let termination: () -> Void
     private let stateDidChange: () -> Void
@@ -153,13 +204,18 @@ public final class RuntimeController {
     private var configuration: ScreenFixConfiguration?
     private var runtimeError: String?
     private var displayConnected = false
+    private var accessibilityTrusted = false
     private var notificationTokens: [AnyObject] = []
+    private var availableGuardTarget: WindowGuardTarget?
+    private var activeGuardTarget: WindowGuardTarget?
     private var calibrationSession: RuntimeCalibrationSession?
     private var nextCalibrationToken = 0
     private var generation = 0
     private var started = false
     private var stopping = false
+    private var sleeping = false
     private var terminated = false
+    private var permissionRevoked = false
     private var calibrationCommitInProgress = false
     private var deferredRuntimeMutations: [() -> Void] = []
 
@@ -168,6 +224,8 @@ public final class RuntimeController {
         catalog: RuntimeDisplayCatalog,
         maskOwner: RuntimeMaskOwner,
         calibrationOwner: RuntimeCalibrationOwner = CalibrationPanelController(),
+        accessibilityTrustOwner: RuntimeAccessibilityTrustOwner,
+        windowGuardOwner: RuntimeWindowGuardOwner,
         notifications: RuntimeNotifications,
         termination: @escaping () -> Void,
         stateDidChange: @escaping () -> Void
@@ -176,9 +234,33 @@ public final class RuntimeController {
         self.catalog = catalog
         self.maskOwner = maskOwner
         self.calibrationOwner = calibrationOwner
+        self.accessibilityTrustOwner = accessibilityTrustOwner
+        self.windowGuardOwner = windowGuardOwner
         self.notifications = notifications
         self.termination = termination
         self.stateDidChange = stateDidChange
+    }
+
+    public convenience init(
+        store: RuntimeConfigurationStore,
+        catalog: RuntimeDisplayCatalog,
+        maskOwner: RuntimeMaskOwner,
+        calibrationOwner: RuntimeCalibrationOwner = CalibrationPanelController(),
+        notifications: RuntimeNotifications,
+        termination: @escaping () -> Void,
+        stateDidChange: @escaping () -> Void
+    ) {
+        self.init(
+            store: store,
+            catalog: catalog,
+            maskOwner: maskOwner,
+            calibrationOwner: calibrationOwner,
+            accessibilityTrustOwner: NoopRuntimeAccessibilityTrustOwner(),
+            windowGuardOwner: NoopRuntimeWindowGuardOwner(),
+            notifications: notifications,
+            termination: termination,
+            stateDidChange: stateDidChange
+        )
     }
 
     public var snapshot: RuntimeSnapshot {
@@ -189,6 +271,7 @@ public final class RuntimeController {
             menuState: MenuState.make(
                 configuration: configuration,
                 displayConnected: displayConnected,
+                accessibilityTrusted: accessibilityTrusted,
                 calibrating: calibrationSession != nil,
                 runtimeError: runtimeError
             )
@@ -205,9 +288,13 @@ public final class RuntimeController {
                 guard let self, self.started, self.generation == activeGeneration else { return }
                 self.reconcile()
             },
+            willSleep: { [weak self] in
+                guard let self, self.started, self.generation == activeGeneration else { return }
+                self.prepareForSleep()
+            },
             woke: { [weak self] in
                 guard let self, self.started, self.generation == activeGeneration else { return }
-                self.reconcile()
+                self.resumeAfterWake()
             }
         )
         do {
@@ -239,16 +326,20 @@ public final class RuntimeController {
 
         if !enabled {
             let activeGeneration = generation
+            stopWindowGuard()
             do {
                 try store.save(desired)
                 guard started, generation == activeGeneration else { return }
                 configuration = desired
+                availableGuardTarget = nil
+                stopAccessibilityTrust()
                 maskOwner.removeAll()
                 refreshConnection()
                 runtimeError = nil
             } catch {
                 guard started, generation == activeGeneration else { return }
                 reportConfiguration(error)
+                restoreAvailableWindowGuard()
             }
             stateDidChange()
             return
@@ -260,6 +351,8 @@ public final class RuntimeController {
                 try store.save(desired)
                 configuration = desired
                 displayConnected = false
+                availableGuardTarget = nil
+                stopAccessibilityTrust()
                 runtimeError = nil
             } catch {
                 reportConfiguration(error)
@@ -268,7 +361,7 @@ public final class RuntimeController {
             return
         }
 
-        replace(with: desired, on: screen, persist: true)
+        replace(with: desired, on: screen, screens: screens, persist: true)
         stateDidChange()
     }
 
@@ -304,7 +397,9 @@ public final class RuntimeController {
         guard let configuration else { return }
         let screens = catalog.connectedDisplays()
         guard let screen = selectedScreen(for: configuration.display, from: screens) else {
+            retireWindowCorrection()
             displayConnected = false
+            maskOwner.removeAll()
             runtimeError = nil
             stateDidChange()
             return
@@ -329,6 +424,7 @@ public final class RuntimeController {
         let screens = catalog.connectedDisplays()
         guard let screen = selectedScreen(for: current.display, from: screens) else {
             displayConnected = false
+            retireWindowCorrection()
             maskOwner.removeAll()
             runtimeError = nil
             stateDidChange()
@@ -336,7 +432,7 @@ public final class RuntimeController {
         }
         let desired = DefaultConfiguration.make(for: current.display, enabled: current.enabled)
         if desired.enabled {
-            replace(with: desired, on: screen, persist: true)
+            replace(with: desired, on: screen, screens: screens, persist: true)
         } else {
             do {
                 try store.save(desired)
@@ -365,11 +461,45 @@ public final class RuntimeController {
 
     public func reconcile() {
         if deferDuringCalibrationCommit({ runtime in runtime.reconcile() }) { return }
-        guard started else { return }
+        guard started, !sleeping else { return }
         if reconcileCalibrationTopology() {
             stateDidChange()
             return
         }
+        reconcileLoadedConfiguration(configuration)
+        stateDidChange()
+    }
+
+    public func accessibilityTrustDidChange(_ trusted: Bool) {
+        guard started, !sleeping, calibrationSession == nil else { return }
+        permissionRevoked = !trusted
+        accessibilityTrusted = trusted
+        if trusted, let target = availableGuardTarget, correctionIsNeeded {
+            startWindowGuard(target)
+        } else if !trusted {
+            stopWindowGuard()
+        }
+        stateDidChange()
+    }
+
+    public func accessibilityPermissionLost() {
+        accessibilityTrustDidChange(false)
+    }
+
+    private func prepareForSleep() {
+        if deferDuringCalibrationCommit({ runtime in runtime.prepareForSleep() }) { return }
+        guard started, !sleeping else { return }
+        sleeping = true
+        stopWindowGuard()
+        stopAccessibilityTrust()
+        _ = cancelCalibrationAndRestore()
+        stateDidChange()
+    }
+
+    private func resumeAfterWake() {
+        if deferDuringCalibrationCommit({ runtime in runtime.resumeAfterWake() }) { return }
+        guard started, sleeping else { return }
+        sleeping = false
         reconcileLoadedConfiguration(configuration)
         stateDidChange()
     }
@@ -382,10 +512,14 @@ public final class RuntimeController {
         started = false
         notifications.unsubscribe(notificationTokens)
         notificationTokens = []
+        stopAccessibilityTrust()
+        stopWindowGuard(force: true)
+        availableGuardTarget = nil
         calibrationSession = nil
         nextCalibrationToken += 1
         calibrationOwner.stop()
         maskOwner.removeAll()
+        sleeping = false
         stopping = false
         stateDidChange()
     }
@@ -415,9 +549,11 @@ public final class RuntimeController {
             target: target,
             base: base,
             screenStableId: screen.display.stableId,
-            screenFrame: screen.fullFrame
+            screenFrame: screen.fullFrame,
+            pausedGuardTarget: availableGuardTarget
         )
         calibrationSession = session
+        pauseWindowCorrection()
 
         if needsTemporaryMasks {
             do {
@@ -432,6 +568,7 @@ public final class RuntimeController {
                     lifecycleGeneration: session.lifecycleGeneration
                 ) {
                     calibrationSession = nil
+                    restorePausedWindowCorrection(session)
                     runtimeError = "Paused: mask error: \(error)"
                 }
                 return
@@ -512,7 +649,9 @@ public final class RuntimeController {
             stateDidChange()
             throw error
         }
-        guard let screen = liveScreen(for: session), screen.fullFrame == session.screenFrame else {
+        let screens = catalog.connectedDisplays()
+        guard let screen = liveScreen(for: session, from: screens),
+              screen.fullFrame == session.screenFrame else {
             let error = RuntimeCalibrationCommitError.displayChanged
             runtimeError = "Paused: calibration error: display changed"
             stateDidChange()
@@ -574,7 +713,11 @@ public final class RuntimeController {
         calibrationSession = nil
         runtimeError = nil
         if !desired.enabled {
+            availableGuardTarget = nil
+            stopAccessibilityTrust()
             maskOwner.removeAll()
+        } else if let target = windowGuardTarget(for: desired, on: screen, screens: screens) {
+            reconcileWindowCorrection(target)
         }
         stateDidChange()
     }
@@ -650,12 +793,15 @@ public final class RuntimeController {
     private func restoreBaseRuntime(_ base: ScreenFixConfiguration?) {
         configuration = base
         guard let base else {
+            retireWindowCorrection()
             maskOwner.removeAll()
             displayConnected = false
             runtimeError = nil
             return
         }
-        guard let screen = selectedScreen(for: base.display, from: catalog.connectedDisplays()) else {
+        let screens = catalog.connectedDisplays()
+        guard let screen = selectedScreen(for: base.display, from: screens) else {
+            retireWindowCorrection()
             maskOwner.removeAll()
             displayConnected = false
             runtimeError = nil
@@ -666,12 +812,17 @@ public final class RuntimeController {
                 try replaceMasks(for: base, on: screen)
                 displayConnected = true
                 runtimeError = nil
+                if let target = windowGuardTarget(for: base, on: screen, screens: screens) {
+                    reconcileWindowCorrection(target)
+                }
             } catch {
+                retireWindowCorrection()
                 maskOwner.removeAll()
                 displayConnected = true
                 runtimeError = "Paused: mask error: \(error)"
             }
         } else {
+            retireWindowCorrection()
             maskOwner.removeAll()
             displayConnected = true
             runtimeError = nil
@@ -685,7 +836,13 @@ public final class RuntimeController {
     }
 
     private func liveScreen(for session: RuntimeCalibrationSession) -> ConnectedScreen? {
-        let screens = catalog.connectedDisplays()
+        liveScreen(for: session, from: catalog.connectedDisplays())
+    }
+
+    private func liveScreen(
+        for session: RuntimeCalibrationSession,
+        from screens: [ConnectedScreen]
+    ) -> ConnectedScreen? {
         if let screenStableId = session.screenStableId {
             return screens.first { screen in
                 screen.display.stableId?.caseInsensitiveCompare(screenStableId) == .orderedSame
@@ -716,6 +873,89 @@ public final class RuntimeController {
         )
     }
 
+    private var correctionIsNeeded: Bool {
+        started
+            && !sleeping
+            && calibrationSession == nil
+            && configuration?.enabled == true
+            && displayConnected
+    }
+
+    private func windowGuardTarget(
+        for configuration: ScreenFixConfiguration,
+        on screen: ConnectedScreen,
+        screens: [ConnectedScreen]
+    ) -> WindowGuardTarget? {
+        guard let selectedDisplayID = screen.display.stableId else { return nil }
+        let bounds = TopLeftDisplayBounds(
+            x: screen.topLeftFullFrame.x,
+            y: screen.topLeftFullFrame.y,
+            width: screen.topLeftFullFrame.width,
+            height: screen.topLeftFullFrame.height
+        )
+        return WindowGuardTarget(
+            selectedDisplayID: selectedDisplayID,
+            workArea: screen.topLeftVisibleFrame,
+            masks: MaskGeometry.absoluteTopLeftFrames(bands: configuration.bands, in: bounds),
+            displays: screens.map { candidate in
+                DisplayFrame(stableID: candidate.display.stableId, frame: candidate.topLeftFullFrame)
+            }
+        )
+    }
+
+    private func reconcileWindowCorrection(_ target: WindowGuardTarget) {
+        availableGuardTarget = target
+        guard correctionIsNeeded else { return }
+        let trusted = accessibilityTrustOwner.reconcile(needsPermission: true)
+        accessibilityTrusted = trusted && !permissionRevoked
+        if accessibilityTrusted {
+            startWindowGuard(target)
+        } else {
+            stopWindowGuard()
+        }
+    }
+
+    private func restoreAvailableWindowGuard() {
+        guard let target = availableGuardTarget, correctionIsNeeded else { return }
+        reconcileWindowCorrection(target)
+    }
+
+    private func restorePausedWindowCorrection(_ session: RuntimeCalibrationSession) {
+        guard let target = session.pausedGuardTarget else { return }
+        availableGuardTarget = target
+        restoreAvailableWindowGuard()
+    }
+
+    private func retireWindowCorrection() {
+        stopWindowGuard()
+        availableGuardTarget = nil
+        stopAccessibilityTrust()
+    }
+
+    private func pauseWindowCorrection() {
+        stopWindowGuard()
+        availableGuardTarget = nil
+        stopAccessibilityTrust()
+    }
+
+    private func stopAccessibilityTrust() {
+        accessibilityTrustOwner.stop()
+        permissionRevoked = false
+    }
+
+    private func startWindowGuard(_ target: WindowGuardTarget) {
+        guard activeGuardTarget != target else { return }
+        activeGuardTarget = target
+        windowGuardOwner.start(target: target)
+    }
+
+    private func stopWindowGuard(force: Bool = false) {
+        let hadActiveGuard = activeGuardTarget != nil
+        activeGuardTarget = nil
+        guard force || hadActiveGuard else { return }
+        windowGuardOwner.stop()
+    }
+
     private static func isValidCalibrationFrame(_ frame: NSRect) -> Bool {
         frame.origin.x.isFinite && frame.origin.y.isFinite
             && frame.width.isFinite && frame.height.isFinite
@@ -724,6 +964,7 @@ public final class RuntimeController {
 
     private func reconcileLoadedConfiguration(_ desired: ScreenFixConfiguration?) {
         guard let desired else {
+            retireWindowCorrection()
             maskOwner.removeAll()
             configuration = nil
             displayConnected = false
@@ -732,6 +973,7 @@ public final class RuntimeController {
         }
         let screens = catalog.connectedDisplays()
         guard let screen = selectedScreen(for: desired.display, from: screens) else {
+            retireWindowCorrection()
             maskOwner.removeAll()
             configuration = desired
             displayConnected = false
@@ -739,18 +981,20 @@ public final class RuntimeController {
             return
         }
         if !desired.enabled {
+            retireWindowCorrection()
             maskOwner.removeAll()
             configuration = desired
             displayConnected = true
             runtimeError = nil
             return
         }
-        replace(with: desired, on: screen, persist: false)
+        replace(with: desired, on: screen, screens: screens, persist: false)
     }
 
     private func replace(
         with desired: ScreenFixConfiguration,
         on screen: ConnectedScreen,
+        screens: [ConnectedScreen],
         persist: Bool
     ) {
         let frames = MaskGeometry.localFrames(
@@ -770,6 +1014,11 @@ public final class RuntimeController {
             configuration = desired
             displayConnected = true
             runtimeError = nil
+            if let target = windowGuardTarget(for: desired, on: screen, screens: screens) {
+                reconcileWindowCorrection(target)
+            } else {
+                retireWindowCorrection()
+            }
         } catch RuntimeOperationError.configuration(let error) {
             reportConfiguration(error)
         } catch {

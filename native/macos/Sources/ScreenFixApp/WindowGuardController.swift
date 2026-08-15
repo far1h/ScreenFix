@@ -134,10 +134,10 @@ public final class WindowGuardController {
         started = false
         target = nil
         sessionToken.invalidate()
+        source.stop()
         invalidateRequests()
         recentTargets.removeAll()
         blockedUntil.removeAll()
-        source.stop()
     }
 
     public func handle(_ event: AXWindowEvent) {
