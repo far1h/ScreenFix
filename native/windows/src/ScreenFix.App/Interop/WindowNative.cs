@@ -4,7 +4,7 @@ using ScreenFix.Core.Geometry;
 
 namespace ScreenFix.App.Interop;
 
-internal sealed partial class WindowNative : IWindowNativeQuery
+internal sealed partial class WindowNative : IWindowNativeQuery, IWinEventNativeApi
 {
     private const uint AncestorRoot = 2;
     private const uint OwnerWindow = 4;
@@ -95,6 +95,39 @@ internal sealed partial class WindowNative : IWindowNativeQuery
         }
 
         return MonitorFromRect(in rectangle, MonitorDefaultToNull);
+    }
+
+    public nint SetHook(
+        uint eventMinimum,
+        uint eventMaximum,
+        NativeWinEventCallback callback,
+        uint processId,
+        uint threadId,
+        uint flags) =>
+        SetWinEventHook(
+            eventMinimum,
+            eventMaximum,
+            module: 0,
+            callback,
+            processId,
+            threadId,
+            flags);
+
+    public bool Unhook(nint hook) => UnhookWinEvent(hook);
+
+    public bool TryEnumerateWindows(out IReadOnlyList<nint> windows)
+    {
+        var found = new List<nint>();
+        EnumWindowsCallback callback = (window, state) =>
+        {
+            _ = state;
+            found.Add(window);
+            return true;
+        };
+        var succeeded = EnumWindows(callback, 0);
+        GC.KeepAlive(callback);
+        windows = succeeded ? found : [];
+        return succeeded;
     }
 
     private static bool TryGetWindowLong(nint window, int index, out nint value)
@@ -189,4 +222,30 @@ internal sealed partial class WindowNative : IWindowNativeQuery
     private static partial nint MonitorFromRect(
         in NativeRect rectangle,
         uint flags);
+
+#pragma warning disable SYSLIB1054
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern nint SetWinEventHook(
+        uint eventMinimum,
+        uint eventMaximum,
+        nint module,
+        NativeWinEventCallback callback,
+        uint processId,
+        uint threadId,
+        uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumWindows(
+        EnumWindowsCallback callback,
+        nint state);
+#pragma warning restore SYSLIB1054
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool UnhookWinEvent(nint hook);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private delegate bool EnumWindowsCallback(nint window, nint state);
 }
