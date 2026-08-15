@@ -341,12 +341,20 @@ public sealed class RuntimeController : ISystemMessageTarget
         }
 
         picker.Stop();
+        var liveDisplay = FindUniqueStableId(display.StableId, topology.Enumerate());
+        if (liveDisplay is null)
+        {
+            notices.Show("Selected display is disconnected or ambiguous");
+            Reconcile();
+            return;
+        }
+
         var identity = new DisplayIdentity(
-            display.StableId,
-            display.Name,
-            display.Width,
-            display.Height);
-        BeginEditing(DefaultConfiguration.Create(identity), requireExactStableId: true);
+            liveDisplay.StableId!,
+            liveDisplay.Name,
+            liveDisplay.Width,
+            liveDisplay.Height);
+        BeginEditing(DefaultConfiguration.Create(identity), liveDisplay);
     }
 
     private void OnMonitorSelectionCancelled(long callbackGeneration)
@@ -364,12 +372,10 @@ public sealed class RuntimeController : ISystemMessageTarget
 
     private void BeginEditing(
         ScreenFixConfig candidateConfiguration,
-        bool requireExactStableId = false)
+        ConnectedDisplay? resolvedDisplay = null)
     {
-        var connected = topology.Enumerate();
-        var display = requireExactStableId
-            ? FindUniqueStableId(candidateConfiguration.Display.StableId, connected)
-            : DisplayMatcher.Find(candidateConfiguration.Display, connected);
+        var display = resolvedDisplay ??
+            DisplayMatcher.Find(candidateConfiguration.Display, topology.Enumerate());
         if (display is null)
         {
             notices.Show("Selected display is disconnected or ambiguous");

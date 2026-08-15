@@ -208,6 +208,32 @@ public sealed class RuntimeControllerTests
     }
 
     [Fact]
+    public void SelectMonitor_DescriptorChangesBeforeChoiceReturns_SavesFreshIdentity()
+    {
+        var stale = Connected(DefaultConfig().Display);
+        var live = stale with
+        {
+            Name = "Renamed ultrawide",
+            Width = 2560,
+            Height = 1080,
+            FullBounds = new RectD(1920, 0, 2560, 1080),
+            WorkArea = new RectD(1920, 0, 2560, 1040),
+        };
+        var harness = new Harness(new ConfigLoadResult(null, true, null), [stale]);
+        harness.Controller.Start();
+        harness.Controller.SelectMonitor();
+        harness.Topology.Displays = [live];
+
+        harness.Picker.Select(stale);
+        harness.Calibration.Save(harness.Calibration.Request!.Bands);
+
+        Assert.Equal(live, harness.Calibration.Request.Display);
+        Assert.Equal(
+            new DisplayIdentity(live.StableId!, live.Name, live.Width, live.Height),
+            harness.Config.LastSaved!.Display);
+    }
+
+    [Fact]
     public void Calibrate_CheckedCommandCancelsAndRestoresProtection()
     {
         var config = DefaultConfig();
