@@ -1617,6 +1617,97 @@ test.test("stop deletes chooser and canvas and clears callbacks idempotently", f
     test.equal(calibration.workingBands, nil)
 end)
 
+for _, case in ipairs({
+    {
+        name = "Stop",
+        invoke = function(calibration)
+            calibration:stop()
+        end,
+    },
+    {
+        name = "Save",
+        invoke = function(calibration)
+            calibration:save()
+        end,
+    },
+    {
+        name = "Cancel",
+        invoke = function(calibration)
+            calibration:cancel()
+        end,
+    },
+    {
+        name = "successful replacement",
+        replacement = true,
+        invoke = function(calibration, screen)
+            calibration:start(screen, validBands(), function() end, function() end)
+        end,
+    },
+}) do
+    test.test(case.name .. " clears the retired drag before external teardown", function()
+        local canvas = fake.canvas()
+        local eventtap = fake.eventtap()
+        local calibration = newCalibration({
+            canvas = canvas,
+            chooser = fake.chooser(),
+            eventtap = eventtap,
+            screens = function()
+                return {}
+            end,
+            mouseButtons = function()
+                return {}
+            end,
+            geometry = geometry,
+        })
+        local screen = fake.screen(
+            "display",
+            "Display",
+            { x = 0, y = 0, w = 1000, h = 800 }
+        )
+        calibration:start(screen, validBands(), function() end, function() end)
+        local oldSession = calibration.session
+        local oldTap = calibration.eventTap
+        calibration.editorCanvas:triggerMouse("mouseDown", 500, 400)
+        test.equal(oldSession.drag.rawBand ~= nil, true)
+
+        local dragAtTapStop
+        local currentSessionAtTapStop
+        local currentDragAtTapStop
+        local dragAtChooserDelete
+        if case.replacement then
+            calibration:selectScreen(function() end)
+            local oldChooser = calibration.screenChooser
+            local originalDelete = oldChooser.delete
+            oldChooser.delete = function(self)
+                dragAtChooserDelete = oldSession.drag
+                return originalDelete(self)
+            end
+        end
+        eventtap.stopHook = function(tap)
+            if tap == oldTap then
+                dragAtTapStop = oldSession.drag
+                currentSessionAtTapStop = calibration.session
+                currentDragAtTapStop = calibration.drag
+            end
+        end
+
+        case.invoke(calibration, screen)
+
+        test.equal(dragAtTapStop, nil)
+        test.equal(oldSession.drag, nil)
+        if case.replacement then
+            test.equal(dragAtChooserDelete, nil)
+            test.equal(currentSessionAtTapStop == oldSession, false)
+            test.equal(currentSessionAtTapStop, calibration.session)
+            test.equal(currentDragAtTapStop, nil)
+        else
+            test.equal(currentSessionAtTapStop, nil)
+            test.equal(currentDragAtTapStop, nil)
+            test.equal(calibration.session, nil)
+        end
+    end)
+end
+
 test.test("start rejects invalid bands without construction or input mutation", function()
     local canvas = fake.canvas()
     local invalid = validBands()
@@ -2259,6 +2350,7 @@ for _, retirementCase in ipairs(retirementReentrancyCases) do
                 function() end
             )
             newerSession = calibration.session
+            calibration.editorCanvas:triggerMouse("mouseDown", 500, 400)
         end
 
         if case.boundary == "tap" then
@@ -2302,6 +2394,8 @@ for _, retirementCase in ipairs(retirementReentrancyCases) do
         test.equal(calibration.session, newerSession)
         test.equal(calibration.editorCanvas, canvas.canvases[3])
         test.equal(calibration.eventTap, eventtap.taps[3])
+        test.equal(calibration.drag, newerSession.drag)
+        test.equal(newerSession.drag.rawBand ~= nil, true)
         test.equal(canvas.canvases[3].deleteCount, 0)
         test.equal(eventtap.taps[3].stopCount, 0)
         test.equal(eventtap.taps[3]:isEnabled(), true)
@@ -2334,9 +2428,19 @@ test.test("replacement cleans its attached candidate after retirement invalidate
     local oldTap = eventtap.taps[1]
     local saveResult
     local saveError
+    local candidateSession
+    local candidateHadRawDrag
+    local candidateDragAtStop
     eventtap.stopHook = function(tap)
         if tap == oldTap then
-            eventtap.stopHook = nil
+            candidateSession = calibration.session
+            calibration.editorCanvas:triggerMouse("mouseDown", 500, 400)
+            candidateHadRawDrag = candidateSession.drag.rawBand ~= nil
+            eventtap.stopHook = function(candidateTap)
+                if candidateTap == eventtap.taps[2] then
+                    candidateDragAtStop = candidateSession.drag
+                end
+            end
             saveResult, saveError = calibration:save()
         end
     end
@@ -2352,6 +2456,9 @@ test.test("replacement cleans its attached candidate after retirement invalidate
 
     test.equal(saveResult, nil)
     test.equal(saveError, "candidate save failure")
+    test.equal(candidateHadRawDrag, true)
+    test.equal(candidateDragAtStop, nil)
+    test.equal(candidateSession.drag, nil)
     test.equal(started, nil)
     test.equal(startError, "calibration start superseded")
     test.equal(calibration.session, nil)
@@ -2510,6 +2617,7 @@ test.test("stop teardown retains a replacement started by the old tap", function
                 function() end
             )
             replacementSession = calibration.session
+            calibration.editorCanvas:triggerMouse("mouseDown", 500, 400)
         end
     end
 
@@ -2522,6 +2630,8 @@ test.test("stop teardown retains a replacement started by the old tap", function
     test.equal(calibration.sessionToken, replacementSession.token)
     test.equal(calibration.editorCanvas, canvas.canvases[2])
     test.equal(calibration.eventTap, eventtap.taps[2])
+    test.equal(calibration.drag, replacementSession.drag)
+    test.equal(replacementSession.drag.rawBand ~= nil, true)
     test.equal(oldCanvas.deleteCount, 1)
     test.equal(oldTap.stopCount, 1)
     test.equal(oldTap:isEnabled(), false)
@@ -2569,6 +2679,7 @@ test.test("stop teardown retains a replacement started by old canvas deletion", 
                 function() end
             )
             replacementSession = calibration.session
+            calibration.editorCanvas:triggerMouse("mouseDown", 500, 400)
         end
     end
 
@@ -2581,6 +2692,8 @@ test.test("stop teardown retains a replacement started by old canvas deletion", 
     test.equal(calibration.sessionToken, replacementSession.token)
     test.equal(calibration.editorCanvas, canvas.canvases[2])
     test.equal(calibration.eventTap, eventtap.taps[2])
+    test.equal(calibration.drag, replacementSession.drag)
+    test.equal(replacementSession.drag.rawBand ~= nil, true)
     test.equal(oldCanvas.deleteCount, 1)
     test.equal(oldTap.stopCount, 1)
     test.equal(oldTap:isEnabled(), false)

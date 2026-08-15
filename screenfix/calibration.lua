@@ -429,6 +429,9 @@ function Calibration:stop()
     self.lifecycleGeneration = self.lifecycleGeneration + 1
     self.sessionToken = nil
     self.screenChooser = nil
+    if session then
+        session.drag = nil
+    end
     clearSession(self)
 
     stopEventTap(eventTap)
@@ -561,6 +564,9 @@ function Calibration:start(screen, bands, onSave, onCancel, commitGuard)
     self.screenChooser = nil
     self.sessionToken = candidateToken
     syncSession(self, candidate)
+    if previousSession then
+        previousSession.drag = nil
+    end
     deleteChooser(previousChooser)
     if previousSession then
         stopEventTap(previousSession.eventTap)
@@ -575,6 +581,7 @@ function Calibration:start(screen, bands, onSave, onCancel, commitGuard)
     end
 
     if self.session == candidate then
+        candidate.drag = nil
         self.sessionToken = nil
         clearSession(self)
         stopEventTap(candidate.eventTap)
