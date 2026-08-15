@@ -66,28 +66,32 @@ configuration; create the file only if it does not exist.
 dofile(hs.configdir .. "/ScreenFix/init.lua")
 ```
 
-Launch Hammerspoon, or choose **Reload Config** if it is already running. The `SF` item appears in the menu bar.
+Launch Hammerspoon, or choose **Reload Config** if it is already running. The ScreenFix
+display icon appears in the menu bar.
 
 ## First run
 
 1. Select the damaged display in the chooser.
 2. Move a band from its red center, or resize it from a white edge, until it covers the
-   damaged region.
+   damaged region. Red bands and white resize edges snap within 12 points of the display
+   boundary or another band.
 3. With a mouse, hold, drag, and release. With a trackpad, tap the target once, move the
    pointer without holding, then tap again. No Shift key is needed.
 4. Choose **Save**. ScreenFix remembers the display and calibration, switches to
    click-through masks, and starts window protection when Accessibility is available.
 
-Choose **Calibrate** again from the `SF` menu, or choose the gray **Cancel**
+Choose **Calibrate** again from the ScreenFix menu, or choose the gray **Cancel**
 control, to exit and discard calibration changes.
 
 ## Menu and startup
 
-Use the `SF` menu to:
+Use the ScreenFix menu to:
 
 - **Enable** or **Disable** the saved mask and window protection.
 - **Calibrate** the three bands again.
 - **Select Monitor** and calibrate a different display.
+- **Reset to Defaults** and restore the permanent 1215–1920 horizontal mask span on a
+  3440-point display, with the original three vertical sections.
 - **Reload** the Hammerspoon configuration.
 
 To start ScreenFix after login, enable Hammerspoon's **Launch at login** preference.

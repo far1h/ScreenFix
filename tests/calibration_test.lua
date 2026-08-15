@@ -17,7 +17,7 @@ local function validBands()
     }
 end
 
-local function startInputCalibration(fullFrame, onSave, onCancel)
+local function startInputCalibration(fullFrame, onSave, onCancel, bands)
     local canvas = fake.canvas()
     local eventtap = fake.eventtap()
     local calibration = newCalibration({
@@ -34,12 +34,29 @@ local function startInputCalibration(fullFrame, onSave, onCancel)
     })
     calibration:start(
         fake.screen("display", "Display", fullFrame),
-        validBands(),
+        bands or validBands(),
         onSave or function() end,
         onCancel or function() end
     )
 
     return calibration, canvas.canvases[1], eventtap.taps[1], eventtap.event.types
+end
+
+local function inputBands(active, peer, lastPeer)
+    return {
+        active,
+        peer or { x = 0.60, y = 0.40, w = 0.10, h = 0.10 },
+        lastPeer or { x = 0.80, y = 0.70, w = 0.10, h = 0.10 },
+    }
+end
+
+local function passthroughSnapBand(rawBand)
+    return {
+        x = rawBand.x,
+        y = rawBand.y,
+        w = rawBand.w,
+        h = rawBand.h,
+    }
 end
 
 local function emitLocal(tap, eventType, fullFrame, point)
@@ -56,6 +73,10 @@ local function rectNear(actual, expected)
     for _, key in ipairs({ "x", "y", "w", "h" }) do
         test.equal(math.abs(actual[key] - expected[key]) < 0.000000001, true)
     end
+end
+
+local function numberNear(actual, expected)
+    test.equal(math.abs(actual - expected) < 0.000000001, true)
 end
 
 local function assertActiveMovement(calibration, editor, tap, eventTypes)
@@ -384,6 +405,249 @@ for _, case in ipairs(heldDragCases) do
     end)
 end
 
+local screenSnapCases = {
+    {
+        name = "body",
+        band = { x = 0.02, y = 0.02, w = 0.20, h = 0.20 },
+        press = { x = 120, y = 120 },
+        moved = { x = 111, y = 111 },
+        expected = { x = 0, y = 0, w = 0.20, h = 0.20 },
+        exact = function(band)
+            test.equal(band.x, 0)
+            test.equal(band.y, 0)
+        end,
+    },
+    {
+        name = "left edge",
+        band = { x = 0.02, y = 0.20, w = 0.20, h = 0.20 },
+        press = { x = 20, y = 300 },
+        moved = { x = 11, y = 300 },
+        expected = { x = 0, y = 0.20, w = 0.22, h = 0.20 },
+        exact = function(band)
+            test.equal(band.x, 0)
+        end,
+    },
+    {
+        name = "right edge",
+        band = { x = 0.70, y = 0.20, w = 0.28, h = 0.20 },
+        press = { x = 980, y = 300 },
+        moved = { x = 989, y = 300 },
+        expected = { x = 0.70, y = 0.20, w = 0.30, h = 0.20 },
+        exact = function(band)
+            test.equal(band.x + band.w, 1)
+        end,
+    },
+    {
+        name = "top edge",
+        band = { x = 0.30, y = 0.02, w = 0.20, h = 0.20 },
+        press = { x = 400, y = 20 },
+        moved = { x = 400, y = 11 },
+        expected = { x = 0.30, y = 0, w = 0.20, h = 0.22 },
+        exact = function(band)
+            test.equal(band.y, 0)
+        end,
+    },
+    {
+        name = "bottom edge",
+        band = { x = 0.30, y = 0.70, w = 0.20, h = 0.28 },
+        press = { x = 400, y = 980 },
+        moved = { x = 400, y = 989 },
+        expected = { x = 0.30, y = 0.70, w = 0.20, h = 0.30 },
+        exact = function(band)
+            test.equal(band.y + band.h, 1)
+        end,
+    },
+}
+
+for _, mode in ipairs({ "held", "latched" }) do
+    for _, case in ipairs(screenSnapCases) do
+        test.test(mode .. " " .. case.name .. " snaps exactly to the screen edge", function()
+            local fullFrame = { x = -100, y = -50, w = 1000, h = 1000 }
+            local calibration, editor, tap, eventTypes = startInputCalibration(
+                fullFrame,
+                nil,
+                nil,
+                inputBands(case.band)
+            )
+
+            editor:triggerMouse("mouseDown", case.press.x, case.press.y)
+            test.equal(calibration.drag.rawBand ~= calibration.workingBands[1], true)
+            if mode == "latched" then
+                emitLocal(tap, eventTypes.leftMouseUp, fullFrame, case.press)
+                emitLocal(tap, eventTypes.mouseMoved, fullFrame, case.moved)
+            else
+                emitLocal(tap, eventTypes.leftMouseDragged, fullFrame, case.moved)
+            end
+
+            local visible = calibration.workingBands[1]
+            rectNear(visible, case.expected)
+            case.exact(visible)
+        end)
+    end
+end
+
+local peerSnapCases = {
+    {
+        name = "body right to a peer x start",
+        part = "body",
+        band = { x = 0.02, y = 0.40, w = 0.20, h = 0.20 },
+        peer = { x = 0.30, y = 0.05, w = 0.10, h = 0.10 },
+        press = { x = 120, y = 500 },
+        moved = { x = 189, y = 500 },
+        expected = { x = 0.10, y = 0.40, w = 0.20, h = 0.20 },
+        exact = function(active, peer)
+            test.equal(active.x + active.w, peer.x)
+        end,
+    },
+    {
+        name = "body bottom to a peer y start",
+        part = "body",
+        band = { x = 0.40, y = 0.02, w = 0.20, h = 0.20 },
+        peer = { x = 0.05, y = 0.30, w = 0.10, h = 0.10 },
+        press = { x = 500, y = 120 },
+        moved = { x = 500, y = 189 },
+        expected = { x = 0.40, y = 0.10, w = 0.20, h = 0.20 },
+        exact = function(active, peer)
+            test.equal(active.y + active.h, peer.y)
+        end,
+    },
+    {
+        name = "left edge to a peer end",
+        part = "left",
+        band = { x = 0.40, y = 0.40, w = 0.20, h = 0.20 },
+        peer = { x = 0.20, y = 0.05, w = 0.10, h = 0.10 },
+        press = { x = 400, y = 500 },
+        moved = { x = 311, y = 500 },
+        expected = { x = 0.30, y = 0.40, w = 0.30, h = 0.20 },
+        exact = function(active, peer)
+            test.equal(active.x, peer.x + peer.w)
+        end,
+    },
+    {
+        name = "right edge to a peer start",
+        part = "right",
+        band = { x = 0.02, y = 0.40, w = 0.20, h = 0.20 },
+        peer = { x = 0.30, y = 0.05, w = 0.10, h = 0.10 },
+        press = { x = 220, y = 500 },
+        moved = { x = 289, y = 500 },
+        expected = { x = 0.02, y = 0.40, w = 0.28, h = 0.20 },
+        exact = function(active, peer)
+            test.equal(active.x + active.w, peer.x)
+        end,
+    },
+    {
+        name = "top edge to a peer end",
+        part = "top",
+        band = { x = 0.40, y = 0.40, w = 0.20, h = 0.20 },
+        peer = { x = 0.05, y = 0.20, w = 0.10, h = 0.10 },
+        press = { x = 500, y = 400 },
+        moved = { x = 500, y = 311 },
+        expected = { x = 0.40, y = 0.30, w = 0.20, h = 0.30 },
+        exact = function(active, peer)
+            test.equal(active.y, peer.y + peer.h)
+        end,
+    },
+    {
+        name = "bottom edge to a peer start",
+        part = "bottom",
+        band = { x = 0.40, y = 0.02, w = 0.20, h = 0.20 },
+        peer = { x = 0.05, y = 0.30, w = 0.10, h = 0.10 },
+        press = { x = 500, y = 220 },
+        moved = { x = 500, y = 289 },
+        expected = { x = 0.40, y = 0.02, w = 0.20, h = 0.28 },
+        exact = function(active, peer)
+            test.equal(active.y + active.h, peer.y)
+        end,
+    },
+}
+
+for _, mode in ipairs({ "held", "latched" }) do
+    for _, case in ipairs(peerSnapCases) do
+        test.test(mode .. " " .. case.name .. " snaps an exact peer seam", function()
+            local fullFrame = { x = -100, y = -50, w = 1000, h = 1000 }
+            local bands = inputBands(case.band, case.peer)
+            local calibration, editor, tap, eventTypes = startInputCalibration(
+                fullFrame,
+                nil,
+                nil,
+                bands
+            )
+
+            editor:triggerMouse("mouseDown", case.press.x, case.press.y)
+            test.equal(calibration.drag.part, case.part)
+            if mode == "latched" then
+                emitLocal(tap, eventTypes.leftMouseUp, fullFrame, case.press)
+                emitLocal(tap, eventTypes.mouseMoved, fullFrame, case.moved)
+            else
+                emitLocal(tap, eventTypes.leftMouseDragged, fullFrame, case.moved)
+            end
+
+            local active = calibration.workingBands[1]
+            rectNear(active, case.expected)
+            case.exact(active, calibration.workingBands[2])
+        end)
+    end
+end
+
+local snapReleaseCases = {
+    {
+        axis = "x",
+        band = { x = 0.02, y = 0.30, w = 0.20, h = 0.20 },
+        press = { x = 120, y = 400 },
+        points = {
+            { x = 111, y = 400 },
+            { x = 112, y = 400 },
+            { x = 113, y = 400 },
+        },
+    },
+    {
+        axis = "y",
+        band = { x = 0.30, y = 0.02, w = 0.20, h = 0.20 },
+        press = { x = 400, y = 120 },
+        points = {
+            { x = 400, y = 111 },
+            { x = 400, y = 112 },
+            { x = 400, y = 113 },
+        },
+    },
+}
+
+for _, mode in ipairs({ "held", "latched" }) do
+    for _, case in ipairs(snapReleaseCases) do
+        test.test(
+            mode .. " body " .. case.axis
+                .. " snapping stays acquired through 12 points and releases",
+            function()
+                local fullFrame = { x = -100, y = -50, w = 1000, h = 1000 }
+                local calibration, editor, tap, eventTypes = startInputCalibration(
+                    fullFrame,
+                    nil,
+                    nil,
+                    inputBands(case.band)
+                )
+
+                editor:triggerMouse("mouseDown", case.press.x, case.press.y)
+                if mode == "latched" then
+                    emitLocal(tap, eventTypes.leftMouseUp, fullFrame, case.press)
+                end
+                for index, point in ipairs(case.points) do
+                    local eventType = mode == "latched"
+                        and eventTypes.mouseMoved
+                        or eventTypes.leftMouseDragged
+                    emitLocal(tap, eventType, fullFrame, point)
+                    local expectedRaw = 0.010 + index / 1000
+                    if index <= 2 then
+                        test.equal(calibration.workingBands[1][case.axis], 0)
+                    else
+                        numberNear(calibration.workingBands[1][case.axis], expectedRaw)
+                    end
+                    numberNear(calibration.drag.rawBand[case.axis], expectedRaw)
+                end
+            end
+        )
+    end
+end
+
 for _, case in ipairs(heldDragCases) do
     test.test("latched pointer movement updates the " .. case.name, function()
         local fullFrame = { x = -100, y = -50, w = 1000, h = 800 }
@@ -429,6 +693,12 @@ test.test("duplicate release after latched movement preserves the selection", fu
     test.equal(calibration.drag.moved, true)
     rectNear(calibration.workingBands[1], {
         x = 0.41,
+        y = 0.25,
+        w = 0.20,
+        h = 0.50,
+    })
+    rectNear(calibration.drag.rawBand, {
+        x = 0.41,
         y = 0.2625,
         w = 0.20,
         h = 0.50,
@@ -461,6 +731,12 @@ test.test("movement does not ratchet below threshold and becomes incremental at 
     emitLocal(tap, eventTypes.leftMouseDragged, fullFrame, { x = 505, y = 402 })
     rectNear(calibration.workingBands[1], {
         x = 0.405,
+        y = 0.25,
+        w = 0.20,
+        h = 0.50,
+    })
+    rectNear(calibration.drag.rawBand, {
+        x = 0.405,
         y = 0.2525,
         w = 0.20,
         h = 0.50,
@@ -478,6 +754,12 @@ test.test("movement threshold uses Euclidean distance for diagonal input", funct
     test.equal(calibration.drag.latched, true)
     emitLocal(tap, eventTypes.mouseMoved, fullFrame, { x = 503, y = 403 })
     rectNear(calibration.workingBands[1], {
+        x = 0.403,
+        y = 0.25,
+        w = 0.20,
+        h = 0.50,
+    })
+    rectNear(calibration.drag.rawBand, {
         x = 0.403,
         y = 0.25375,
         w = 0.20,
@@ -549,6 +831,7 @@ test.test("movement callback contains and reports dispatch errors", function()
     local failingGeometry = {
         localBands = geometry.localBands,
         editorHit = geometry.editorHit,
+        snapBand = geometry.snapBand,
         dragBand = function()
             error("drag failed", 0)
         end,
@@ -587,6 +870,81 @@ test.test("movement callback contains and reports dispatch errors", function()
     test.equal(result, false)
     test.equal(reports[1], "drag failed")
     test.rect(calibration.workingBands[1], validBands()[1])
+end)
+
+test.test("snap calculation failure leaves drag state atomic and applies the next delta once", function()
+    local canvas = fake.canvas()
+    local eventtap = fake.eventtap()
+    local failSnap = true
+    local reports = {}
+    local failingGeometry = {
+        localBands = geometry.localBands,
+        editorHit = geometry.editorHit,
+        dragBand = geometry.dragBand,
+        snapBand = function(rawBand)
+            if failSnap then
+                failSnap = false
+                error("snap failed", 0)
+            end
+            return passthroughSnapBand(rawBand)
+        end,
+    }
+    local calibration = newCalibration({
+        canvas = canvas,
+        chooser = fake.chooser(),
+        eventtap = eventtap,
+        screens = function()
+            return {}
+        end,
+        mouseButtons = function()
+            return {}
+        end,
+        geometry = failingGeometry,
+        reportError = function(message)
+            reports[#reports + 1] = message
+        end,
+    })
+    local fullFrame = { x = -100, y = -50, w = 1000, h = 800 }
+    calibration:start(
+        fake.screen("display", "Display", fullFrame),
+        validBands(),
+        function() end,
+        function() end
+    )
+    canvas.canvases[1]:triggerMouse("mouseDown", 500, 400)
+
+    emitLocal(
+        eventtap.taps[1],
+        eventtap.event.types.leftMouseDragged,
+        fullFrame,
+        { x = 510, y = 410 }
+    )
+
+    test.equal(reports[1], "snap failed")
+    test.rect(calibration.workingBands[1], validBands()[1])
+    test.rect(calibration.drag.rawBand, validBands()[1])
+    test.equal(calibration.drag.lastPoint.x, 500)
+    test.equal(calibration.drag.lastPoint.y, 400)
+    test.equal(calibration.drag.moved, false)
+
+    emitLocal(
+        eventtap.taps[1],
+        eventtap.event.types.leftMouseDragged,
+        fullFrame,
+        { x = 520, y = 420 }
+    )
+
+    rectNear(calibration.drag.rawBand, {
+        x = 0.42,
+        y = 0.275,
+        w = 0.20,
+        h = 0.50,
+    })
+    rectNear(calibration.workingBands[1], calibration.drag.rawBand)
+    test.equal(calibration.drag.lastPoint.x, 520)
+    test.equal(calibration.drag.lastPoint.y, 420)
+    test.equal(calibration.drag.moved, true)
+    test.equal(#reports, 1)
 end)
 
 for _, case in ipairs({
@@ -676,6 +1034,7 @@ for _, case in ipairs({
         local reported
         local failingGeometry = {
             editorHit = geometry.editorHit,
+            snapBand = passthroughSnapBand,
             localBands = function(...)
                 if failNextDraw then
                     failNextDraw = false
@@ -735,13 +1094,40 @@ for _, case in ipairs({
         test.equal(calibration.eventTap, tap)
         test.equal(editor.deleteCount, 0)
         test.equal(tap.stopCount, 0)
+        if case.drawFailure then
+            rectNear(calibration.drag.rawBand, {
+                x = 0.42,
+                y = 0.275,
+                w = 0.20,
+                h = 0.50,
+            })
+            rectNear(calibration.workingBands[1], calibration.drag.rawBand)
+            test.equal(calibration.drag.lastPoint.x, 520)
+            test.equal(calibration.drag.lastPoint.y, 420)
+            test.equal(calibration.drag.moved, true)
+        else
+            test.rect(calibration.drag.rawBand, validBands()[1])
+            test.rect(calibration.workingBands[1], validBands()[1])
+            test.equal(calibration.drag.lastPoint.x, 500)
+            test.equal(calibration.drag.lastPoint.y, 400)
+            test.equal(calibration.drag.moved, false)
+        end
         local secondResult = tap:emit(
             eventtap.event.types.leftMouseDragged,
             { x = 530, y = 430 }
         )
         test.equal(secondResult, false)
         test.equal(reportCalls, 1)
-        test.equal(calibration.workingBands[1].x > 0.40, true)
+        rectNear(calibration.drag.rawBand, {
+            x = 0.43,
+            y = 0.2875,
+            w = 0.20,
+            h = 0.50,
+        })
+        rectNear(calibration.workingBands[1], calibration.drag.rawBand)
+        test.equal(calibration.drag.lastPoint.x, 530)
+        test.equal(calibration.drag.lastPoint.y, 430)
+        test.equal(calibration.drag.moved, true)
     end)
 end
 

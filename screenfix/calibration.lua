@@ -8,17 +8,22 @@ local HANDLE_WIDTH = 8
 local INSTRUCTION_HEIGHT = 40
 local INSTRUCTION_WIDTH = 320
 local MOVEMENT_THRESHOLD = 4
+local SNAP_THRESHOLD = 12
+
+local function copyBand(band)
+    return {
+        x = band.x,
+        y = band.y,
+        w = band.w,
+        h = band.h,
+    }
+end
 
 local function copyBands(bands)
     local copied = {}
 
     for index, band in ipairs(bands) do
-        copied[index] = {
-            x = band.x,
-            y = band.y,
-            w = band.w,
-            h = band.h,
-        }
+        copied[index] = copyBand(band)
     end
 
     return copied
@@ -315,6 +320,7 @@ local function beginDrag(calibration, session, point)
     local bands = calibration.deps.geometry.localBands(session.fullFrame, session.workingBands)
     local hit = calibration.deps.geometry.editorHit(point, bands, HANDLE_WIDTH)
     if hit then
+        hit.rawBand = copyBand(session.workingBands[hit.index])
         hit.pressPoint = { x = point.x, y = point.y }
         hit.lastPoint = { x = point.x, y = point.y }
         hit.moved = false
@@ -344,18 +350,30 @@ local function updateDrag(calibration, session, point)
         end
     end
 
+    local drag = session.drag
     local delta = {
-        x = point.x - session.drag.lastPoint.x,
-        y = point.y - session.drag.lastPoint.y,
+        x = point.x - drag.lastPoint.x,
+        y = point.y - drag.lastPoint.y,
     }
-    session.workingBands[session.drag.index] = calibration.deps.geometry.dragBand(
-        session.workingBands[session.drag.index],
-        session.drag,
+    local rawCandidate = calibration.deps.geometry.dragBand(
+        drag.rawBand,
+        drag,
         delta,
         session.fullFrame
     )
-    session.drag.lastPoint = { x = point.x, y = point.y }
-    session.drag.moved = true
+    local visibleCandidate = calibration.deps.geometry.snapBand(
+        rawCandidate,
+        drag.index,
+        drag.part,
+        session.workingBands,
+        session.fullFrame,
+        SNAP_THRESHOLD
+    )
+
+    drag.rawBand = rawCandidate
+    session.workingBands[drag.index] = visibleCandidate
+    drag.lastPoint = { x = point.x, y = point.y }
+    drag.moved = true
     renderEditor(calibration, session)
 end
 
