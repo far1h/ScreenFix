@@ -159,24 +159,19 @@ local function snapAxis(rect, axis, edges, targets, thresholdPoints, fullFrame, 
     for _, target in ipairs(targets) do
         for _, edge in ipairs(edges) do
             local edgePosition = rect[position]
-            local edgePositionPoints = rect[position] * pointScale
             if edge == "trailing" then
                 edgePosition = edgePosition + rect[size]
-                edgePositionPoints = edgePositionPoints + rect[size] * pointScale
             end
-            local correctionPoints = target * pointScale - edgePositionPoints
             local correction = target - edgePosition
             local distance = math.abs(correction)
-            local distancePoints = math.abs(correctionPoints)
+            local distancePoints = distance * pointScale
             local candidate = correctedRect(rect, axis, resizeEdge or "body", correction)
             local resizedSizePoints
 
             if resizeEdge == "leading" then
-                resizedSizePoints = rect[position] * pointScale
-                    + rect[size] * pointScale
-                    - target * pointScale
+                resizedSizePoints = (rect[position] + rect[size] - target) * pointScale
             elseif resizeEdge == "trailing" then
-                resizedSizePoints = target * pointScale - rect[position] * pointScale
+                resizedSizePoints = (target - rect[position]) * pointScale
             end
 
             if distancePoints <= thresholdPoints
