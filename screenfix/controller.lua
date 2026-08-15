@@ -238,6 +238,64 @@ function Controller:disable()
     return saveEnabled(self, false)
 end
 
+local function resetFailed(controller, failure)
+    controller:notifyOnce("reset", "Unable to reset mask defaults.")
+    controller:refresh()
+    return nil, failure
+end
+
+local function loadResetDefaults(controller)
+    local value, loadError = call(controller.deps.config.load, controller.deps.config)
+    if value == nil then
+        return nil, loadError
+    end
+    controller.value = value
+
+    local screen, findError = call(
+        controller.deps.config.findScreen,
+        controller.deps.config,
+        value
+    )
+    if screen == nil then
+        return nil, findError
+    end
+
+    local defaults, defaultError = call(
+        controller.deps.config.defaultForScreen,
+        controller.deps.config,
+        screen
+    )
+    if defaults == nil then
+        return nil, defaultError
+    end
+
+    return withEnabled(defaults, value.enabled)
+end
+
+---Restores the persisted display to its default mask bands.
+function Controller:resetDefaults()
+    invalidateChooser(self)
+    invalidateCalibration(self, true)
+
+    local defaults, defaultError = loadResetDefaults(self)
+    if defaults == nil then
+        return resetFailed(self, defaultError)
+    end
+    local saved, saveError = call(
+        self.deps.config.save,
+        self.deps.config,
+        defaults
+    )
+    if saved == nil then
+        return resetFailed(self, saveError)
+    end
+
+    self.value = saved
+    self.notified.reset = nil
+    self:refresh()
+    return true
+end
+
 local function cancelCalibration(controller, token, target)
     if not isCurrentSession(controller, token, target) then
         return false
@@ -543,6 +601,19 @@ function Controller:menuItems()
             self:selectMonitor()
         end),
     }
+    local savedScreen = self.value and call(
+        self.deps.config.findScreen,
+        self.deps.config,
+        self.value
+    )
+    items[#items + 1] = {
+        title = "Reset to Defaults",
+        checked = false,
+        disabled = savedScreen == nil,
+        fn = protectedAction(function()
+            self:resetDefaults()
+        end),
+    }
     items[#items + 1] = {
         title = "Reload",
         checked = false,
@@ -561,10 +632,13 @@ local function createMenu(controller)
         return
     end
 
-    local titleSet = call(item.setTitle, item, "SF")
-    if titleSet == nil then
-        call(item.delete, item)
-        return
+    local iconSet = call(item.setIcon, item, controller.deps.menuIcon, true)
+    if iconSet == nil then
+        local titleSet = call(item.setTitle, item, "SF")
+        if titleSet == nil then
+            call(item.delete, item)
+            return
+        end
     end
     local menuSet = call(item.setMenu, item, function()
         local ok, items = pcall(controller.menuItems, controller)

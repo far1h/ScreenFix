@@ -158,6 +158,7 @@ local function newCase(options)
         overlay = overlay,
         guard = guard,
         calibration = calibration,
+        menuIcon = "/config/ScreenFix/assets/screenfix-menubar.png",
     })
 
     state.calibration = calibration
@@ -179,6 +180,24 @@ local function menuItem(items, title)
             return item
         end
     end
+end
+
+local function menuIndex(items, title)
+    for index, item in ipairs(items) do
+        if item.title == title then
+            return index
+        end
+    end
+end
+
+local function notificationCount(notify, message)
+    local count = 0
+    for _, notification in ipairs(notify.notifications) do
+        if notification.attributes.informativeText == message then
+            count = count + 1
+        end
+    end
+    return count
 end
 
 local function installCalibrationAdapter(case, screens)
@@ -1824,7 +1843,10 @@ test.test("start creates a dynamic ScreenFix menu with runtime actions", functio
     test.equal(case.menubar.newCalls[1].inMenuBar, true)
     test.equal(case.menubar.newCalls[1].autosaveName, "ScreenFix")
     local item = case.menubar.items[1]
-    test.equal(item.title, "SF")
+    test.equal(#item.iconCalls, 1)
+    test.equal(item.iconCalls[1].path, "/config/ScreenFix/assets/screenfix-menubar.png")
+    test.equal(item.iconCalls[1].template, true)
+    test.equal(#item.titleCalls, 0)
     test.equal(type(item.menu), "function")
 
     local items = item.menu()
@@ -1838,6 +1860,374 @@ test.test("start creates a dynamic ScreenFix menu with runtime actions", functio
     test.equal(menuItem(item.menu(), "Enable") ~= nil, true)
     menuItem(item.menu(), "Reload").fn()
     test.equal(case.reloadCount, 1)
+end)
+
+test.test("menu icon failures fall back to SF without losing the dynamic menu", function()
+    for _, failure in ipairs({ "nil", "throw" }) do
+        local case = newCase({ configuration = validConfig(true) })
+        if failure == "nil" then
+            case.menubar.setIconReturnNil = true
+        else
+            case.menubar.setIconError = "icon load failure"
+        end
+
+        case.controller:start()
+
+        local item = case.menubar.items[1]
+        test.equal(#item.iconCalls, 1)
+        test.equal(item.title, "SF")
+        test.equal(type(item.menu), "function")
+        test.equal(type(menuItem(item.menu(), "Reload").fn), "function")
+    end
+end)
+
+test.test("dynamic menu places a protected Reset to Defaults before Reload", function()
+    local case = newCase({ configuration = validConfig(true) })
+    case.controller:start()
+    case.controller.resetDefaults = function()
+        case.resetDefaultsCount = (case.resetDefaultsCount or 0) + 1
+        error("contained reset action failure", 0)
+    end
+
+    local items = case.menubar.items[1].menu()
+    local reset = menuItem(items, "Reset to Defaults")
+    test.equal(menuIndex(items, "Select Monitor") + 1, menuIndex(items, "Reset to Defaults"))
+    test.equal(menuIndex(items, "Reset to Defaults") + 1, menuIndex(items, "Reload"))
+    test.equal(reset.checked, false)
+    test.equal(type(reset.fn), "function")
+
+    local actionOk = pcall(reset.fn)
+    test.equal(actionOk, true)
+    test.equal(case.resetDefaultsCount, 1)
+end)
+
+test.test("Reset to Defaults follows the persisted monitor live state", function()
+    local missing = newCase()
+    missing.controller:start()
+    test.equal(
+        menuItem(missing.menubar.items[1].menu(), "Reset to Defaults").disabled,
+        true
+    )
+
+    local disconnected = newCase({
+        configuration = validConfig(true),
+        connected = false,
+    })
+    disconnected.controller:start()
+    test.equal(
+        menuItem(disconnected.menubar.items[1].menu(), "Reset to Defaults").disabled,
+        true
+    )
+
+    local disabled = newCase({ configuration = validConfig(false) })
+    disabled.controller:start()
+    test.equal(
+        menuItem(disabled.menubar.items[1].menu(), "Reset to Defaults").disabled,
+        false
+    )
+
+    local unsavedTarget = validConfig(true)
+    unsavedTarget.screen.uuid = "unsaved-uuid"
+    local unsavedScreen = fake.screen("unsaved-uuid", "Unsaved Display", {
+        x = 0,
+        y = 0,
+        w = 1920,
+        h = 1080,
+    })
+    disabled.controller.calibrating = true
+    disabled.controller.calibrationValue = unsavedTarget
+    disabled.controller.calibrationScreen = unsavedScreen
+    disabled.controller.screen = unsavedScreen
+    disabled.config.findScreen = function(_, value)
+        if value.screen.uuid == "damaged-uuid" then
+            return disabled.screen
+        end
+        return unsavedScreen
+    end
+    test.equal(
+        menuItem(disabled.menubar.items[1].menu(), "Reset to Defaults").disabled,
+        false
+    )
+end)
+
+test.test("reset cancels unsaved calibration before restoring fresh persisted defaults", function()
+    local cached = validConfig(true)
+    local case = newCase({ configuration = cached })
+    case.controller:start()
+
+    local unsaved = validConfig(true)
+    unsaved.screen.uuid = "unsaved-uuid"
+    unsaved.screen.name = "Unsaved Display"
+    local unsavedScreen = fake.screen("unsaved-uuid", "Unsaved Display", {
+        x = 0,
+        y = 0,
+        w = 1920,
+        h = 1080,
+    })
+    case.config.defaultForScreen = function(_, screen)
+        test.equal(screen, unsavedScreen)
+        return unsaved
+    end
+    case.config.findScreen = function(_, value)
+        if value.screen.uuid == "unsaved-uuid" then
+            return unsavedScreen
+        end
+        return case.screen
+    end
+    case.controller:selectMonitor()
+    case.selectCallback(unsavedScreen)
+    local staleSave = case.calibrationStarts[1].onSave
+    local staleCancel = case.calibrationStarts[1].onCancel
+    test.equal(case.controller.calibrationValue.screen.uuid, "unsaved-uuid")
+
+    local fresh = validConfig(false)
+    fresh.screen.uuid = "fresh-uuid"
+    fresh.screen.name = "Fresh Persisted Display"
+    fresh.bands[1].x = 0.12
+    local freshScreen = fake.screen("fresh-uuid", "Fresh Persisted Display", {
+        x = -2560,
+        y = 0,
+        w = 2560,
+        h = 1440,
+    })
+    local defaults = validConfig(true)
+    defaults.screen.uuid = "fresh-uuid"
+    defaults.screen.name = "Fresh Persisted Display"
+    defaults.bands = {
+        { x = 0.10, y = 0.10, w = 0.20, h = 0.20 },
+    }
+    local saved
+    local order = {}
+    local chooserGeneration = case.controller.chooserGeneration
+    case.calibration.stop = function()
+        order[#order + 1] = "stop"
+        test.equal(case.controller.chooserGeneration > chooserGeneration, true)
+        test.equal(case.controller.chooserToken, nil)
+        test.equal(case.controller.calibrationSession, nil)
+        test.equal(case.controller.calibrating, false)
+    end
+    case.config.load = function()
+        order[#order + 1] = "load"
+        return fresh
+    end
+    case.config.findScreen = function(_, value)
+        order[#order + 1] = "find:" .. value.screen.uuid
+        if value.screen.uuid == "fresh-uuid" then
+            return freshScreen
+        end
+    end
+    case.config.defaultForScreen = function(_, screen)
+        order[#order + 1] = "default"
+        test.equal(screen, freshScreen)
+        test.equal(case.controller.value, fresh)
+        return defaults
+    end
+    case.config.save = function(_, value)
+        order[#order + 1] = "save"
+        test.equal(value.enabled, false)
+        test.equal(value.screen.uuid, "fresh-uuid")
+        test.equal(value.bands, defaults.bands)
+        saved = value
+        return value
+    end
+    case.controller.notified.reset = true
+
+    local reset = case.controller:resetDefaults()
+
+    test.equal(reset, true)
+    test.equal(order[1], "stop")
+    test.equal(order[2], "load")
+    test.equal(order[3], "find:fresh-uuid")
+    test.equal(order[4], "default")
+    test.equal(order[5], "save")
+    test.equal(case.controller.value, saved)
+    test.equal(case.controller.value.enabled, false)
+    test.equal(case.controller.notified.reset, nil)
+    test.equal(case.controller.calibrationSession, nil)
+    test.equal(case.controller.calibrating, false)
+
+    staleSave(unsaved.bands)
+    staleCancel()
+    test.equal(case.controller.value, saved)
+    test.equal(order[6], "find:fresh-uuid")
+    test.equal(order[7], nil)
+end)
+
+test.test("reset revokes a chooser-only state before loading defaults", function()
+    local case = newCase({ configuration = validConfig(true) })
+    case.controller:start()
+    case.controller:selectMonitor()
+    local staleChoice = case.selectCallback
+    local chooserGeneration = case.controller.chooserGeneration
+    local calls = {}
+
+    case.calibration.stop = function()
+        calls[#calls + 1] = "stop"
+        test.equal(case.controller.chooserGeneration > chooserGeneration, true)
+        test.equal(case.controller.chooserToken, nil)
+    end
+    case.config.load = function()
+        calls[#calls + 1] = "load"
+        return validConfig(true)
+    end
+    case.config.findScreen = function()
+        calls[#calls + 1] = "find"
+        return case.screen
+    end
+    case.config.defaultForScreen = function()
+        calls[#calls + 1] = "default"
+        return validConfig(true)
+    end
+    case.config.save = function(_, value)
+        calls[#calls + 1] = "save"
+        return value
+    end
+
+    test.equal(case.controller:resetDefaults(), true)
+    staleChoice(case.screen)
+
+    test.equal(calls[1], "stop")
+    test.equal(calls[2], "load")
+    test.equal(calls[3], "find")
+    test.equal(calls[4], "default")
+    test.equal(calls[5], "save")
+    test.equal(calls[6], "find")
+    test.equal(calls[7], nil)
+    test.equal(#case.calibrationStarts, 0)
+end)
+
+local function assertResetFailure(stage, throws)
+    local cached = validConfig(true)
+    cached.bands[1].x = 0.31
+    local case = newCase({ configuration = cached })
+    case.controller:start()
+    case.controller:calibrate()
+
+    local fresh = validConfig(false)
+    fresh.bands[1].x = 0.19
+    local defaults = validConfig(true)
+    defaults.bands[1].x = 0.08
+    local findValues = {}
+    local findCount = 0
+    local persisted = {}
+    local function fail(name)
+        if stage ~= name then
+            return false
+        end
+        if throws then
+            error(name .. " reset failure", 0)
+        end
+        return true
+    end
+
+    case.config.load = function()
+        if fail("load") then
+            return nil, "load reset failure"
+        end
+        return fresh
+    end
+    case.config.findScreen = function(_, value)
+        findCount = findCount + 1
+        findValues[findCount] = value
+        if stage == "find" and findCount % 2 == 1 then
+            if throws then
+                error("find reset failure", 0)
+            end
+            return nil, "find reset failure"
+        end
+        return case.screen
+    end
+    case.config.defaultForScreen = function()
+        if fail("default") then
+            return nil, "default reset failure"
+        end
+        return defaults
+    end
+    case.config.save = function(_, value)
+        if fail("save") then
+            return nil, "save reset failure"
+        end
+        persisted[#persisted + 1] = value
+        return value
+    end
+
+    local firstCallOk, firstResult = pcall(case.controller.resetDefaults, case.controller)
+    local secondCallOk, secondResult = pcall(case.controller.resetDefaults, case.controller)
+
+    test.equal(firstCallOk, true)
+    test.equal(secondCallOk, true)
+    test.equal(firstResult, nil)
+    test.equal(secondResult, nil)
+    test.equal(#persisted, 0)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationSession, nil)
+    test.equal(case.calibrationStopCount, 2)
+    test.equal(
+        notificationCount(case.notify, "Unable to reset mask defaults."),
+        1
+    )
+    if stage == "load" then
+        test.equal(case.controller.value, cached)
+        test.equal(findValues[#findValues], cached)
+    else
+        test.equal(case.controller.value, fresh)
+        test.equal(findValues[#findValues], fresh)
+    end
+end
+
+test.test("reset contains nil failures and refreshes the prior saved source", function()
+    for _, stage in ipairs({ "load", "find", "default", "save" }) do
+        assertResetFailure(stage, false)
+    end
+end)
+
+test.test("reset contains thrown failures and refreshes the prior saved source", function()
+    for _, stage in ipairs({ "load", "find", "default", "save" }) do
+        assertResetFailure(stage, true)
+    end
+end)
+
+test.test("an enabled Reset menu action contains a later monitor disconnect", function()
+    local case = newCase({ configuration = validConfig(true) })
+    case.controller:start()
+    case.controller:calibrate()
+    local reset = menuItem(case.menubar.items[1].menu(), "Reset to Defaults")
+    test.equal(reset.disabled, false)
+    case.connected = false
+
+    local actionOk = pcall(reset.fn)
+
+    test.equal(actionOk, true)
+    test.equal(#case.saveCalls, 0)
+    test.equal(case.controller.calibrating, false)
+    test.equal(case.controller.calibrationSession, nil)
+    test.equal(case.controller.value.bands[1].x, 0.43)
+    test.equal(case.controller.notified.reset, true)
+end)
+
+test.test("a successful reset clears the failure notification episode", function()
+    local case = newCase({ configuration = validConfig(true) })
+    case.controller:start()
+    local failFind = true
+    case.config.findScreen = function()
+        if failFind then
+            return nil, "disconnected"
+        end
+        return case.screen
+    end
+
+    case.controller:resetDefaults()
+    case.controller:resetDefaults()
+    test.equal(notificationCount(case.notify, "Unable to reset mask defaults."), 1)
+
+    failFind = false
+    test.equal(case.controller:resetDefaults(), true)
+    test.equal(case.controller.notified.reset, nil)
+    test.equal(notificationCount(case.notify, "Unable to reset mask defaults."), 1)
+
+    failFind = true
+    case.controller:resetDefaults()
+    test.equal(notificationCount(case.notify, "Unable to reset mask defaults."), 2)
 end)
 
 test.test("dynamic menu keeps checked, disabled, and permission guidance current", function()

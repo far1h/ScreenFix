@@ -79,6 +79,7 @@ local runtime = Controller.new({
     overlay = overlay,
     guard = guard,
     calibration = calibration,
+    menuIcon = hs.configdir .. "/ScreenFix/assets/screenfix-menubar.png",
 })
 local started, startError = pcall(runtime.start, runtime)
 if not started then

@@ -649,9 +649,26 @@ function M.menubar()
         }
         local item = {
             deleteCount = 0,
+            iconCalls = {},
             menuCalls = {},
             titleCalls = {},
         }
+
+        function item:setIcon(path, template)
+            self.iconCalls[#self.iconCalls + 1] = {
+                path = path,
+                template = template,
+            }
+            if module.setIconError then
+                error(module.setIconError, 0)
+            end
+            if module.setIconReturnNil then
+                return nil
+            end
+            self.iconPath = path
+            self.iconTemplate = template
+            return self
+        end
 
         function item:setTitle(title)
             self.titleCalls[#self.titleCalls + 1] = title

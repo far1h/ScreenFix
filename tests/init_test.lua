@@ -63,6 +63,7 @@ local function withBootstrap(options, verify)
         return { left = false }
     end
     local hs = {
+        configdir = "/Users/test/.hammerspoon",
         caffeinate = {
             watcher = {
                 screensDidWake = "screensDidWake",
@@ -338,6 +339,10 @@ test.test("init assembles exact production dependencies and starts one controlle
         test.equal(captured.controllerDeps.overlay, overlay)
         test.equal(captured.controllerDeps.guard, guard)
         test.equal(captured.controllerDeps.calibration, calibration)
+        test.equal(
+            captured.controllerDeps.menuIcon,
+            "/Users/test/.hammerspoon/ScreenFix/assets/screenfix-menubar.png"
+        )
     end)
 end)
 
