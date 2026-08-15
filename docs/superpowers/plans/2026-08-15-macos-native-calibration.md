@@ -25,7 +25,8 @@ Implement against commit `4aaa999` and read these sources first:
 - `native/macos/Tests/ScreenFixTests/`
 
 The existing Hammerspoon implementation and its tests are the visual and behavioral
-oracle. Preserve these constants exactly:
+oracle except for the cross-axis snap defect corrected in Task 1. Preserve these
+constants exactly:
 
 ```text
 edge hit region              8 points
@@ -104,11 +105,50 @@ Do not place AppKit in `ScreenFixCore`.
 
 **Files:**
 
+- Modify: `screenfix/geometry.lua`
+- Modify: `tests/geometry_test.lua`
 - Create: `native/macos/Sources/ScreenFixCore/CalibrationGeometry.swift`
 - Create: `native/macos/Tests/ScreenFixTests/CalibrationGeometryTests.swift`
 - Modify: `native/macos/Tests/ScreenFixTests/Main.swift`
 
-- [ ] **Step 1: Define the wished-for pure API in failing tests**
+- [ ] **Step 1: Correct the Lua oracle with focused RED tests**
+
+The current Lua `isSnapCandidate` rejects a horizontal snap when an unrelated height is
+below 20 points and rejects a vertical snap when an unrelated width is below 20 points.
+That conflicts with the gesture contract: body snapping does not resize, horizontal
+edge snapping changes only width, and vertical edge snapping changes only height.
+
+Add focused Lua tests proving:
+
+- a narrow or short body still snaps while preserving its existing size;
+- left/right snapping accepts a short-height band when resulting width is at least 20;
+- top/bottom snapping accepts a narrow-width band when resulting height is at least 20;
+- left/right rejects a resulting width below 20 but does not inspect height;
+- top/bottom rejects a resulting height below 20 but does not inspect width; and
+- an affected dimension of exactly 20 points is legal within the existing
+  `displayAxis * 2^-48` tolerance.
+
+Run only the geometry suite and observe the new cases fail for the cross-axis check:
+
+```bash
+lua tests/run.lua 2>&1 | tee /tmp/screenfix-lua-red.log
+```
+
+Expected RED: the new axis-specific cases fail while existing cases remain diagnostic.
+Then change `isSnapCandidate` to receive the active part: body checks only normalized
+bounds, left/right check resulting width, and top/bottom check resulting height. Remove
+or update the old test named `rejects every target when another dimension is below 20
+points`; it encodes the defect and must not remain as a contradictory oracle.
+
+Run `lua tests/run.lua` and require every Lua case to pass before porting the corrected
+behavior to Swift. Commit this independent correction:
+
+```bash
+git add screenfix/geometry.lua tests/geometry_test.lua
+git commit -m "fix: make calibration snap checks axis-specific"
+```
+
+- [ ] **Step 2: Define the wished-for Swift API in failing tests**
 
 Use value types with these public shapes:
 
@@ -169,14 +209,17 @@ Test the existing Lua golden cases, not merely representative examples:
 - screen targets beat peer targets at equal distance;
 - lower peer index, peer start before peer end, and active leading edge win remaining
   equal-distance ties;
-- a snap that would leave the display or violate 20 points is rejected; and
+- a snap that would leave the display or violate 20 points on the dimension changed by
+  an edge resize is rejected, while body snaps never add a minimum-size check;
+- short-height horizontal resizes, narrow-width vertical resizes, narrow/short body
+  snaps, and exact-20 affected dimensions match the corrected Lua oracle; and
 - `NaN`, infinity, invalid indexes, invalid parts, or malformed peers fail closed to a
   fresh copy.
 
 Use the Lua tolerance rule, `displayAxis * 2^-48`, only to absorb represented
 floating-point drift at the 12- and 20-point boundaries.
 
-- [ ] **Step 2: Run the registered tests and prove RED**
+- [ ] **Step 3: Run the registered tests and prove RED**
 
 ```bash
 native/macos/scripts/run-tests.sh --filter CalibrationGeometry
@@ -185,15 +228,16 @@ native/macos/scripts/run-tests.sh --filter CalibrationGeometry
 Expected: compile failure because the new geometry types do not exist. A test that is
 not registered or passes immediately is not accepted as RED.
 
-- [ ] **Step 3: Implement the minimal pure geometry**
+- [ ] **Step 4: Implement the minimal pure geometry**
 
 Keep all calculations normalized, but measure hit, minimum-size, and snap thresholds in
 logical display points. Generate snap targets in this exact order: screen start, screen
 end where legal, then peer bands in ascending index with peer start before peer end.
 Replace the best candidate only when it is strictly closer outside the tolerance; this
-preserves deterministic ties.
+preserves deterministic ties. Candidate legality is part-specific: body checks bounds
+only, left/right check width only, and top/bottom check height only.
 
-- [ ] **Step 4: Prove GREEN and keep the existing suite green**
+- [ ] **Step 5: Prove GREEN and keep the corrected oracle green**
 
 ```bash
 native/macos/scripts/run-tests.sh --filter CalibrationGeometry
@@ -204,7 +248,7 @@ lua tests/run.lua
 Expected: the focused matrix passes, all native tests pass, and all 354 Lua oracle tests
 still pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add native/macos/Sources/ScreenFixCore/CalibrationGeometry.swift \
@@ -580,7 +624,9 @@ git commit -m "fix: harden native calibration lifecycle"
 Remove the claim that native calibration is unavailable. Explain that Calibrate edits a
 copy, Save persists it, Cancel or selecting checked Calibrate discards it, and normal
 mouse/trackpad use requires no modifier key. Keep Accessibility window movement listed
-as the remaining native limitation until the subsequent guard plan lands.
+as the remaining native limitation until the subsequent guard plan lands. Remove all
+user-facing `Phase 1`, `Phase 2`, `phase one`, and `phase two` terminology from both
+READMEs; describe available behavior and remaining limitations directly.
 
 - [ ] **Step 2: Run all automated release gates**
 
@@ -593,16 +639,38 @@ codesign --verify --strict --verbose=2 native/macos/artifacts/ScreenFix.app
 test "$(lipo -archs native/macos/artifacts/ScreenFix.app/Contents/MacOS/ScreenFix)" = arm64
 vtool -show-build native/macos/artifacts/ScreenFix.app/Contents/MacOS/ScreenFix | grep -q 'minos 13.0'
 unzip -t native/macos/artifacts/ScreenFix-macos-arm64.zip
+LC_ALL=C shasum -a 256 native/macos/artifacts/ScreenFix-macos-arm64.zip
+LC_ALL=C shasum -a 256 native/macos/artifacts/ScreenFix.app/Contents/MacOS/ScreenFix
+! rg -n -i 'phase[[:space:]]*[0-9]|phase one|phase two' README.md native/macos/README.md
 git diff --check
 git status --short --branch
 ```
 
 Expected: all tests pass; package assertions, ad-hoc signature, thin arm64 architecture,
-macOS 13 deployment target, ZIP integrity, and diff check all pass.
+macOS 13 deployment target, ZIP integrity, README terminology check, and diff check all
+pass. Record both printed SHA-256 values immediately; do not reuse a hash from an older
+package invocation.
 
 - [ ] **Step 3: Perform physical mouse and trackpad UAT without risking user config**
 
-Quit ScreenFix first. If
+The UAT must use the exact ZIP produced and hashed in Step 2, not an older app in
+`/Applications` and not an app left open from an earlier build. In the same shell, bind
+the hashes and extract that artifact into a new uniquely named temporary directory:
+
+```bash
+ZIP_PATH="$PWD/native/macos/artifacts/ScreenFix-macos-arm64.zip"
+APP_PATH="$PWD/native/macos/artifacts/ScreenFix.app"
+ZIP_SHA256="$(LC_ALL=C shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
+EXE_SHA256="$(LC_ALL=C shasum -a 256 "$APP_PATH/Contents/MacOS/ScreenFix" | awk '{print $1}')"
+UAT_DIR="$(mktemp -d "${TMPDIR%/}/screenfix-uat.XXXXXX")"
+ditto -x -k "$ZIP_PATH" "$UAT_DIR"
+test "$(LC_ALL=C shasum -a 256 "$UAT_DIR/ScreenFix.app/Contents/MacOS/ScreenFix" | awk '{print $1}')" = "$EXE_SHA256"
+open "$UAT_DIR/ScreenFix.app"
+printf 'UAT_ZIP_SHA256=%s\nUAT_EXE_SHA256=%s\nUAT_APP=%s\n' \
+  "$ZIP_SHA256" "$EXE_SHA256" "$UAT_DIR/ScreenFix.app"
+```
+
+Quit every older ScreenFix process before `open`. If
 `~/Library/Application Support/ScreenFix/config.json` exists, move it to a uniquely
 named backup without overwriting anything; restore it only after quitting the UAT app.
 Then verify on the Apple Silicon Mac:
@@ -622,8 +690,19 @@ Then verify on the Apple Silicon Mac:
 12. repeated Reload/Enable/Disable/Calibrate never duplicates panels or menu items; and
 13. clicks reach ordinary apps through masks after exiting calibration.
 
-Record the temporary config paths and restore the original byte-for-byte. Do not delete
-or overwrite an unknown live configuration.
+After UAT, quit the extracted app, recompute both hashes, and require them to equal the
+bound values:
+
+```bash
+test "$(LC_ALL=C shasum -a 256 "$ZIP_PATH" | awk '{print $1}')" = "$ZIP_SHA256"
+test "$(LC_ALL=C shasum -a 256 "$UAT_DIR/ScreenFix.app/Contents/MacOS/ScreenFix" | awk '{print $1}')" = "$EXE_SHA256"
+printf 'VERIFIED_ZIP_SHA256=%s\nVERIFIED_EXE_SHA256=%s\n' "$ZIP_SHA256" "$EXE_SHA256"
+```
+
+Record the temporary app/config paths and restore the original config byte-for-byte.
+Do not delete or overwrite an unknown live configuration. Leave the uniquely named UAT
+directory in place until the hashes and result are recorded; cleanup is a separate,
+explicitly targeted action.
 
 - [ ] **Step 4: Commit docs or any narrowly required package assertion**
 
@@ -640,4 +719,6 @@ UAT backups.
 This slice is complete only when all automated gates and physical mouse/trackpad UAT
 pass. The handoff must report the exact ZIP and executable SHA-256 values from the final
 package invocation and state that the ad-hoc ZIP hash is build-instance-specific because
-its file timestamps are not normalized.
+its file timestamps are not normalized. The reported hashes must be the
+`VERIFIED_ZIP_SHA256` and `VERIFIED_EXE_SHA256` values from the exact extracted artifact
+used for physical UAT.
