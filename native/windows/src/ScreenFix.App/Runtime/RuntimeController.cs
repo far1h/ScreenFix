@@ -1,8 +1,8 @@
+using ScreenFix.App.Notifications;
 using ScreenFix.Core.Configuration;
 using ScreenFix.Core.Displays;
 using ScreenFix.Core.Geometry;
 using ScreenFix.Core.Menu;
-using ScreenFix.App.Notifications;
 
 namespace ScreenFix.App.Runtime;
 
@@ -300,6 +300,20 @@ public sealed class RuntimeController : ISystemMessageTarget
     public void Stop()
     {
         uiThread.VerifyAccess();
+        var wasStopped = stopped;
+        RevokeCallbacks();
+        if (wasStopped)
+        {
+            return;
+        }
+
+        calibration.Stop();
+        overlays.Clear();
+    }
+
+    public void RevokeCallbacks()
+    {
+        uiThread.VerifyAccess();
         if (stopped)
         {
             return;
@@ -309,8 +323,6 @@ public sealed class RuntimeController : ISystemMessageTarget
         generation++;
         pendingConfiguration = null;
         picker.Stop();
-        calibration.Stop();
-        overlays.Clear();
     }
 
     private void OnMonitorSelected(long callbackGeneration, ConnectedDisplay display)

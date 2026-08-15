@@ -3,7 +3,7 @@ using ScreenFix.Core.Calibration;
 
 namespace ScreenFix.App.Calibration;
 
-internal sealed class WinFormsCalibrationHost : ICalibrationHost
+internal sealed class WinFormsCalibrationHost(Action? dpiChanged = null) : ICalibrationHost
 {
     private CalibrationForm? editor;
 
@@ -29,13 +29,16 @@ internal sealed class WinFormsCalibrationHost : ICalibrationHost
                 return RuntimeOperationResult.Failure(layoutResult.Error!);
             }
 
+            var routedCallbacks = dpiChanged is null
+                ? callbacks
+                : callbacks with { DpiChanged = _ => dpiChanged() };
             candidate = new CalibrationForm(
                 bounds,
                 dpi,
                 request.Generation,
                 request.Bands,
                 layoutResult.Value!,
-                callbacks);
+                routedCallbacks);
             candidate.PrepareAndShow();
         }
         catch (Exception error)

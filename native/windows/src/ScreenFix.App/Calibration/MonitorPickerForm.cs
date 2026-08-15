@@ -32,14 +32,14 @@ internal sealed class MonitorPickerForm : Form
         saveButton.Text = "Save";
         saveButton.Bounds = new Rectangle(312, 252, 92, 32);
         saveButton.Enabled = false;
-        saveButton.DialogResult = DialogResult.OK;
+        saveButton.Click += (_, _) => Complete(DialogResult.OK);
 
         var cancelButton = new Button
         {
             Text = "Cancel",
             Bounds = new Rectangle(412, 252, 92, 32),
-            DialogResult = DialogResult.Cancel,
         };
+        cancelButton.Click += (_, _) => Complete(DialogResult.Cancel);
 
         AcceptButton = saveButton;
         CancelButton = cancelButton;
@@ -52,6 +52,12 @@ internal sealed class MonitorPickerForm : Form
         (monitorList.SelectedItem as PickerEntry)?.Display is { StableId: not null } display
             ? display
             : null;
+
+    private void Complete(DialogResult result)
+    {
+        DialogResult = result;
+        Close();
+    }
 
     private void DrawMonitor(object? sender, DrawItemEventArgs eventArgs)
     {

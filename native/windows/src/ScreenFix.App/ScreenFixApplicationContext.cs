@@ -1,35 +1,30 @@
+using ScreenFix.App.Calibration;
 using ScreenFix.App.Lifecycle;
+using ScreenFix.App.Notifications;
+using ScreenFix.App.Overlays;
+using ScreenFix.App.Runtime;
 using ScreenFix.Core.Menu;
 
 namespace ScreenFix.App;
 
 internal sealed class ScreenFixApplicationContext : ApplicationContext
 {
-    private readonly ResourceOwner resources = new();
+    private readonly ApplicationLifetime lifetime = new();
+    private RuntimeController? controller;
+    private INoticeSink? notices;
 
     public ScreenFixApplicationContext(SingleInstanceGate gate)
     {
         ArgumentNullException.ThrowIfNull(gate);
-        resources.Register(gate.Dispose);
+        lifetime.OwnGate(gate.Dispose);
 
         try
         {
-            var icon = new NotifyIcon
-            {
-                Icon = SystemIcons.Application,
-                Text = "ScreenFix",
-            };
-            resources.Register(icon.Dispose);
-
-            var menu = BuildMenu();
-            resources.Register(menu.Dispose);
-            icon.ContextMenuStrip = menu;
-            resources.Register(() => icon.Visible = false);
-            icon.Visible = true;
+            InitializeTrayAndRuntime();
         }
         catch
         {
-            resources.Dispose();
+            lifetime.Dispose();
             throw;
         }
     }
@@ -38,7 +33,7 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
     {
         try
         {
-            resources.Dispose();
+            lifetime.Dispose();
         }
         finally
         {
@@ -52,7 +47,7 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
         {
             if (disposing)
             {
-                resources.Dispose();
+                lifetime.Dispose();
             }
         }
         finally
@@ -61,9 +56,24 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
         }
     }
 
-    private ContextMenuStrip BuildMenu()
+    private void InitializeTrayAndRuntime()
     {
-        var menu = new ContextMenuStrip();
+        var uiBridge = new WinFormsUiBridge();
+        var icon = new NotifyIcon
+        {
+            Icon = SystemIcons.Application,
+            Text = "ScreenFix",
+        };
+        lifetime.OwnTrayIcon(() =>
+        {
+            icon.Visible = false;
+            icon.Dispose();
+            uiBridge.Dispose();
+        });
+
+        notices = new NotifyIconNoticeSink(icon);
+        var menu = new TrayMenuHost(icon, ExecuteCommand);
+        lifetime.OwnMenu(menu.Dispose);
         var rows = MenuState.Build(new MenuStateInput(
             Enabled: false,
             HasSavedDisplay: false,
@@ -71,28 +81,104 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
             Calibrating: false,
             InvalidConfiguration: false,
             MaskRenderingFailed: false));
+        menu.Refresh(rows);
+        icon.Visible = true;
 
-        foreach (var row in rows)
+        try
         {
-            if (row.IsSeparator)
-            {
-                menu.Items.Add(new ToolStripSeparator());
-                continue;
-            }
+            InitializeRuntime(uiBridge, menu);
+        }
+        catch (Exception error)
+        {
+            TryShowNotice(error.Message);
+        }
+    }
 
-            var item = new ToolStripMenuItem(row.Label)
-            {
-                Checked = row.IsChecked,
-                Enabled = row.IsEnabled,
-            };
-            if (row.Command == MenuCommand.Quit)
-            {
-                item.Click += (_, _) => ExitThread();
-            }
+    private void InitializeRuntime(WinFormsUiBridge uiBridge, TrayMenuHost menu)
+    {
+        var overlaySet = new MaskOverlaySet(new MaskFormFactory());
+        lifetime.OwnMasks(overlaySet.Dispose);
 
-            menu.Items.Add(item);
+        var targetBridge = new SystemMessageTargetBridge();
+        var messageCoordinator = new SystemMessageCoordinator(targetBridge, uiBridge, generation: 1);
+        var messageWindow = new SystemMessageWindow(messageCoordinator);
+        lifetime.OwnSystemMessages(messageWindow.Dispose);
+
+        var calibration = new WinFormsCalibrationHost(() => messageCoordinator.Handle(
+            SystemMessage.DpiChanged,
+            value: 0,
+            messageCoordinator.Generation));
+        lifetime.OwnEditor(calibration.Stop);
+
+        var localData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var configPath = Path.Combine(localData, "ScreenFix", "config.json");
+        controller = new RuntimeController(
+            new RuntimeConfigStore(configPath),
+            new RuntimeDisplayTopology(),
+            new RuntimeMaskOverlayHost(overlaySet),
+            calibration,
+            new WinFormsMonitorPickerHost(),
+            menu,
+            uiBridge,
+            notices!,
+            new SystemClock());
+        targetBridge.Connect(controller);
+        lifetime.OwnControllerCallbacks(() =>
+        {
+            controller.RevokeCallbacks();
+            targetBridge.Disconnect();
+        });
+        controller.Start();
+    }
+
+    private void ExecuteCommand(MenuCommand command)
+    {
+        if (command == MenuCommand.Quit)
+        {
+            ExitThread();
+            return;
         }
 
-        return menu;
+        if (controller is null)
+        {
+            return;
+        }
+
+        try
+        {
+            switch (command)
+            {
+                case MenuCommand.ToggleEnabled:
+                    controller.ToggleEnabled();
+                    break;
+                case MenuCommand.Calibrate:
+                    controller.Calibrate();
+                    break;
+                case MenuCommand.SelectMonitor:
+                    controller.SelectMonitor();
+                    break;
+                case MenuCommand.ResetDefaults:
+                    controller.ResetDefaults();
+                    break;
+                case MenuCommand.Reload:
+                    controller.Reload();
+                    break;
+            }
+        }
+        catch (Exception error)
+        {
+            TryShowNotice(error.Message);
+        }
+    }
+
+    private void TryShowNotice(string message)
+    {
+        try
+        {
+            notices?.Show(message);
+        }
+        catch
+        {
+        }
     }
 }

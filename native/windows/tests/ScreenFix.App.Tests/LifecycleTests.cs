@@ -5,6 +5,46 @@ namespace ScreenFix.App.Tests;
 public sealed class LifecycleTests
 {
     [Fact]
+    public void ApplicationLifetime_CleansEveryResourceInRequiredOrder()
+    {
+        var calls = new List<string>();
+        var lifetime = new ApplicationLifetime();
+        lifetime.OwnGate(() => calls.Add("gate"));
+        lifetime.OwnTrayIcon(() => calls.Add("icon"));
+        lifetime.OwnMenu(() => calls.Add("menu"));
+        lifetime.OwnMasks(() => calls.Add("masks"));
+        lifetime.OwnEditor(() => calls.Add("editor"));
+        lifetime.OwnSystemMessages(() => calls.Add("messages"));
+        lifetime.OwnControllerCallbacks(() => calls.Add("callbacks"));
+
+        lifetime.Dispose();
+
+        Assert.Equal(
+            ["callbacks", "messages", "editor", "masks", "menu", "icon", "gate"],
+            calls);
+    }
+
+    [Fact]
+    public void ApplicationLifetime_PartialConstructionContinuesAfterFailureExactlyOnce()
+    {
+        var calls = new List<string>();
+        var lifetime = new ApplicationLifetime();
+        lifetime.OwnGate(() => calls.Add("gate"));
+        lifetime.OwnTrayIcon(() =>
+        {
+            calls.Add("icon");
+            throw new InvalidOperationException("icon failed");
+        });
+        lifetime.OwnMenu(() => calls.Add("menu"));
+
+        var error = Assert.Throws<AggregateException>(lifetime.Dispose);
+        lifetime.Dispose();
+
+        Assert.Equal(["menu", "icon", "gate"], calls);
+        Assert.Equal("icon failed", Assert.Single(error.InnerExceptions).Message);
+    }
+
+    [Fact]
     public void SingleInstanceGate_FirstAcquisitionSucceedsAndSecondDoesNotBlock()
     {
         var name = "ScreenFix.Tests." + Guid.NewGuid().ToString("N");

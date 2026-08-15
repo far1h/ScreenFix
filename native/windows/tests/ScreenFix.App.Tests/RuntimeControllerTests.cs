@@ -352,6 +352,40 @@ public sealed class RuntimeControllerTests
     }
 
     [Fact]
+    public void ReconcileDisplays_DisconnectClearsMasksAndUniqueReconnectRestoresThem()
+    {
+        var config = DefaultConfig();
+        var display = Connected(config.Display);
+        var harness = new Harness(new ConfigLoadResult(config, false, null), [display]);
+        harness.Controller.Start();
+
+        harness.Topology.Displays = [];
+        harness.Controller.ReconcileDisplays();
+        harness.Topology.Displays = [display];
+        harness.Controller.ReconcileDisplays();
+
+        Assert.True(harness.Overlays.ClearCount >= 1);
+        Assert.Equal(2, harness.Overlays.Replacements.Count);
+    }
+
+    [Fact]
+    public void CancelEditorForDpiChange_DiscardsWorkingCopyAndRestoresMasks()
+    {
+        var config = DefaultConfig();
+        var harness = new Harness(
+            new ConfigLoadResult(config, false, null),
+            [Connected(config.Display)]);
+        harness.Controller.Start();
+        harness.Controller.Calibrate();
+
+        harness.Controller.CancelEditorForDpiChange();
+
+        Assert.False(harness.Calibration.IsEditing);
+        Assert.Equal(0, harness.Config.SaveCount);
+        Assert.Equal(2, harness.Overlays.Replacements.Count);
+    }
+
+    [Fact]
     public void SuspendAndResume_CloseTransientResourcesThenRestoreMasksOnce()
     {
         var config = DefaultConfig();
@@ -428,6 +462,26 @@ public sealed class RuntimeControllerTests
         Assert.True(harness.Controller.State.IsStopped);
         Assert.Equal(0, harness.Config.SaveCount);
         Assert.Equal(1, harness.Calibration.StopCount);
+    }
+
+    [Fact]
+    public void RevokeCallbacks_InvalidatesLateCallbacksWithoutOwningEditorOrMasks()
+    {
+        var config = DefaultConfig();
+        var harness = new Harness(
+            new ConfigLoadResult(config, false, null),
+            [Connected(config.Display)]);
+        harness.Controller.Start();
+        harness.Controller.Calibrate();
+        var staleSave = harness.Calibration.SaveCallback!;
+        var staleGeneration = harness.Calibration.Request!.Generation;
+
+        harness.Controller.RevokeCallbacks();
+        staleSave(staleGeneration, config.Bands);
+
+        Assert.True(harness.Controller.State.IsStopped);
+        Assert.True(harness.Calibration.IsEditing);
+        Assert.Equal(0, harness.Config.SaveCount);
     }
 
     private static ScreenFixConfig DefaultConfig() => DefaultConfiguration.Create(
