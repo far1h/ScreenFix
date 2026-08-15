@@ -4,9 +4,9 @@
 
 **Goal:** Complete native macOS parity by keeping ordinary application windows out of the saved mask bands while preserving masks and calibration when Accessibility permission or an individual application is unavailable.
 
-**Architecture:** Add pure display assignment, eligibility, and correction reducers to `ScreenFixCore`. Wrap the public macOS Accessibility C API behind small injectable adapters, own one `AXObserver` session per regular application, and route copied notifications to a generation-checked main-thread guard with per-window debounce, self-event suppression, and refusal cooldown. `RuntimeController` starts the guard only for a trusted, enabled, connected, non-calibrating session and continues rendering masks in every permission state.
+**Architecture:** Add pure display assignment, eligibility, and correction reducers to `ScreenFixCore`. Wrap the public macOS Accessibility C API behind small injectable adapters, give every AX element a positive 0.5-second messaging timeout, and own one serial AX lane plus one `AXObserver` session per regular application so cross-process calls never block the UI or another app. Copied results return to a generation-checked main-thread guard with per-window debounce, self-event suppression, and refusal cooldown. `RuntimeController` starts the guard only for a trusted, enabled, connected, non-calibrating session and continues rendering masks in every permission state.
 
-**Tech Stack:** Swift 5.7 language mode, AppKit, ApplicationServices Accessibility, Core Graphics, Core Foundation run loops, Foundation timers, the existing direct test runner, `codesign`, and `ditto`
+**Tech Stack:** Swift 5.7 language mode, AppKit, ApplicationServices Accessibility, Core Graphics, Core Foundation run loops, Foundation timers, Dispatch queues, the existing direct test runner, `codesign`, and `ditto`
 
 ---
 
@@ -27,12 +27,15 @@ primary references and the installed SDK headers are authoritative:
 
 - https://developer.apple.com/documentation/applicationservices/1459186-axisprocesstrustedwithoptions
 - https://developer.apple.com/documentation/applicationservices/1460133-axobservercreate
+- https://developer.apple.com/documentation/applicationservices/1459345-axuielementsetmessagingtimeout
 - https://developer.apple.com/documentation/applicationservices/axnotificationconstants_h
 - https://developer.apple.com/documentation/applicationservices/1462077-axuielementcopyelementatposition
 - https://developer.apple.com/documentation/applicationservices/kaxpositionattribute
 - https://developer.apple.com/documentation/applicationservices/axvaluetype
 - https://developer.apple.com/documentation/appkit/nsworkspace/runningapplications
 - https://developer.apple.com/documentation/appkit/nsworkspace/didterminateapplicationnotification
+- https://developer.apple.com/documentation/appkit/nsworkspace/willsleepnotification
+- https://developer.apple.com/documentation/appkit/nsworkspace/didwakenotification
 - https://developer.apple.com/documentation/coregraphics/cgdisplaybounds(_:)
 
 Do not use private `_AX` functions or an undocumented `AXFullScreen` attribute. Detect
@@ -99,6 +102,7 @@ AXUIElementCreateApplication
 AXUIElementCopyAttributeValue
 AXUIElementIsAttributeSettable
 AXUIElementSetAttributeValue
+AXUIElementSetMessagingTimeout
 AXValueCreate
 AXValueGetValue
 AXObserverCreate
@@ -117,7 +121,10 @@ swiftc -target arm64-apple-macosx13.0 -swift-version 5 \
 
 Also inspect the selected SDK's `AXUIElement.h`, `AXAttributeConstants.h`,
 `AXRoleConstants.h`, and `AXNotificationConstants.h`. Expected: every API and constant
-used by this plan exists without deprecation diagnostics. Delete only the exact
+used by this plan exists without deprecation diagnostics. Confirm specifically that
+`AXUIElementSetMessagingTimeout` accepts a positive number of seconds and applies only
+to the exact element passed, so every application/window element must be configured.
+Delete only the exact
 `mktemp` directory after recording the successful command.
 
 - [ ] **Step 2: Write failing display-coordinate tests**
@@ -241,20 +248,21 @@ window spanning the selected and another display.
 - [ ] **Step 2: Write failing pure eligibility tests**
 
 Use an immutable `WindowFacts` containing owner PID, ScreenFix PID, owner regular/hidden
-state, role, subrole, minimized state, frame, position/size settable flags, assigned
+state, role, subrole, minimized state, frame, position-settable state, assigned
 display ID, selected display ID, and live full display frames. An eligible window must:
 
 - belong to another `.regular`, non-hidden, live application;
 - have `kAXWindowRole` and `kAXStandardWindowSubrole`;
 - be non-minimized;
-- have finite positive position and size;
-- allow both position and size writes;
+- have finite position and positive finite size;
+- allow position writes; do not read size settability during eligibility;
 - be uniquely assigned to the selected display; and
 - not match any full display frame within one point.
 
 Reject ScreenFix-owned, system-wide, desktop, menu, sheet, dialog, utility/floating,
 unknown, non-movable, minimized, hidden, disconnected-display, full-screen, and malformed
-windows independently. Missing or errored facts are ineligible, never guessed.
+windows independently. A standard fixed-size window with writable position remains
+eligible. Missing or errored required facts are ineligible, never guessed.
 
 - [ ] **Step 3: Prove RED, implement, prove GREEN, and commit**
 
@@ -344,6 +352,14 @@ Inject the C-call boundary and test typed reads for strings, booleans, arrays,
 invalid element, `cannotComplete`, `apiDisabled`, and non-finite geometry become typed
 failures without force casts or leaked unmanaged values.
 
+Add `AXUIElementSetMessagingTimeout` to the injected boundary. Before any remote read,
+settable check, write, or notification registration/removal, set a positive 0.5-second
+timeout on that exact application/window element. Prove the timeout call occurs first,
+is not replaced with the process-global default, and a timeout-configuration failure
+prevents the remote call and returns a typed failure. Apple documents that an
+element-specific timeout does not transfer even to an equal element, so configure every
+retained element received from an array, callback, or fresh AX lookup.
+
 Represent window identity with a retained wrapper whose equality uses `CFEqual` and
 whose hash uses `CFHash`, paired with owner PID. Do not depend on private window IDs,
 pointer addresses, titles, or array order.
@@ -357,7 +373,8 @@ native/macos/scripts/run-tests.sh --filter AXClient
 - [ ] **Step 3: Write failing observer-registry ownership tests**
 
 Inject running-app enumeration, workspace notifications, AX observer factory,
-notification registration/removal, run-loop source attachment, and event sink. Test:
+notification registration/removal, run-loop source attachment, per-PID serial AX work
+lanes, and event sink. Test:
 
 - startup enumerates current `.regular` apps, excluding ScreenFix and terminated apps;
 - each PID gets at most one observer and application element;
@@ -371,6 +388,10 @@ notification registration/removal, run-loop source attachment, and event sink. T
   removes its observer/window registrations;
 - activation or unhide rechecks the live application facts and reseeds its current
   `kAXWindowsAttribute` array, so a merely shown existing window is not missed;
+- every application/window element gets the 0.5-second timeout before its first remote
+  operation, including observer registration and seeded/callback elements;
+- app A's deliberately suspended AX lane cannot delay app B's registration, seeding, or
+  event delivery, and app A's `cannotComplete` result rolls back only app A;
 - callbacks copy PID, retained element, notification, and generation before dispatching
   to the main queue;
 - stale callbacks after app removal, stop, or restart are inert;
@@ -381,7 +402,11 @@ notification registration/removal, run-loop source attachment, and event sink. T
 Subscribe to `NSWorkspace.didActivateApplicationNotification` and
 `didUnhideApplicationNotification` as shown-window lifecycle hints in addition to
 launch/termination; eligibility still comes from fresh AX/application facts, not from
-the notification alone. Use one observer per application. Apple's AX docs require adding
+the notification alone. Use one serial Dispatch queue and one observer per application.
+Never perform remote AX reads, settable checks, writes, or notification registration on
+the main thread. Dispatch only immutable, retained input into an app's lane; return an
+immutable result to the main queue and accept it only when its app/session generation
+still matches. Apple's AX docs require adding
 `AXObserverGetRunLoopSource(observer)` to a run loop before notifications arrive; use
 the main run loop common modes so menu tracking cannot indefinitely delay corrections.
 
@@ -403,7 +428,7 @@ git add native/macos/Sources/ScreenFixApp/AXClient.swift \
 git commit -m "feat: observe native application windows"
 ```
 
-### Task 6: Implement debounce, correction, self-suppression, and cooldown
+### Task 6: Implement bounded asynchronous correction and suppression
 
 **Files:**
 
@@ -413,8 +438,8 @@ git commit -m "feat: observe native application windows"
 
 - [ ] **Step 1: Write failing guard scheduling tests**
 
-Inject observer registry, AX client, display snapshot provider, timer scheduler, and
-monotonic clock. With one event log, prove:
+Inject observer registry, AX client, per-PID AX work lanes, display snapshot provider,
+timer scheduler, and monotonic clock. With one event log, prove:
 
 - start seeds all existing windows through the same 150-millisecond debounce;
 - created, focused, moved, resized, and deminiaturized events debounce per retained
@@ -424,8 +449,11 @@ monotonic clock. With one event log, prove:
 - scheduling failure retains no phantom pending entry;
 - target display/mask updates cancel or supersede old pending timers, are idempotent,
   and do not duplicate observers;
-- stop invalidates generation before cancelling timers and observers; and
-- one app/window failure never stops correction for another.
+- stop invalidates generation before cancelling timers and observers;
+- one app/window failure never stops correction for another;
+- an app A lane held past its timeout cannot block app B's lane or the main menu; and
+- app A returning `cannotComplete` enters only app A/window cooldown while app B still
+  corrects and records its own recent target.
 
 - [ ] **Step 2: Write failing fresh-eligibility and write tests**
 
@@ -433,7 +461,13 @@ At timer fire, re-read every eligibility fact and frame. Assert:
 
 - safe, excluded, disconnected, or no-longer-existing windows receive no write;
 - an intersecting eligible window receives the pure target;
-- size is written before position, then the actual position/size are read back;
+- a movable fixed-size window whose target preserves width/height receives only the
+  required position write and is corrected successfully;
+- if target width or height differs by more than one point, size settability is checked
+  before any write; a non-settable size rejects that resize target without a partial
+  position write and enters only that window's one-second refusal cooldown;
+- size is written first only when it materially changes, position is written only when
+  it materially changes, then the actual position/size are read back;
 - no animation or application activation API is called;
 - a confirmed frame within one point records a recent target for exactly 250 ms;
 - the resulting self-notification is consumed only when its fresh frame is within one
@@ -452,20 +486,28 @@ reject writes; that is a per-window refusal, not a global guard failure.
 native/macos/scripts/run-tests.sh --filter WindowGuard
 ```
 
-- [ ] **Step 4: Implement the main-thread guard**
+- [ ] **Step 4: Implement main-thread state with per-app AX lanes**
 
-Keep `pending`, `recentTargets`, and `blockedUntil` dictionaries private. A successful
-write sequence is:
+Keep `pending`, `recentTargets`, and `blockedUntil` dictionaries private and main-thread
+confined. When a debounce fires, capture immutable target/display/mask values and the
+current app/session generation, then perform the following bounded sequence on that
+PID's serial AX lane:
 
-1. read fresh facts/frame/work area/masks;
+1. read fresh facts/frame/work area/masks and require writable position;
 2. compute the pure target;
-3. write size, then position;
-4. read actual position and size;
-5. accept only when all four fields are within one point; and
-6. record the confirmed target with `now + 0.25`.
+3. if target width/height differs by more than one point, require writable size and
+   write size; otherwise do not query size settability or write size;
+4. write position only when target x/y differs by more than one point;
+5. read actual position and size;
+6. accept only when all four fields are within one point; and
+7. record the confirmed target with `now + 0.25`.
 
-Every timer and observer callback checks the session generation before and after
-external AX calls. Never retain an `NSScreen` or work area across display reconciliation.
+Stop the sequence at the first AX failure; every exact element has already received the
+0.5-second timeout through `AXClient`. Return one immutable result to the main queue.
+Every timer, observer, lane, and result callback checks the app/session generation before
+and after external AX calls. A stalled or timed-out lane for one PID never occupies the
+main thread or another PID's lane. Never retain an `NSScreen` or work area across display
+reconciliation.
 
 - [ ] **Step 5: Prove GREEN and commit**
 
@@ -512,16 +554,29 @@ Inject trust and guard owners and cover:
   guard only after normal masks reconcile;
 - Disable invalidates/stops guard before removing masks and saving; a failed Disable save
   retains enabled config/masks and safely rebuilds one guard;
-- display disconnect, topology change, and wake revoke guard callbacks before masks;
+- `SystemRuntimeNotifications` subscribes to `NSWorkspace.willSleepNotification` and
+  `didWakeNotification` on `NSWorkspace.shared.notificationCenter`, not the default
+  notification center;
+- will-sleep marks the runtime suspended and invalidates the guard-session generation
+  before stopping AX observers, per-window debounce/lane-result callbacks, and trust
+  polling; committed config and masks remain intact;
+- the runtime-lifetime token used by the retained wake observer is distinct from the
+  invalidated guard-session generation, so wake can still be received;
+- the first wake after sleep takes a fresh screen snapshot and reconciles masks before
+  starting exactly one trust/guard generation; duplicate wake notifications are inert;
+- display disconnect and topology change revoke guard callbacks before masks;
 - reconnect resolves fresh top-left full/work frames and starts one new generation;
 - Reload with invalid config preserves prior masks/guard; valid config replacement
   commits masks before swapping the guard target;
 - mask replacement failure preserves old guard target and masks;
-- stale trust, observer, timer, calibration, wake, and display callbacks cannot affect a
-  stopped or replacement session;
+- a held AX lane result, trust callback, observer event, or debounce timer from before
+  sleep cannot mutate windows or runtime state after sleep or wake;
+- stale calibration, duplicate-wake, and display callbacks cannot affect a stopped or
+  replacement session;
 - Quit teardown order is runtime callbacks, trust timer, AX observers, debounce timers,
   calibration editor, masks, menu; and
-- every start/reload/enable/disable/calibrate/wake cycle remains idempotent.
+- repeated sleep/wake plus every start/reload/enable/disable/calibrate cycle remains
+  idempotent.
 
 - [ ] **Step 3: Prove RED**
 
@@ -535,7 +590,10 @@ native/macos/scripts/run-tests.sh --filter RuntimeWindowGuard
 Derive guard eligibility from the same immutable snapshot used to build menu state.
 Compute absolute masks with `ConnectedScreen.topLeftFullFrame` and work area from
 `topLeftVisibleFrame`. Start/retarget the guard only after committed masks are known
-visible. Permission and individual-window failures never set the mask runtime error.
+visible. Keep a separate `isSleeping` flag, runtime notification lifetime token, and
+guard-session generation. A display notification while sleeping may mark topology dirty
+but cannot start AX/trust work; wake always resolves a new `connectedDisplays()` snapshot.
+Permission and individual-window failures never set the mask runtime error.
 
 - [ ] **Step 5: Construct production adapters and prove GREEN**
 
@@ -608,11 +666,16 @@ With throwaway TextEdit documents/windows containing no unsaved user work, verif
 8. if a safe throwaway ordinary app that rejects AX writes is available, its refusal
    does not block other apps and it retries only after one second; otherwise record
    "not physically observed" and cite the injected refusal/cooldown test result;
-9. calibration pauses correction, retains masks, and Save/Cancel restores it once;
-10. Disable removes masks and observers; Enable restores both;
-11. disconnect/reconnect, display-layout change, wake, Reload, and repeated app launch do
-    not duplicate masks, observers, timers, or menu items; and
-12. Quit removes every owned panel, observer, timer, and status item.
+9. if a safe fixed-size standard window is available, a position-only target corrects
+   without a size write while a resize-required target remains unchanged; otherwise
+   record "not physically observed" and cite the injected settable-attribute tests;
+10. calibration pauses correction, retains masks, and Save/Cancel restores it once;
+11. Disable removes masks and observers; Enable restores both;
+12. with throwaway windows only, sleep and wake twice: pre-sleep AX/debounce work causes
+    no late move, each wake uses current screen geometry, and exactly one guard resumes;
+13. disconnect/reconnect, display-layout change, Reload, and repeated app launch do not
+    duplicate masks, observers, timers, AX lanes, or menu items; and
+14. Quit removes every owned panel, observer, timer, AX lane, and status item.
 
 Do not automate TCC database changes or test on windows containing valuable unsaved
 work. Ad-hoc rebuilds may require removing/regranting the specific extracted app in
