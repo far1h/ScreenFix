@@ -1,6 +1,9 @@
 local M = {}
 M.KEY = "screenfix.config"
 
+local DEFAULT_LEFT = 1215 / 3440
+local DEFAULT_WIDTH = (1920 - 1215) / 3440
+
 local ScreenConfig = {}
 ScreenConfig.__index = ScreenConfig
 
@@ -90,9 +93,9 @@ function ScreenConfig:defaultForScreen(screen)
             height = frame.h,
         },
         bands = {
-            { x = 0.43, y = 0.00, w = 0.16, h = 0.34 },
-            { x = 0.46, y = 0.34, w = 0.11, h = 0.39 },
-            { x = 0.48, y = 0.73, w = 0.07, h = 0.27 },
+            { x = DEFAULT_LEFT, y = 0.00, w = DEFAULT_WIDTH, h = 0.34 },
+            { x = DEFAULT_LEFT, y = 0.34, w = DEFAULT_WIDTH, h = 0.39 },
+            { x = DEFAULT_LEFT, y = 0.73, w = DEFAULT_WIDTH, h = 0.27 },
         },
     }
 end

@@ -85,9 +85,57 @@ test.test("defaultForScreen builds the versioned monitor configuration", functio
     test.equal(result.screen.height, 1440)
     test.equal(result.descriptor, nil)
     test.equal(#result.bands, 3)
-    test.rect(result.bands[1], { x = 0.43, y = 0.00, w = 0.16, h = 0.34 })
-    test.rect(result.bands[2], { x = 0.46, y = 0.34, w = 0.11, h = 0.39 })
-    test.rect(result.bands[3], { x = 0.48, y = 0.73, w = 0.07, h = 0.27 })
+    test.rect(result.bands[1], {
+        x = 1215 / 3440,
+        y = 0.00,
+        w = 705 / 3440,
+        h = 0.34,
+    })
+    test.rect(result.bands[2], {
+        x = 1215 / 3440,
+        y = 0.34,
+        w = 705 / 3440,
+        h = 0.39,
+    })
+    test.rect(result.bands[3], {
+        x = 1215 / 3440,
+        y = 0.73,
+        w = 705 / 3440,
+        h = 0.27,
+    })
+end)
+
+test.test("defaultForScreen maps every band to the permanent 3440-pixel span", function()
+    local width = 3440
+    local screen = fake.screen("screen-uuid", "Damaged Display", {
+        x = -width,
+        y = 0,
+        w = width,
+        h = 1440,
+    })
+    local result = newConfig():defaultForScreen(screen)
+
+    for _, band in ipairs(result.bands) do
+        test.equal(band.x * width, 1215)
+        test.equal((band.x + band.w) * width, 1920)
+    end
+end)
+
+test.test("defaultForScreen returns fresh configurations and band tables", function()
+    local screen = fake.screen("screen-uuid", "Damaged Display", {
+        x = -3440,
+        y = 0,
+        w = 3440,
+        h = 1440,
+    })
+    local first = newConfig():defaultForScreen(screen)
+    local second = newConfig():defaultForScreen(screen)
+
+    first.bands[1].x = 0
+    first.bands[2].w = 1
+
+    test.equal(second.bands[1].x, 1215 / 3440)
+    test.equal(second.bands[2].w, 705 / 3440)
 end)
 
 test.test("validate returns a valid configuration", function()
