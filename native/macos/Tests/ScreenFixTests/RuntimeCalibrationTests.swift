@@ -622,7 +622,7 @@ let runtimeCalibrationTests = [
         try expect(value.editor.isEditing)
         try expectEqual(value.editor.sessions.count, 2)
     },
-    TestCase(name: "RuntimeCalibration reentrant Save preserves the newer monitor editor") {
+    TestCase(name: "RuntimeCalibration reentrant Save serializes before the newer monitor editor") {
         let value = calibrationFixture(
             configuration: calibrationConfig("a"),
             screens: [calibrationScreen("a"), calibrationScreen("b", name: "Second")]
@@ -634,13 +634,16 @@ let runtimeCalibrationTests = [
             value.runtime.selectDisplay(stableId: "b")
         }
 
-        try expectThrows { try value.editor.save(editedCalibrationBands(), session: 0) }
+        try value.editor.save(editedCalibrationBands(), session: 0)
 
         try expect(value.runtime.snapshot.calibrating)
         try expect(value.editor.isEditing)
         try expectEqual(value.editor.sessions.count, 2)
         try expectEqual(value.editor.latestFrame, calibrationScreen("b", name: "Second").fullFrame)
         try expectEqual(value.runtime.snapshot.configuration?.display.stableId, "a")
+        try expectEqual(value.runtime.snapshot.configuration?.bands, editedCalibrationBands())
+        try expectEqual(value.store.configuration, value.runtime.snapshot.configuration)
+        try expectEqual(value.masks.lastScreenFrame, calibrationScreen("b", name: "Second").fullFrame)
     },
     TestCase(name: "RuntimeCalibration stop orders callbacks editor and masks and remains inert") {
         let value = calibrationFixture(configuration: calibrationConfig("a"), screens: [calibrationScreen("a")])

@@ -160,6 +160,8 @@ public final class RuntimeController {
     private var started = false
     private var stopping = false
     private var terminated = false
+    private var calibrationCommitInProgress = false
+    private var deferredRuntimeMutations: [() -> Void] = []
 
     public init(
         store: RuntimeConfigurationStore,
@@ -221,6 +223,7 @@ public final class RuntimeController {
     }
 
     public func setEnabled(_ enabled: Bool) {
+        if deferDuringCalibrationCommit({ runtime in runtime.setEnabled(enabled) }) { return }
         guard started else { return }
         guard cancelCalibrationAndRestore() else { return }
         guard let current = configuration, current.enabled != enabled else {
@@ -270,6 +273,7 @@ public final class RuntimeController {
     }
 
     public func selectDisplay(stableId: String) {
+        if deferDuringCalibrationCommit({ runtime in runtime.selectDisplay(stableId: stableId) }) { return }
         guard started else { return }
         let screens = catalog.connectedDisplays()
         guard let screen = screens.first(where: { candidate in
@@ -291,6 +295,7 @@ public final class RuntimeController {
     }
 
     public func toggleCalibration() {
+        if deferDuringCalibrationCommit({ runtime in runtime.toggleCalibration() }) { return }
         guard started else { return }
         if calibrationSession != nil {
             if cancelCalibrationAndRestore() { stateDidChange() }
@@ -314,6 +319,7 @@ public final class RuntimeController {
     }
 
     public func resetToDefaults() {
+        if deferDuringCalibrationCommit({ runtime in runtime.resetToDefaults() }) { return }
         guard started else { return }
         guard cancelCalibrationAndRestore() else { return }
         guard let current = configuration else {
@@ -345,6 +351,7 @@ public final class RuntimeController {
     }
 
     public func reload() {
+        if deferDuringCalibrationCommit({ runtime in runtime.reload() }) { return }
         guard started else { return }
         guard cancelCalibrationAndRestore() else { return }
         do {
@@ -357,6 +364,7 @@ public final class RuntimeController {
     }
 
     public func reconcile() {
+        if deferDuringCalibrationCommit({ runtime in runtime.reconcile() }) { return }
         guard started else { return }
         if reconcileCalibrationTopology() {
             stateDidChange()
@@ -367,6 +375,7 @@ public final class RuntimeController {
     }
 
     public func stop() {
+        if deferDuringCalibrationCommit({ runtime in runtime.stop() }) { return }
         guard started else { return }
         stopping = true
         generation += 1
@@ -382,6 +391,7 @@ public final class RuntimeController {
     }
 
     public func quit() {
+        if deferDuringCalibrationCommit({ runtime in runtime.quit() }) { return }
         guard !terminated else { return }
         terminated = true
         stop()
@@ -508,6 +518,11 @@ public final class RuntimeController {
             stateDidChange()
             throw error
         }
+        guard !calibrationCommitInProgress else {
+            throw RuntimeCalibrationCommitError.superseded
+        }
+        calibrationCommitInProgress = true
+        defer { finishCalibrationCommit() }
 
         do {
             let frames = maskFrames(for: desired, on: screen)
@@ -562,6 +577,26 @@ public final class RuntimeController {
             maskOwner.removeAll()
         }
         stateDidChange()
+    }
+
+    private func deferDuringCalibrationCommit(
+        _ mutation: @escaping (RuntimeController) -> Void
+    ) -> Bool {
+        guard calibrationCommitInProgress else { return false }
+        deferredRuntimeMutations.append { [weak self] in
+            guard let self else { return }
+            mutation(self)
+        }
+        return true
+    }
+
+    private func finishCalibrationCommit() {
+        calibrationCommitInProgress = false
+        let mutations = deferredRuntimeMutations
+        deferredRuntimeMutations.removeAll()
+        for mutation in mutations {
+            mutation()
+        }
     }
 
     private func cancelCalibration(token: Int, lifecycleGeneration: Int) {
