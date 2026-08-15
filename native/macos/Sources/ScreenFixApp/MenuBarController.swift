@@ -79,6 +79,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private func action(for identifier: String) -> Selector? {
         if identifier == "enabled-action" { return #selector(toggleEnabled) }
+        if identifier == "calibrate" { return #selector(toggleCalibration) }
         if identifier == "reset-defaults" { return #selector(resetDefaults) }
         if identifier == "reload" { return #selector(reload) }
         if identifier == "quit" { return #selector(quit) }
@@ -89,6 +90,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func toggleEnabled() {
         let enabled = runtime.snapshot.configuration?.enabled ?? false
         runtime.setEnabled(!enabled)
+    }
+
+    @objc private func toggleCalibration() {
+        runtime.toggleCalibration()
     }
 
     @objc private func selectDisplay(_ sender: NSMenuItem) {

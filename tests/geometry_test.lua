@@ -787,18 +787,107 @@ test.test("snapBand rejects peer resizes below 20 points on either axis", functi
     )
 end)
 
-test.test("snapBand rejects every target when another dimension is below 20 points", function()
-    local raw = { x = 0.012, y = 0.20, w = 0.20, h = 0.019 }
-    local snapped = geometry.snapBand(
-        raw,
-        1,
-        "body",
-        {},
-        { x = 0, y = 0, w = 1000, h = 1000 },
-        12
-    )
+test.test("snapBand moves narrow and short bodies without resizing them", function()
+    local fullFrame = { x = 0, y = 0, w = 1000, h = 1000 }
+    local narrow = { x = 0.012, y = 0.20, w = 0.019, h = 0.20 }
+    local short = { x = 0.20, y = 0.012, w = 0.20, h = 0.019 }
 
-    test.rect(snapped, raw)
+    test.rect(
+        geometry.snapBand(narrow, 1, "body", {}, fullFrame, 12),
+        { x = 0, y = 0.20, w = 0.019, h = 0.20 }
+    )
+    test.rect(
+        geometry.snapBand(short, 1, "body", {}, fullFrame, 12),
+        { x = 0.20, y = 0, w = 0.20, h = 0.019 }
+    )
+end)
+
+test.test("snapBand horizontal edges ignore a short unrelated height", function()
+    local fullFrame = { x = 0, y = 0, w = 1000, h = 1000 }
+
+    test.rect(
+        geometry.snapBand(
+            { x = 0.024, y = 0.20, w = 0.030, h = 0.019 },
+            2,
+            "left",
+            { { x = 0.034, y = 0.70, w = 0.10, h = 0.10 } },
+            fullFrame,
+            12
+        ),
+        { x = 0.034, y = 0.20, w = 0.054 - 0.034, h = 0.019 }
+    )
+    test.rect(
+        geometry.snapBand(
+            { x = 0.25, y = 0.20, w = 0.030, h = 0.019 },
+            2,
+            "right",
+            { { x = 0.27, y = 0.70, w = 0.10, h = 0.10 } },
+            fullFrame,
+            12
+        ),
+        { x = 0.25, y = 0.20, w = 0.27 - 0.25, h = 0.019 }
+    )
+end)
+
+test.test("snapBand vertical edges ignore a narrow unrelated width", function()
+    local fullFrame = { x = 0, y = 0, w = 1000, h = 1000 }
+
+    test.rect(
+        geometry.snapBand(
+            { x = 0.20, y = 0.024, w = 0.019, h = 0.030 },
+            2,
+            "top",
+            { { x = 0.70, y = 0.034, w = 0.10, h = 0.10 } },
+            fullFrame,
+            12
+        ),
+        { x = 0.20, y = 0.034, w = 0.019, h = 0.054 - 0.034 }
+    )
+    test.rect(
+        geometry.snapBand(
+            { x = 0.20, y = 0.25, w = 0.019, h = 0.030 },
+            2,
+            "bottom",
+            { { x = 0.70, y = 0.27, w = 0.10, h = 0.10 } },
+            fullFrame,
+            12
+        ),
+        { x = 0.20, y = 0.25, w = 0.019, h = 0.27 - 0.25 }
+    )
+end)
+
+test.test("snapBand rejects only a sub-minimum horizontal resize dimension", function()
+    local fullFrame = { x = 0, y = 0, w = 1000, h = 1000 }
+    local raw = { x = 0.25, y = 0.20, w = 0.030, h = 0.019 }
+
+    test.rect(
+        geometry.snapBand(
+            raw,
+            2,
+            "right",
+            { { x = 0.269999999999, y = 0.70, w = 0.10, h = 0.10 } },
+            fullFrame,
+            12
+        ),
+        raw
+    )
+end)
+
+test.test("snapBand rejects only a sub-minimum vertical resize dimension", function()
+    local fullFrame = { x = 0, y = 0, w = 1000, h = 1000 }
+    local raw = { x = 0.20, y = 0.25, w = 0.019, h = 0.030 }
+
+    test.rect(
+        geometry.snapBand(
+            raw,
+            2,
+            "bottom",
+            { { x = 0.70, y = 0.269999999999, w = 0.10, h = 0.10 } },
+            fullFrame,
+            12
+        ),
+        raw
+    )
 end)
 
 local function resizedEdge(rect, part)

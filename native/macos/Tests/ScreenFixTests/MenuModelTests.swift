@@ -6,20 +6,39 @@ private func menuConnected(_ id: String?, name: String) -> ConnectedDisplay {
     ConnectedDisplay(stableId: id, name: name, width: 100, height: 100)
 }
 
+private let modelMenuDisplay = DisplayIdentity(
+    stableId: "menu-uuid",
+    name: "Ultrawide",
+    width: 3440,
+    height: 1440
+)
+
 let menuModelTests = [
     TestCase(name: "MenuModel status icon uses a proportionate visible size") {
         try expectEqual(StatusIconMetrics.imageSize, NSSize(width: 24, height: 15))
     },
-    TestCase(name: "MenuModel hides unfinished features and keeps exact app order") {
-        let state = MenuState.make(configuration: nil, displayConnected: false, runtimeError: nil)
+    TestCase(name: "MenuModel exposes finished calibration in exact app order") {
+        let state = MenuState.make(
+            configuration: nil,
+            displayConnected: false,
+            calibrating: false,
+            runtimeError: nil
+        )
         let builder = MenuModelBuilder(displayProvider: { [] })
         let model = builder.build(state: state, savedStableId: nil)
 
         try expectEqual(model.map(\.identifier), [
-            "paused-status", "enabled-action", "select-monitor", "reset-defaults",
+            "paused-status", "enabled-action", "calibrate", "select-monitor", "reset-defaults",
             "reload", "separator", "quit",
         ])
-        try expect(!model.contains(where: { $0.identifier.contains("phase2") }))
+        let productText = model.map { "\($0.identifier) \($0.title)" }.joined(separator: " ").lowercased()
+        for forbidden in ["phase", "coming soon", "unavailable"] {
+            try expect(!productText.contains(forbidden))
+        }
+        let calibrate = model.first(where: { $0.identifier == "calibrate" })
+        try expectEqual(calibrate?.title, "Calibrate")
+        try expectEqual(calibrate?.isEnabled, false)
+        try expectEqual(calibrate?.isChecked, false)
     },
     TestCase(name: "MenuModel refreshes displays on every build") {
         var calls = 0
@@ -29,7 +48,12 @@ let menuModelTests = [
                 ? [menuConnected("a", name: "Display A")]
                 : [menuConnected("b", name: "Display B")]
         })
-        let state = MenuState.make(configuration: nil, displayConnected: false, runtimeError: nil)
+        let state = MenuState.make(
+            configuration: nil,
+            displayConnected: false,
+            calibrating: false,
+            runtimeError: nil
+        )
 
         let first = builder.build(state: state, savedStableId: nil)
         let second = builder.build(state: state, savedStableId: nil)
@@ -43,7 +67,12 @@ let menuModelTests = [
         let builder = MenuModelBuilder(displayProvider: {
             [menuConnected(nil, name: "Unknown"), menuConnected("CURRENT", name: "Current")]
         })
-        let state = MenuState.make(configuration: nil, displayConnected: false, runtimeError: nil)
+        let state = MenuState.make(
+            configuration: nil,
+            displayConnected: false,
+            calibrating: false,
+            runtimeError: nil
+        )
         let children = builder.build(state: state, savedStableId: "current")
             .first(where: { $0.identifier == "select-monitor" })?.children ?? []
 
@@ -52,5 +81,18 @@ let menuModelTests = [
         try expect(!children[0].isChecked)
         try expect(children[1].isEnabled)
         try expect(children[1].isChecked)
+    },
+    TestCase(name: "MenuModel checks enabled Calibrate while editing") {
+        let state = MenuState.make(
+            configuration: DefaultConfiguration.make(for: modelMenuDisplay, enabled: false),
+            displayConnected: true,
+            calibrating: true,
+            runtimeError: nil
+        )
+        let item = MenuModelBuilder(displayProvider: { [] })
+            .build(state: state, savedStableId: modelMenuDisplay.stableId)
+            .first(where: { $0.identifier == "calibrate" })
+        try expectEqual(item?.isEnabled, true)
+        try expectEqual(item?.isChecked, true)
     },
 ]

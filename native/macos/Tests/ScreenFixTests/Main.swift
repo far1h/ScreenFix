@@ -3,6 +3,10 @@ enum Main {
     static func main() {
         runTests(
             defaultConfigurationTests
+                + calibrationGeometryTests
+                + calibrationInteractionTests
+                + calibrationLayoutTests
+                + calibrationPanelTests
                 + maskGeometryTests
                 + configValidatorTests
                 + displaySelectorTests
@@ -11,6 +15,7 @@ enum Main {
                 + displayCatalogTests
                 + menuStateTests
                 + menuModelTests
+                + runtimeCalibrationTests
                 + runtimeControllerTests
         )
     }
