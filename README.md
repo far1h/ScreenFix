@@ -134,8 +134,9 @@ display icon appears in the menu bar.
 4. Choose **Save**. ScreenFix remembers the display and calibration, switches to
    click-through masks, and starts window protection when Accessibility is available.
 
-Choose **Calibrate** again from the ScreenFix menu, or choose the gray **Cancel**
-control, to exit and discard calibration changes.
+Choose the gray **Cancel** control to exit and discard calibration changes. While the
+native macOS editor is open, it covers and intercepts the menu bar, so exit with the
+visible Save or Cancel control.
 
 ## Menu and startup
 

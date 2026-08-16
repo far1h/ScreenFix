@@ -301,10 +301,9 @@ let calibrationPanelTests = [
         try expect(panel.collectionBehavior.contains(.ignoresCycle))
         try expectEqual(
             panel.level.rawValue,
-            Int(CGWindowLevelForKey(.mainMenuWindow))
+            Int(CGWindowLevelForKey(.assistiveTechHighWindow))
         )
-        try expect(panel.level.rawValue < NSWindow.Level.statusBar.rawValue)
-        try expect(panel.level.rawValue < NSWindow.Level.popUpMenu.rawValue)
+        try expect(panel.level.rawValue > NSWindow.Level.screenSaver.rawValue)
     },
     TestCase(name: "CalibrationPanel view is flipped accepts first mouse and replaces tracking area") {
         _ = NSApplication.shared

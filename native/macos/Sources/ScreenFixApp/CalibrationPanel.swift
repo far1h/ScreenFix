@@ -57,7 +57,9 @@ public struct CalibrationPanelFactory {
         panel.ignoresMouseEvents = false
         panel.hidesOnDeactivate = false
         panel.acceptsMouseMovedEvents = true
-        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)))
+        panel.level = NSWindow.Level(
+            rawValue: Int(CGWindowLevelForKey(.assistiveTechHighWindow))
+        )
         panel.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,

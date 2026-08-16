@@ -30,9 +30,10 @@ The app remembers one display by its Core Graphics UUID, persists JSON in
 `~/Library/Application Support/ScreenFix/config.json`, and draws three opaque,
 click-through black masks. The permanent defaults span exactly 1215–1920 on a
 3440-wide display. **Calibrate** edits a working copy: drag a red band from its center
-or resize it from any white edge, then choose **Save** to persist it. **Cancel** or
-choosing the checked **Calibrate** item discards the working copy. A mouse can hold and
-drag; a trackpad can tap, move, and tap again. Neither input style needs a modifier key.
+or resize it from any white edge, then choose **Save** to persist it. **Cancel** discards
+the working copy. During calibration, the full-display editor covers and intercepts the
+menu bar, so use the visible Save or Cancel control to exit. A mouse can hold and drag; a
+trackpad can tap, move, and tap again. Neither input style needs a modifier key.
 
 The masks and calibration editor work without Accessibility permission. Automatic
 window placement needs permission in **System Settings > Privacy & Security >

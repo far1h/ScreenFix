@@ -96,10 +96,14 @@ let maskPanelTests = [
         try expect(!panel.canBecomeMain)
         try expectEqual(
             panel.level.rawValue,
-            Int(CGWindowLevelForKey(.mainMenuWindow))
+            NSWindow.Level.screenSaver.rawValue
         )
-        try expect(panel.level.rawValue < NSWindow.Level.statusBar.rawValue)
-        try expect(panel.level.rawValue < NSWindow.Level.popUpMenu.rawValue)
+        try expect(panel.level.rawValue > NSWindow.Level.statusBar.rawValue)
+        try expect(panel.level.rawValue > NSWindow.Level.popUpMenu.rawValue)
+        try expect(
+            panel.level.rawValue
+                < Int(CGWindowLevelForKey(.assistiveTechHighWindow))
+        )
     },
     TestCase(name: "MaskPanel does not constrain a full-frame mask to visibleFrame") {
         _ = NSApplication.shared

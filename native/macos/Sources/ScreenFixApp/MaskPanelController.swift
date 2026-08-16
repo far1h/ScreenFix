@@ -43,7 +43,7 @@ public struct MaskPanelFactory {
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.hidesOnDeactivate = false
-        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)))
+        panel.level = .screenSaver
         panel.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,
