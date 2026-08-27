@@ -1,3 +1,8 @@
 .DS_Store
 .superpowers/
 .worktrees/
+native/windows/**/bin/
+native/windows/**/obj/
+native/windows/artifacts/
+native/macos/.build/
+native/macos/artifacts/

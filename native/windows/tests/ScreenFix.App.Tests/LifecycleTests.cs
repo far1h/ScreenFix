@@ -5,6 +5,23 @@ namespace ScreenFix.App.Tests;
 public sealed class LifecycleTests
 {
     [Fact]
+    public void ScreenFixApplicationIdentity_UsesProductionMutexName()
+    {
+        Assert.Equal(@"Local\ScreenFix.Native", ScreenFixApplicationIdentity.SingleInstanceMutexName);
+    }
+
+    [Fact]
+    public void ScreenFixPaths_UsesProductionConfigurationPath()
+    {
+        var expected = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ScreenFix",
+            "config.json");
+
+        Assert.Equal(expected, ScreenFixPaths.ConfigFile);
+    }
+
+    [Fact]
     public void ApplicationLifetime_CleansEveryResourceInRequiredOrder()
     {
         var calls = new List<string>();

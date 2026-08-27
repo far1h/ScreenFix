@@ -49,18 +49,19 @@ region; physically black or colored pixels may remain visible.
 
 ## Install the native Windows app
 
-1. Download `ScreenFix-windows-x64.zip` or `ScreenFix.exe`.
-2. Extract the ZIP if needed.
-3. Double-click **ScreenFix.exe**.
-4. Open the tray icon, choose **Select Monitor**, calibrate the masks, then choose
+1. Download `ScreenFix-Windows-x64.exe` from the Releases page.
+2. Double-click the downloaded executable.
+3. Open the tray icon, choose **Select Monitor**, calibrate the masks, then choose
    **Save**.
-5. Windows may show SmartScreen for an unsigned local build. Choose **More info** only
+4. Windows may show SmartScreen for an unsigned local build. Choose **More info** only
    when the file came from the trusted project release.
 
-Windows x64 means ordinary 64-bit Intel or AMD Windows, not Windows on ARM. The package
-is self-contained, so a separate .NET runtime is not required. ScreenFix runs at normal
-integrity and cannot move windows launched as administrator; masks and calibration keep
-working when an elevated window cannot be corrected.
+`ScreenFix-Windows-x64.exe` is the recommended smaller self-contained download.
+`ScreenFix-Windows-x64-uncompressed.exe` is the behavior-identical uncompressed fallback
+for startup or extraction trouble. Neither download needs a separate .NET runtime, and
+there is no ZIP to extract. Both target ordinary Intel or AMD x64 Windows. ScreenFix
+runs at normal integrity and cannot move windows launched as administrator; masks and
+calibration keep working when an elevated window cannot be corrected.
 
 ## Install the native macOS app
 
@@ -171,11 +172,16 @@ Removing the link does not delete the project directory.
 
 ## Collaborating
 
-On Windows, run the native tests and publish the asserted single-file x64 app:
+The exact Windows test and dual-package release commands, including private SDK
+10.0.100 and newer external SDK paths, are in
+`.github/workflows/windows-native.yml`. The scripts require those absolute launchers:
 
 ```powershell
-native\windows\scripts\test-windows-native.ps1
-native\windows\scripts\publish-win-x64.ps1
+native\windows\scripts\test-windows-native.ps1 `
+    -DotnetPath C:\path\to\10.0.100\dotnet.exe
+native\windows\scripts\publish-win-x64.ps1 `
+    -DotnetPath C:\path\to\10.0.100\dotnet.exe `
+    -ExternalDotnetPath C:\path\to\newer-10.0\dotnet.exe
 ```
 
 On macOS, regenerate and verify the committed Windows icon after editing its SVG:

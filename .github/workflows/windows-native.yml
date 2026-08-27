@@ -3,11 +3,13 @@ name: Windows native
 on:
   push:
     paths:
+      - "README.md"
       - ".github/workflows/windows-native.yml"
       - "global.json"
       - "native/windows/**"
   pull_request:
     paths:
+      - "README.md"
       - ".github/workflows/windows-native.yml"
       - "global.json"
       - "native/windows/**"
@@ -23,22 +25,140 @@ concurrency:
 jobs:
   test:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+    env:
+      SCREENFIX_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - name: Check out exact source commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SCREENFIX_SOURCE_SHA }}
+      - name: Verify source identity and fresh SDK roots
+        shell: pwsh
+        run: |
+          $actualSha = (git rev-parse HEAD).Trim()
+          if ($actualSha -cne $env:SCREENFIX_SOURCE_SHA) {
+            throw "checked out $actualSha instead of $env:SCREENFIX_SOURCE_SHA"
+          }
+          Write-Output "ScreenFix source SHA: $actualSha"
+
+          $externalRoot = '${{ runner.temp }}\screenfix-external-dotnet'
+          $privateRoot = '${{ runner.temp }}\screenfix-dotnet-10.0.100'
+          if (Test-Path -LiteralPath $externalRoot) {
+            throw "external SDK root must be initially absent: $externalRoot"
+          }
+          if (Test-Path -LiteralPath $privateRoot) {
+            throw "private SDK root must be initially absent: $privateRoot"
+          }
+      - name: Install external stable .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}\screenfix-external-dotnet
+        with:
+          dotnet-version: 10.0.x
+          dotnet-quality: ga
+      - name: Record external SDK launcher
+        shell: pwsh
+        run: |
+          $launcher = [IO.Path]::GetFullPath(
+            '${{ runner.temp }}\screenfix-external-dotnet\dotnet.exe')
+          if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+            throw "external SDK launcher does not exist: $launcher"
+          }
+          "SCREENFIX_EXTERNAL_DOTNET=$launcher" | Out-File `
+            -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Install private .NET SDK 10.0.100
+        uses: actions/setup-dotnet@v6
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}\screenfix-dotnet-10.0.100
         with:
           dotnet-version: 10.0.100
+      - name: Record private SDK launcher
+        shell: pwsh
+        run: |
+          $launcher = [IO.Path]::GetFullPath(
+            '${{ runner.temp }}\screenfix-dotnet-10.0.100\dotnet.exe')
+          if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+            throw "private SDK launcher does not exist: $launcher"
+          }
+          "SCREENFIX_PRIVATE_DOTNET=$launcher" | Out-File `
+            -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Restore
-        run: dotnet restore native\windows\ScreenFix.slnx
+        shell: pwsh
+        run: '& $env:SCREENFIX_PRIVATE_DOTNET restore native\windows\ScreenFix.slnx'
       - name: Run Windows native tests
         shell: pwsh
-        run: native\windows\scripts\test-windows-native.ps1
+        run: >-
+          native\windows\scripts\test-windows-native.ps1
+          -DotnetPath $env:SCREENFIX_PRIVATE_DOTNET
+      - name: Test disposable-account gate
+        shell: pwsh
+        run: native\windows\scripts\test-disposable-test-gate.ps1
+      - name: Run disposable-account Windows tests
+        shell: pwsh
+        env:
+          SCREENFIX_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: >-
+          native\windows\scripts\test-windows-native.ps1
+          -DotnetPath $env:SCREENFIX_PRIVATE_DOTNET
+          -AllowDisposableAccountMutation
       - name: Run portable Windows tests
-        run: dotnet test native\windows\ScreenFix.slnx -c Release --no-restore
+        shell: pwsh
+        run: >-
+          & $env:SCREENFIX_PRIVATE_DOTNET test native\windows\ScreenFix.slnx
+          -c Release --no-restore
+      - name: Run pinned toolchain assertion controls
+        shell: pwsh
+        run: native\windows\scripts\test-assert-pinned-win-x64-toolchain.ps1
       - name: Run package assertion regressions
         shell: pwsh
-        run: native\windows\scripts\test-assert-win-x64-package.ps1
-      - name: Publish and assert win-x64 package
+        run: >-
+          native\windows\scripts\test-assert-win-x64-package.ps1
+          -DotnetPath $env:SCREENFIX_PRIVATE_DOTNET
+          -ExternalDotnetPath $env:SCREENFIX_EXTERNAL_DOTNET
+      - name: Run release assertion regressions
         shell: pwsh
-        run: native\windows\scripts\publish-win-x64.ps1
+        run: native\windows\scripts\test-assert-win-x64-release.ps1
+      - name: Run publish preflight regressions
+        shell: pwsh
+        run: native\windows\scripts\test-publish-win-x64-preflight.ps1
+      - name: Run release transaction regressions
+        shell: pwsh
+        run: native\windows\scripts\test-win-x64-release-transaction.ps1
+      - name: Publish, assert, and measure dual win-x64 packages
+        shell: pwsh
+        env:
+          SCREENFIX_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: >-
+          native\windows\scripts\publish-win-x64.ps1
+          -DotnetPath $env:SCREENFIX_PRIVATE_DOTNET
+          -ExternalDotnetPath $env:SCREENFIX_EXTERNAL_DOTNET
+          -MeasureStartup
+      - name: Upload exact Windows release executables
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenfix-windows-x64-${{ env.SCREENFIX_SOURCE_SHA }}
+          if-no-files-found: error
+          path: |
+            native\windows\artifacts\windows\release\ScreenFix-Windows-x64.exe
+            native\windows\artifacts\windows\release\ScreenFix-Windows-x64-uncompressed.exe
+      - name: Require fresh artifact verification directory
+        shell: pwsh
+        run: |
+          $verificationRoot = [IO.Path]::GetFullPath(
+            '${{ runner.temp }}\screenfix-downloaded-release')
+          if (Test-Path -LiteralPath $verificationRoot) {
+            throw "artifact verification directory must be initially absent: $verificationRoot"
+          }
+          "SCREENFIX_DOWNLOADED_RELEASE=$verificationRoot" | Out-File `
+            -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Download exact Windows release artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: screenfix-windows-x64-${{ env.SCREENFIX_SOURCE_SHA }}
+          path: ${{ env.SCREENFIX_DOWNLOADED_RELEASE }}
+      - name: Verify downloaded Windows release layout
+        shell: pwsh
+        run: >-
+          native\windows\scripts\assert-win-x64-release.ps1
+          -ReleaseDirectory $env:SCREENFIX_DOWNLOADED_RELEASE

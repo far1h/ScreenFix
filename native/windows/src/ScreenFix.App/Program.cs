@@ -1,6 +1,4 @@
 using System.Windows.Forms;
-using ScreenFix.App.Lifecycle;
-
 namespace ScreenFix.App;
 
 internal static class Program
@@ -10,7 +8,7 @@ internal static class Program
     {
         ApplicationConfiguration.Initialize();
 
-        var gate = SingleInstanceGate.TryAcquire(@"Local\ScreenFix.Native");
+        var gate = ScreenFixApplicationIdentity.TryAcquire();
         if (gate is null)
         {
             return;

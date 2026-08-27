@@ -14,15 +14,17 @@
     <AssemblyName>ScreenFix</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Resources\ScreenFix.ico</ApplicationIcon>
-    <Version>1.0.3</Version>
-    <AssemblyVersion>1.0.3.0</AssemblyVersion>
-    <FileVersion>1.0.3.0</FileVersion>
-    <InformationalVersion>1.0.3</InformationalVersion>
+    <ScreenFixManagedIcon Condition="'$(ScreenFixManagedIcon)' == ''">Resources\ScreenFix.ico</ScreenFixManagedIcon>
+    <Version>1.0.4</Version>
+    <AssemblyVersion>1.0.4.0</AssemblyVersion>
+    <FileVersion>1.0.4.0</FileVersion>
+    <InformationalVersion>1.0.4</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Resources\ScreenFix.ico" LogicalName="ScreenFix.App.Resources.ScreenFix.ico" />
+    <EmbeddedResource Include="$(ScreenFixManagedIcon)"
+                      LogicalName="ScreenFix.App.Resources.ScreenFix.ico" />
   </ItemGroup>
 
 </Project>

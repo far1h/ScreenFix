@@ -155,8 +155,6 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
                 messageCoordinator.Generation));
         lifetime.OwnEditor(calibration.Stop);
 
-        var localData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var configPath = Path.Combine(localData, "ScreenFix", "config.json");
         var native = new WindowNative();
         var processId = checked((uint)Environment.ProcessId);
         var clock = new SystemClock();
@@ -176,7 +174,7 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
             processId);
         lifetime.OwnGuard(guard.Dispose);
         controller = new RuntimeController(
-            new RuntimeConfigStore(configPath),
+            new RuntimeConfigStore(ScreenFixPaths.ConfigFile),
             new RuntimeDisplayTopology(),
             new RuntimeMaskOverlayHost(overlaySet),
             guard,
