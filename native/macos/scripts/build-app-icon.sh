@@ -82,10 +82,18 @@ for spec in "${ICON_SPECS[@]}"; do
 done
 
 mkdir -p "$OUTPUT_DIR"
+if [[ -d "$OUTPUT_PATH" ]]; then
+    echo "output path is a directory: $OUTPUT_PATH" >&2
+    exit 1
+fi
 PUBLISH_PATH="$(mktemp "$OUTPUT_DIR/.ScreenFix.icns.XXXXXX")"
 cp "$STAGED_PATH" "$PUBLISH_PATH"
+chmod 0644 "$PUBLISH_PATH"
 test -s "$PUBLISH_PATH"
 mv -f "$PUBLISH_PATH" "$OUTPUT_PATH"
+test -f "$OUTPUT_PATH"
+test -s "$OUTPUT_PATH"
+test "$(stat -f '%Lp' "$OUTPUT_PATH")" = "644"
 PUBLISH_PATH=""
 
 printf '%s\n' "$OUTPUT_PATH"
