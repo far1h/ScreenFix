@@ -307,10 +307,6 @@ function Assert-SourceMatchesStaged {
     Write-Output "$Name deterministic sha256=$sourceHash"
 }
 
-if ($MeasureStartup) {
-    throw "startup measurement is not implemented until Task 8"
-}
-
 $windowsArtifactsRoot = [IO.Path]::GetFullPath(
     (Join-Path $repositoryRoot "native/windows/artifacts/windows"))
 $packageAssertion = [IO.Path]::GetFullPath(
@@ -391,4 +387,14 @@ try {
 }
 finally {
     Remove-Module WindowsReleaseTransaction -ErrorAction SilentlyContinue
+}
+
+if ($MeasureStartup) {
+    & $windowsNativeTests `
+        -DotnetPath $DotnetPath `
+        -AllowDisposableAccountMutation `
+        -MeasureStartup `
+        -CompressedExecutable (Join-Path $finalRelease $recommendedName) `
+        -UncompressedExecutable (Join-Path $finalRelease $fallbackName) |
+        ForEach-Object { Write-Host $_ }
 }

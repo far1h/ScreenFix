@@ -28,10 +28,27 @@ internal interface IConfigurationProcess : IDisposable
     bool WaitForExit(TimeSpan timeout);
 }
 
+internal interface IConfigurationMonotonicClock
+{
+    long GetTimestamp();
+
+    TimeSpan GetElapsedTime(long startingTimestamp);
+}
+
 internal interface IConfigurationProcessFactory
 {
-    IConfigurationProcess Start(string executable);
+    ConfigurationProcessLaunch Start(
+        ConfigurationLaunchRequest request,
+        IConfigurationMonotonicClock clock);
 }
+
+internal sealed record ConfigurationProcessLaunch(
+    IConfigurationProcess Process,
+    long StartingTimestamp);
+
+internal sealed record ConfigurationLaunchRequest(
+    string Executable,
+    string BundleExtractionBaseDirectory);
 
 internal interface IConfigurationMutexObserver
 {
@@ -47,7 +64,8 @@ internal sealed record ScreenFixConfigurationTransactionDependencies(
     Func<IDisposable?> TryAcquireGate,
     IConfigurationFileSystem FileSystem,
     IConfigurationProcessFactory ProcessFactory,
-    IConfigurationMutexObserver MutexObserver)
+    IConfigurationMutexObserver MutexObserver,
+    IConfigurationMonotonicClock Clock)
 {
     internal static ScreenFixConfigurationTransactionDependencies Production()
     {
@@ -57,7 +75,8 @@ internal sealed record ScreenFixConfigurationTransactionDependencies(
             ScreenFixApplicationIdentity.TryAcquire,
             new SystemConfigurationFileSystem(),
             new SystemConfigurationProcessFactory(),
-            new SystemConfigurationMutexObserver());
+            new SystemConfigurationMutexObserver(),
+            new StopwatchConfigurationClock());
     }
 }
 
@@ -124,8 +143,11 @@ internal sealed class ScreenFixConfigurationTransaction : IDisposable
 
     internal string BackupDirectory { get; }
 
-    internal void RunLaunch(string executable, TimeSpan timeout)
+    internal bool CanCleanExternalState => !preservePaths && gate is not null;
+
+    internal TimeSpan RunLaunch(ConfigurationLaunchRequest request, TimeSpan timeout)
     {
+        ArgumentNullException.ThrowIfNull(request);
         ObjectDisposedException.ThrowIf(disposed, this);
         if (gate is null || preservePaths)
         {
@@ -138,12 +160,23 @@ internal sealed class ScreenFixConfigurationTransaction : IDisposable
             throw new ArgumentOutOfRangeException(nameof(timeout));
         }
 
-        var exactExecutable = NormalizeAbsoluteNonRoot(executable, "published executable");
+        var exactExecutable = NormalizeAbsoluteNonRoot(
+            request.Executable,
+            "published executable");
         if (!dependencies.FileSystem.FileExists(exactExecutable))
         {
             throw new FileNotFoundException(
                 "Published executable does not exist.",
                 exactExecutable);
+        }
+
+        var extractionBaseDirectory = NormalizeAbsoluteNonRoot(
+            request.BundleExtractionBaseDirectory,
+            "bundle extraction base directory");
+        if (!dependencies.FileSystem.DirectoryExists(extractionBaseDirectory))
+        {
+            throw new DirectoryNotFoundException(
+                $"Bundle extraction base directory does not exist: {extractionBaseDirectory}");
         }
 
         ValidateExistingAncestors(configDirectory);
@@ -158,16 +191,27 @@ internal sealed class ScreenFixConfigurationTransaction : IDisposable
 
         Exception? launchFailure = null;
         IConfigurationProcess? child = null;
+        TimeSpan? startupElapsed = null;
         var terminationProven = true;
         try
         {
-            child = dependencies.ProcessFactory.Start(exactExecutable);
+            var launch = dependencies.ProcessFactory.Start(
+                new ConfigurationLaunchRequest(exactExecutable, extractionBaseDirectory),
+                dependencies.Clock);
+            child = launch.Process;
             try
             {
+                var remaining = RemainingStartupTime(launch.StartingTimestamp, timeout);
+                if (remaining <= TimeSpan.Zero)
+                {
+                    throw new TimeoutException(
+                        "Exact child exhausted the cumulative startup deadline before mutex observation.");
+                }
+
                 if (!dependencies.MutexObserver.WaitUntilCreated(
                         child,
                         ScreenFixApplicationIdentity.SingleInstanceMutexName,
-                        timeout))
+                        remaining))
                 {
                     throw new InvalidOperationException(
                         "Exact child exited or timed out before creating the production mutex.");
@@ -179,13 +223,27 @@ internal sealed class ScreenFixConfigurationTransaction : IDisposable
                         "Exact child exited before reaching input-idle.");
                 }
 
-                if (!child.WaitForInputIdle(timeout))
+                remaining = RemainingStartupTime(launch.StartingTimestamp, timeout);
+                if (remaining <= TimeSpan.Zero)
+                {
+                    throw new TimeoutException(
+                        "Exact child exhausted the cumulative startup deadline before input-idle.");
+                }
+
+                if (!child.WaitForInputIdle(remaining))
                 {
                     throw child.HasExited
                         ? new InvalidOperationException(
                             "Exact child exited before reaching input-idle.")
                         : new TimeoutException(
                             "Exact child did not reach input-idle before the timeout.");
+                }
+
+                startupElapsed = dependencies.Clock.GetElapsedTime(launch.StartingTimestamp);
+                if (startupElapsed >= timeout)
+                {
+                    throw new TimeoutException(
+                        "Exact child reached input-idle after the cumulative startup deadline.");
                 }
 
                 if (child.HasExited)
@@ -215,7 +273,7 @@ internal sealed class ScreenFixConfigurationTransaction : IDisposable
                     }
                     catch (Exception error)
                     {
-                        launchFailure ??= error;
+                        launchFailure = CombineFailures(launchFailure, error);
                     }
                 }
             }
@@ -268,6 +326,21 @@ internal sealed class ScreenFixConfigurationTransaction : IDisposable
         {
             ExceptionDispatchInfo.Capture(launchFailure).Throw();
         }
+
+        return startupElapsed
+            ?? throw new InvalidOperationException(
+                "Exact child did not produce a startup measurement.");
+    }
+
+    private TimeSpan RemainingStartupTime(long startingTimestamp, TimeSpan timeout)
+    {
+        var elapsed = dependencies.Clock.GetElapsedTime(startingTimestamp);
+        if (elapsed < TimeSpan.Zero)
+        {
+            throw new InvalidOperationException("The startup monotonic clock moved backwards.");
+        }
+
+        return elapsed >= timeout ? TimeSpan.Zero : timeout - elapsed;
     }
 
     public void Dispose()
@@ -512,16 +585,30 @@ internal sealed class SystemConfigurationFileSystem : IConfigurationFileSystem
 
 internal sealed class SystemConfigurationProcessFactory : IConfigurationProcessFactory
 {
-    public IConfigurationProcess Start(string executable)
+    public ConfigurationProcessLaunch Start(
+        ConfigurationLaunchRequest request,
+        IConfigurationMonotonicClock clock)
+    {
+        var startInfo = CreateStartInfo(request);
+        var startingTimestamp = clock.GetTimestamp();
+        var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException(
+                $"Failed to start exact child: {request.Executable}");
+        return new ConfigurationProcessLaunch(
+            new SystemConfigurationProcess(process),
+            startingTimestamp);
+    }
+
+    internal static ProcessStartInfo CreateStartInfo(ConfigurationLaunchRequest request)
     {
         var startInfo = new ProcessStartInfo
         {
-            FileName = executable,
+            FileName = request.Executable,
             UseShellExecute = false,
         };
-        var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException($"Failed to start exact child: {executable}");
-        return new SystemConfigurationProcess(process);
+        startInfo.Environment["DOTNET_BUNDLE_EXTRACT_BASE_DIR"] =
+            request.BundleExtractionBaseDirectory;
+        return startInfo;
     }
 }
 
@@ -536,6 +623,14 @@ internal sealed class SystemConfigurationProcess(Process process) : IConfigurati
     public bool WaitForExit(TimeSpan timeout) => process.WaitForExit(timeout);
 
     public void Dispose() => process.Dispose();
+}
+
+internal sealed class StopwatchConfigurationClock : IConfigurationMonotonicClock
+{
+    public long GetTimestamp() => Stopwatch.GetTimestamp();
+
+    public TimeSpan GetElapsedTime(long startingTimestamp) =>
+        Stopwatch.GetElapsedTime(startingTimestamp);
 }
 
 internal sealed class SystemConfigurationMutexObserver : IConfigurationMutexObserver

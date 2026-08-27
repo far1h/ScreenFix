@@ -123,12 +123,15 @@ jobs:
       - name: Run release transaction regressions
         shell: pwsh
         run: native\windows\scripts\test-win-x64-release-transaction.ps1
-      - name: Publish and assert dual win-x64 packages
+      - name: Publish, assert, and measure dual win-x64 packages
         shell: pwsh
+        env:
+          SCREENFIX_RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: >-
           native\windows\scripts\publish-win-x64.ps1
           -DotnetPath $env:SCREENFIX_PRIVATE_DOTNET
           -ExternalDotnetPath $env:SCREENFIX_EXTERNAL_DOTNET
+          -MeasureStartup
       - name: Upload exact Windows release executables
         uses: actions/upload-artifact@v7
         with:

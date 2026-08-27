@@ -5,6 +5,143 @@ namespace ScreenFix.Windows.Tests.Startup;
 public sealed class ScreenFixConfigurationTransactionTests
 {
     [Fact]
+    public void ProcessStartInfoOverridesExtractionOnlyForTheChild()
+    {
+        const string variable = "DOTNET_BUNDLE_EXTRACT_BASE_DIR";
+        var original = Environment.GetEnvironmentVariable(variable);
+        var inheritedName = "SCREENFIX_STARTUP_INHERITED_" + Guid.NewGuid().ToString("N");
+        var inheritedOriginal = Environment.GetEnvironmentVariable(inheritedName);
+        var childExtraction = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Environment.SetEnvironmentVariable(variable, "parent-extraction");
+            Environment.SetEnvironmentVariable(inheritedName, "inherited-value");
+
+            var startInfo = SystemConfigurationProcessFactory.CreateStartInfo(
+                new ConfigurationLaunchRequest(
+                    Path.Combine(Path.GetTempPath(), "ScreenFix.exe"),
+                    childExtraction));
+
+            Assert.Equal(childExtraction, startInfo.Environment[variable]);
+            Assert.Equal("inherited-value", startInfo.Environment[inheritedName]);
+            Assert.Equal("parent-extraction", Environment.GetEnvironmentVariable(variable));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, original);
+            Environment.SetEnvironmentVariable(inheritedName, inheritedOriginal);
+        }
+    }
+
+    [Fact]
+    public void TypedLaunchReturnsTheMeasuredInputIdleEndpoint()
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.Process.StartAction = () =>
+            fixture.Clock.Advance(TimeSpan.FromMilliseconds(321));
+        using var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+        var request = new ConfigurationLaunchRequest(fixture.Executable, fixture.Root);
+
+        var elapsed = transaction.RunLaunch(request, TimeSpan.FromSeconds(10));
+
+        Assert.Equal(TimeSpan.FromMilliseconds(321), elapsed);
+        Assert.True(transaction.CanCleanExternalState);
+    }
+
+    [Fact]
+    public void CumulativeDeadlineLimitsInputIdleToTimeRemainingAfterMutexObservation()
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.Observer.WaitAction = _ => fixture.Clock.Advance(TimeSpan.FromSeconds(6));
+        fixture.Process.InputIdleAction = () =>
+            fixture.Clock.Advance(fixture.Process.LastInputIdleTimeout!.Value);
+        fixture.Process.InputIdleResult = false;
+        using var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+
+        var error = Assert.Throws<TimeoutException>(() =>
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
+
+        Assert.Contains("input-idle", error.Message);
+        Assert.Equal(TimeSpan.FromSeconds(10), fixture.Observer.LastTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(4), fixture.Process.LastInputIdleTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(10), fixture.Clock.Elapsed);
+    }
+
+    [Fact]
+    public void ProcessStartTimeReducesTheMutexObservationBudget()
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.Process.StartAction = () => fixture.Clock.Advance(TimeSpan.FromSeconds(2));
+        fixture.Observer.Result = false;
+        using var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
+
+        Assert.Equal(TimeSpan.FromSeconds(8), fixture.Observer.LastTimeout);
+    }
+
+    [Fact]
+    public void ProcessStartAtDeadlineDoesNotPassZeroToMutexObservation()
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.Process.StartAction = () => fixture.Clock.Advance(TimeSpan.FromSeconds(10));
+        using var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+
+        var error = Assert.Throws<TimeoutException>(() =>
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
+
+        Assert.Contains("before mutex observation", error.Message);
+        Assert.Null(fixture.Observer.LastTimeout);
+    }
+
+    [Fact]
+    public void MutexObservationAtDeadlineDoesNotPassZeroToInputIdle()
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.Observer.WaitAction = _ => fixture.Clock.Advance(TimeSpan.FromSeconds(10));
+        using var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+
+        var error = Assert.Throws<TimeoutException>(() =>
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
+
+        Assert.Contains("before input-idle", error.Message);
+        Assert.Equal(TimeSpan.FromSeconds(10), fixture.Observer.LastTimeout);
+        Assert.Null(fixture.Process.LastInputIdleTimeout);
+    }
+
+    [Fact]
+    public void CumulativeDeadlineRejectsInputIdleAtTheExactRemainingBoundary()
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.Observer.WaitAction = _ => fixture.Clock.Advance(TimeSpan.FromSeconds(9));
+        fixture.Process.InputIdleAction = () => fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+        using var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+
+        var error = Assert.Throws<TimeoutException>(() =>
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
+
+        Assert.Contains("cumulative startup deadline", error.Message);
+        Assert.Equal(TimeSpan.FromSeconds(1), fixture.Process.LastInputIdleTimeout);
+    }
+
+    [Fact]
+    public void InputIdleEndpointBeyondTheCumulativeDeadlineFails()
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.Observer.WaitAction = _ => fixture.Clock.Advance(TimeSpan.FromSeconds(9));
+        fixture.Process.InputIdleAction = () =>
+            fixture.Clock.Advance(TimeSpan.FromMilliseconds(1_001));
+        using var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+
+        var error = Assert.Throws<TimeoutException>(() =>
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
+
+        Assert.Contains("cumulative startup deadline", error.Message);
+        Assert.Equal(TimeSpan.FromSeconds(1), fixture.Process.LastInputIdleTimeout);
+    }
+
+    [Fact]
     public void ConstructorRefusesWithoutExplicitOptInBeforeGateOrFilesystem()
     {
         using var fixture = ConfigurationFixture.Create();
@@ -153,7 +290,7 @@ public sealed class ScreenFixConfigurationTransactionTests
         fixture.Process.StartAction = () => fixture.CreateConfiguration([42]);
         using var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
 
-        transaction.RunLaunch(fixture.Executable, TimeSpan.FromSeconds(10));
+        transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10));
 
         Assert.False(Directory.Exists(fixture.ConfigDirectory));
         AssertOrdered(
@@ -180,8 +317,8 @@ public sealed class ScreenFixConfigurationTransactionTests
         };
         using var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
 
-        transaction.RunLaunch(fixture.Executable, TimeSpan.FromSeconds(10));
-        transaction.RunLaunch(fixture.Executable, TimeSpan.FromSeconds(10));
+        transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10));
+        transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10));
 
         Assert.Equal(2, fixture.Events.Count(item => item == "start-child"));
         Assert.Equal(2, fixture.Events.Count(item => item == "delete-directory"));
@@ -202,11 +339,40 @@ public sealed class ScreenFixConfigurationTransactionTests
         var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
 
         var error = Assert.Throws<InvalidOperationException>(() =>
-            transaction.RunLaunch(fixture.Executable, TimeSpan.FromSeconds(10)));
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
         transaction.Dispose();
 
         Assert.Contains("before creating the production mutex", error.Message);
         AssertOrdered(fixture.Events, "wait-exit", "acquire-gate", "restore-directory");
+        Assert.Equal([1], File.ReadAllBytes(fixture.ConfigFile));
+    }
+
+    [Fact]
+    public void StillRunningChildWithoutMutexIsKilledAndWaitedBeforeCleanupAndRestore()
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.CreateConfiguration([1]);
+        fixture.Process.StartAction = () => fixture.CreateConfiguration([2]);
+        fixture.Observer.Result = false;
+        var timeout = TimeSpan.FromSeconds(10);
+        var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            transaction.RunLaunch(fixture.Request, timeout));
+        transaction.Dispose();
+
+        Assert.Contains("before creating the production mutex", error.Message);
+        Assert.Equal(timeout, fixture.Observer.LastTimeout);
+        Assert.Equal(timeout, fixture.Process.LastExitTimeout);
+        AssertOrdered(
+            fixture.Events,
+            "observe-mutex",
+            "kill-child",
+            "wait-exit",
+            "dispose-child",
+            "acquire-gate",
+            "delete-directory",
+            "restore-directory");
         Assert.Equal([1], File.ReadAllBytes(fixture.ConfigFile));
     }
 
@@ -220,7 +386,7 @@ public sealed class ScreenFixConfigurationTransactionTests
         var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
 
         var error = Assert.Throws<TimeoutException>(() =>
-            transaction.RunLaunch(fixture.Executable, TimeSpan.FromSeconds(10)));
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
         transaction.Dispose();
 
         Assert.Contains("input-idle", error.Message);
@@ -245,12 +411,31 @@ public sealed class ScreenFixConfigurationTransactionTests
         var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
 
         var error = Assert.Throws<InvalidOperationException>(() =>
-            transaction.RunLaunch(fixture.Executable, TimeSpan.FromSeconds(10)));
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
+        Assert.True(transaction.CanCleanExternalState);
         transaction.Dispose();
 
         Assert.Equal("observer failed", error.Message);
         AssertOrdered(fixture.Events, "observe-mutex", "kill-child", "wait-exit", "restore-directory");
         Assert.Equal([1], File.ReadAllBytes(fixture.ConfigFile));
+    }
+
+    [Fact]
+    public void ChildDisposalFailureIsCombinedWithThePriorObserverFailure()
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.Observer.Error = new InvalidOperationException("observer failed");
+        fixture.Process.DisposeError = new IOException("dispose failed");
+        using var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+
+        var error = Assert.Throws<AggregateException>(() =>
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
+
+        Assert.Collection(
+            error.InnerExceptions,
+            item => Assert.Equal("observer failed", item.Message),
+            item => Assert.Equal("dispose failed", item.Message));
+        AssertOrdered(fixture.Events, "observe-mutex", "wait-exit", "dispose-child", "acquire-gate");
     }
 
     [Fact]
@@ -264,7 +449,7 @@ public sealed class ScreenFixConfigurationTransactionTests
         var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
 
         Assert.Throws<InvalidOperationException>(() =>
-            transaction.RunLaunch(fixture.Executable, TimeSpan.FromSeconds(10)));
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
         transaction.Dispose();
 
         AssertOrdered(fixture.Events, "wait-input-idle", "wait-exit", "acquire-gate", "restore-directory");
@@ -281,7 +466,8 @@ public sealed class ScreenFixConfigurationTransactionTests
         fixture.RefuseNextGate = true;
 
         var error = Assert.Throws<InvalidOperationException>(() =>
-            transaction.RunLaunch(fixture.Executable, TimeSpan.FromSeconds(10)));
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
+        Assert.False(transaction.CanCleanExternalState);
         transaction.Dispose();
 
         Assert.Contains(fixture.ConfigDirectory, error.Message);
@@ -302,7 +488,8 @@ public sealed class ScreenFixConfigurationTransactionTests
         fixture.GateAcquireError = new InvalidOperationException("gate factory failed");
 
         var error = Assert.Throws<InvalidOperationException>(() =>
-            transaction.RunLaunch(fixture.Executable, TimeSpan.FromSeconds(10)));
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
+        Assert.False(transaction.CanCleanExternalState);
         transaction.Dispose();
 
         Assert.Contains(fixture.ConfigDirectory, error.Message);
@@ -325,7 +512,8 @@ public sealed class ScreenFixConfigurationTransactionTests
         var acquisitionsBeforeLaunch = fixture.GateAcquireCount;
 
         var error = Assert.Throws<InvalidOperationException>(() =>
-            transaction.RunLaunch(fixture.Executable, TimeSpan.FromSeconds(10)));
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
+        Assert.False(transaction.CanCleanExternalState);
         transaction.Dispose();
 
         Assert.Contains("termination could not be proven", error.Message);
@@ -358,7 +546,7 @@ public sealed class ScreenFixConfigurationTransactionTests
         var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
 
         var error = Assert.Throws<InvalidOperationException>(() =>
-            transaction.RunLaunch(fixture.Executable, TimeSpan.FromSeconds(10)));
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
         transaction.Dispose();
 
         Assert.Contains("termination could not be proven", error.Message);
@@ -377,7 +565,7 @@ public sealed class ScreenFixConfigurationTransactionTests
         var transaction = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
 
         Assert.Throws<IOException>(() =>
-            transaction.RunLaunch(fixture.Executable, TimeSpan.FromSeconds(10)));
+            transaction.RunLaunch(fixture.Request, TimeSpan.FromSeconds(10)));
         transaction.Dispose();
 
         Assert.Equal([1], File.ReadAllBytes(fixture.ConfigFile));
@@ -439,6 +627,180 @@ public sealed class ScreenFixConfigurationTransactionTests
         Assert.DoesNotContain("delete-directory", fixture.Events);
     }
 
+    [Theory]
+    [InlineData("mutex-timeout")]
+    [InlineData("observer-error")]
+    [InlineData("input-idle-timeout")]
+    public void IntegratedProvenLaunchFailureCleansExtractionAfterExitAndRestoresConfiguration(
+        string failureMode)
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.CreateConfiguration([1]);
+        fixture.Process.StartAction = () => fixture.CreateConfiguration([2]);
+        switch (failureMode)
+        {
+            case "mutex-timeout":
+                fixture.Observer.Result = false;
+                break;
+            case "observer-error":
+                fixture.Observer.Error = new InvalidOperationException("observer failed");
+                break;
+            case "input-idle-timeout":
+                fixture.Process.InputIdleResult = false;
+                break;
+        }
+
+        var configuration = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+        var backup = configuration.BackupDirectory;
+        var extractionFixture = IntegratedExtractionFixture.Create(fixture.Root, fixture.Events);
+        var extraction = extractionFixture.CreateTransaction();
+        var extractionRoot = extraction.RootPath;
+        var extractionPath = extraction.CreateWarmExtractionPath("compressed");
+        var coordinator = new StartupLaunchCoordinator(configuration, extraction);
+
+        var failure = Record.Exception(() => coordinator.Run(
+            fixture.Executable,
+            extractionPath,
+            TimeSpan.FromSeconds(10)));
+        failure = CompleteIntegratedTransactions(configuration, extraction, failure);
+
+        Assert.NotNull(failure);
+        switch (failureMode)
+        {
+            case "mutex-timeout":
+                Assert.Contains("before creating the production mutex", failure.Message);
+                break;
+            case "observer-error":
+                Assert.Equal("observer failed", failure.Message);
+                break;
+            case "input-idle-timeout":
+                Assert.IsType<TimeoutException>(failure);
+                Assert.Contains("input-idle", failure.Message);
+                Assert.Contains("wait-input-idle", fixture.Events);
+                break;
+        }
+
+        Assert.False(Directory.Exists(extractionRoot));
+        Assert.Equal([1], File.ReadAllBytes(fixture.ConfigFile));
+        Assert.False(Directory.Exists(backup));
+        AssertOrdered(
+            fixture.Events,
+            "observe-mutex",
+            "kill-child",
+            "wait-exit",
+            "dispose-child",
+            "acquire-gate",
+            "delete-directory",
+            "delete-extraction-root",
+            "restore-directory");
+    }
+
+    [Fact]
+    public void IntegratedTerminationFailurePreservesEveryRecoveryPath()
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.CreateConfiguration([1]);
+        fixture.Process.StartAction = () => fixture.CreateConfiguration([2]);
+        fixture.Process.WaitForExitResult = false;
+        var configuration = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+        var extractionFixture = IntegratedExtractionFixture.Create(fixture.Root, fixture.Events);
+        var extraction = extractionFixture.CreateTransaction();
+        var extractionRoot = extraction.RootPath;
+        var extractionPath = extraction.CreateWarmExtractionPath("compressed");
+        var coordinator = new StartupLaunchCoordinator(configuration, extraction);
+
+        var failure = Record.Exception(() => coordinator.Run(
+            fixture.Executable,
+            extractionPath,
+            TimeSpan.FromSeconds(10)));
+        failure = CompleteIntegratedTransactions(configuration, extraction, failure);
+
+        Assert.NotNull(failure);
+        Assert.Contains("termination could not be proven", failure.ToString());
+        Assert.Contains(extractionRoot, failure.ToString());
+        Assert.Contains(fixture.ConfigDirectory, failure.ToString());
+        Assert.Contains(configuration.BackupDirectory, failure.ToString());
+        Assert.True(Directory.Exists(extractionRoot));
+        Assert.Equal([2], File.ReadAllBytes(fixture.ConfigFile));
+        Assert.Equal(
+            [1],
+            File.ReadAllBytes(Path.Combine(configuration.BackupDirectory, "config.json")));
+        Assert.DoesNotContain("delete-extraction-root", fixture.Events);
+        Assert.DoesNotContain("delete-directory", fixture.Events);
+        Assert.DoesNotContain("restore-directory", fixture.Events);
+    }
+
+    [Fact]
+    public void IntegratedLeakedObserverFreshGateFailurePreservesEveryRecoveryPath()
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.CreateConfiguration([1]);
+        fixture.Process.StartAction = () => fixture.CreateConfiguration([2]);
+        var configuration = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+        fixture.RefuseNextGate = true;
+        var extractionFixture = IntegratedExtractionFixture.Create(fixture.Root, fixture.Events);
+        var extraction = extractionFixture.CreateTransaction();
+        var extractionRoot = extraction.RootPath;
+        var extractionPath = extraction.CreateWarmExtractionPath("compressed");
+        var coordinator = new StartupLaunchCoordinator(configuration, extraction);
+
+        var failure = Record.Exception(() => coordinator.Run(
+            fixture.Executable,
+            extractionPath,
+            TimeSpan.FromSeconds(10)));
+        failure = CompleteIntegratedTransactions(configuration, extraction, failure);
+
+        Assert.NotNull(failure);
+        Assert.Contains("fresh production mutex", failure.ToString());
+        Assert.Contains(extractionRoot, failure.ToString());
+        Assert.Contains(fixture.ConfigDirectory, failure.ToString());
+        Assert.Contains(configuration.BackupDirectory, failure.ToString());
+        Assert.True(Directory.Exists(extractionRoot));
+        Assert.Equal([2], File.ReadAllBytes(fixture.ConfigFile));
+        Assert.Equal(
+            [1],
+            File.ReadAllBytes(Path.Combine(configuration.BackupDirectory, "config.json")));
+        AssertOrdered(fixture.Events, "wait-exit", "acquire-gate");
+        Assert.DoesNotContain("delete-extraction-root", fixture.Events);
+        Assert.DoesNotContain("delete-directory", fixture.Events);
+        Assert.DoesNotContain("restore-directory", fixture.Events);
+    }
+
+    [Fact]
+    public void WarmSeedAtCumulativeDeadlineFailsBeforeAnyMeasuredLaunch()
+    {
+        using var fixture = ConfigurationFixture.Create();
+        fixture.Observer.WaitAction = _ => fixture.Clock.Advance(TimeSpan.FromSeconds(9));
+        fixture.Process.InputIdleAction = () =>
+            fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+        var configuration = new ScreenFixConfigurationTransaction(true, fixture.Dependencies);
+        var extractionFixture = IntegratedExtractionFixture.Create(fixture.Root, fixture.Events);
+        var extraction = extractionFixture.CreateTransaction();
+        var coordinator = new StartupLaunchCoordinator(configuration, extraction);
+
+        var failure = Record.Exception(() => StartupMeasurementPlan.MeasureWarm(
+            (_, extractionPath) => coordinator.Run(
+                fixture.Executable,
+                extractionPath,
+                TimeSpan.FromSeconds(10)),
+            extraction.CreateWarmExtractionPath));
+        failure = CompleteIntegratedTransactions(configuration, extraction, failure);
+
+        Assert.NotNull(failure);
+        Assert.Contains("cumulative startup deadline", failure.ToString());
+        Assert.Equal(1, fixture.Events.Count(item => item == "start-child"));
+        Assert.False(Directory.Exists(extraction.RootPath));
+    }
+
+    private static Exception? CompleteIntegratedTransactions(
+        ScreenFixConfigurationTransaction configuration,
+        BundleExtractionTransaction extraction,
+        Exception? failure)
+    {
+        failure = StartupTransactionCleanup.DisposeAndCombine(extraction, failure);
+        return StartupTransactionCleanup.DisposeAndCombine(configuration, failure);
+    }
+
     private static void AssertOrdered(IReadOnlyList<string> events, params string[] expected)
     {
         var previous = -1;
@@ -480,13 +842,15 @@ public sealed class ScreenFixConfigurationTransactionTests
             FileSystem = new RecordingFileSystem(Events, ConfigDirectory);
             Process = new FakeProcess(Events);
             Observer = new FakeMutexObserver(Events);
+            Clock = new FakeMonotonicClock();
             Dependencies = new ScreenFixConfigurationTransactionDependencies(
                 LocalAppData,
                 ConfigFile,
                 AcquireGate,
                 FileSystem,
                 new FakeProcessFactory(Process, Events),
-                Observer);
+                Observer,
+                Clock);
         }
 
         public string Root { get; }
@@ -499,6 +863,8 @@ public sealed class ScreenFixConfigurationTransactionTests
 
         public string Executable { get; }
 
+        public ConfigurationLaunchRequest Request => new(Executable, Root);
+
         public List<string> Events { get; } = [];
 
         public int GateAcquireCount => gateAcquireCount;
@@ -508,6 +874,8 @@ public sealed class ScreenFixConfigurationTransactionTests
         public FakeProcess Process { get; }
 
         public FakeMutexObserver Observer { get; }
+
+        public FakeMonotonicClock Clock { get; }
 
         public bool RefuseNextGate { get; set; }
 
@@ -577,6 +945,133 @@ public sealed class ScreenFixConfigurationTransactionTests
         public void Dispose()
         {
             events?.Add("dispose-gate");
+        }
+    }
+
+    private sealed class IntegratedExtractionFixture
+    {
+        private IntegratedExtractionFixture(
+            string runnerTemp,
+            string candidate,
+            IntegratedExtractionFileSystem fileSystem)
+        {
+            RunnerTemp = runnerTemp;
+            Candidate = candidate;
+            var deletion = new IntegratedDeletionAdapter(fileSystem);
+            Dependencies = new BundleExtractionTransactionDependencies(
+                fileSystem,
+                _ => candidate,
+                () => [4, 3, 2, 1],
+                deletion);
+        }
+
+        public string RunnerTemp { get; }
+
+        public string Candidate { get; }
+
+        public BundleExtractionTransactionDependencies Dependencies { get; }
+
+        public static IntegratedExtractionFixture Create(string root, List<string> events)
+        {
+            var runnerTemp = Path.Combine(root, "runner-temp");
+            Directory.CreateDirectory(runnerTemp);
+            return new IntegratedExtractionFixture(
+                runnerTemp,
+                Path.Combine(runnerTemp, "screenfix-integrated-extraction"),
+                new IntegratedExtractionFileSystem(events));
+        }
+
+        public BundleExtractionTransaction CreateTransaction() =>
+            new(true, RunnerTemp, Dependencies);
+    }
+
+    private sealed class IntegratedDeletionAdapter(
+        IntegratedExtractionFileSystem fileSystem) : IBundleExtractionDeletionAdapter
+    {
+        public IBundleExtractionRootAnchor CreateAnchor(string rootPath) =>
+            new IntegratedRootAnchor(fileSystem);
+
+        private sealed class IntegratedRootAnchor(
+            IntegratedExtractionFileSystem fileSystem) : IBundleExtractionRootAnchor
+        {
+            private string? ownedPath;
+
+            public void VerifyOwnedPath(string path)
+            {
+                var normalized = Path.GetFullPath(path);
+                ownedPath ??= normalized;
+                if (!ownedPath.Equals(normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new IOException(
+                        $"Extraction path does not reference the anchored directory: {path}.");
+                }
+            }
+
+            public void DeleteOwnedRoot(
+                string rootPath,
+                Action<string> validateOwnedRoot,
+                Action releaseIdentityAnchor)
+            {
+                var quarantine = rootPath + ".delete-quarantine";
+                releaseIdentityAnchor();
+                Directory.Move(rootPath, quarantine);
+                ownedPath = Path.GetFullPath(quarantine);
+                validateOwnedRoot(quarantine);
+                fileSystem.DeleteDirectory(quarantine);
+            }
+
+            public void Dispose()
+            {
+            }
+        }
+    }
+
+    private sealed class IntegratedExtractionFileSystem(
+        List<string> events) : IBundleExtractionFileSystem
+    {
+        public FileAttributes GetAttributes(string path) =>
+            File.GetAttributes(path) & ~FileAttributes.ReparsePoint;
+
+        public void CreateDirectory(string path) => Directory.CreateDirectory(path);
+
+        public Stream CreateIdentityFile(string path, byte[] identity)
+        {
+            using (var writer = new FileStream(
+                       path,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None))
+            {
+                writer.Write(identity);
+                writer.Flush(flushToDisk: true);
+            }
+
+            return new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read | FileShare.Delete);
+        }
+
+        public byte[] ReadIdentityFile(string path)
+        {
+            using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            using var content = new MemoryStream();
+            stream.CopyTo(content);
+            return content.ToArray();
+        }
+
+        public IEnumerable<string> EnumerateEntries(string path) =>
+            Directory.EnumerateFileSystemEntries(path);
+
+        public void DeleteDirectory(string path)
+        {
+            events.Add("delete-extraction-root");
+            Directory.Delete(path, recursive: true);
         }
     }
 
@@ -658,11 +1153,14 @@ public sealed class ScreenFixConfigurationTransactionTests
         FakeProcess process,
         List<string> events) : IConfigurationProcessFactory
     {
-        public IConfigurationProcess Start(string executable)
+        public ConfigurationProcessLaunch Start(
+            ConfigurationLaunchRequest request,
+            IConfigurationMonotonicClock clock)
         {
+            var startingTimestamp = clock.GetTimestamp();
             events.Add("start-child");
             process.StartAction?.Invoke();
-            return process;
+            return new ConfigurationProcessLaunch(process, startingTimestamp);
         }
     }
 
@@ -682,11 +1180,18 @@ public sealed class ScreenFixConfigurationTransactionTests
 
         public Exception? WaitForExitError { get; set; }
 
+        public Exception? DisposeError { get; set; }
+
+        public TimeSpan? LastExitTimeout { get; private set; }
+
+        public TimeSpan? LastInputIdleTimeout { get; private set; }
+
         public bool HasExited => HasExitedValue;
 
         public bool WaitForInputIdle(TimeSpan timeout)
         {
             events.Add("wait-input-idle");
+            LastInputIdleTimeout = timeout;
             InputIdleAction?.Invoke();
             return InputIdleResult;
         }
@@ -708,6 +1213,7 @@ public sealed class ScreenFixConfigurationTransactionTests
         public bool WaitForExit(TimeSpan timeout)
         {
             events.Add("wait-exit");
+            LastExitTimeout = timeout;
             if (WaitForExitError is not null)
             {
                 throw WaitForExitError;
@@ -719,6 +1225,10 @@ public sealed class ScreenFixConfigurationTransactionTests
         public void Dispose()
         {
             events.Add("dispose-child");
+            if (DisposeError is not null)
+            {
+                throw DisposeError;
+            }
         }
     }
 
@@ -728,18 +1238,46 @@ public sealed class ScreenFixConfigurationTransactionTests
 
         public Exception? Error { get; set; }
 
+        public TimeSpan? LastTimeout { get; private set; }
+
+        public Action<TimeSpan>? WaitAction { get; set; }
+
         public bool WaitUntilCreated(
             IConfigurationProcess process,
             string mutexName,
             TimeSpan timeout)
         {
             events.Add("observe-mutex");
+            LastTimeout = timeout;
+            WaitAction?.Invoke(timeout);
             if (Error is not null)
             {
                 throw Error;
             }
 
             return Result;
+        }
+    }
+
+    private sealed class FakeMonotonicClock : IConfigurationMonotonicClock
+    {
+        private long timestamp;
+
+        public TimeSpan Elapsed => TimeSpan.FromTicks(timestamp);
+
+        public long GetTimestamp() => timestamp;
+
+        public TimeSpan GetElapsedTime(long startingTimestamp) =>
+            TimeSpan.FromTicks(timestamp - startingTimestamp);
+
+        public void Advance(TimeSpan elapsed)
+        {
+            if (elapsed < TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(elapsed));
+            }
+
+            timestamp = checked(timestamp + elapsed.Ticks);
         }
     }
 }
@@ -780,7 +1318,8 @@ public sealed class ProductionConfigurationTransactionRefusalTests
             ScreenFixApplicationIdentity.TryAcquire,
             fileSystem,
             new UnusedProcessFactory(),
-            new UnusedMutexObserver());
+            new UnusedMutexObserver(),
+            new StopwatchConfigurationClock());
 
         try
         {
@@ -824,7 +1363,9 @@ public sealed class ProductionConfigurationTransactionRefusalTests
 
     private sealed class UnusedProcessFactory : IConfigurationProcessFactory
     {
-        public IConfigurationProcess Start(string executable) =>
+        public ConfigurationProcessLaunch Start(
+            ConfigurationLaunchRequest request,
+            IConfigurationMonotonicClock clock) =>
             throw new InvalidOperationException("Process factory must not be used.");
     }
 

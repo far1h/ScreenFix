@@ -4,7 +4,10 @@ param(
     [string]$PublishedExecutable,
     [ValidateSet("compressed", "uncompressed")]
     [string]$ExpectedCompression,
-    [switch]$AllowDisposableAccountMutation
+    [switch]$AllowDisposableAccountMutation,
+    [switch]$MeasureStartup,
+    [string]$CompressedExecutable,
+    [string]$UncompressedExecutable
 )
 
 Set-StrictMode -Version Latest
@@ -53,6 +56,30 @@ if ($AllowDisposableAccountMutation) {
     }
 }
 
+function Resolve-StartupExecutable {
+    param(
+        [string]$Path,
+        [string]$ExpectedName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) `
+        -or -not [IO.Path]::IsPathFullyQualified($Path)) {
+        throw "startup measurement requires an absolute $ExpectedName path"
+    }
+
+    $resolved = [IO.Path]::GetFullPath($Path)
+    $file = Get-Item -LiteralPath $resolved -Force -ErrorAction SilentlyContinue
+    if ($null -eq $file `
+        -or $file -isnot [IO.FileInfo] `
+        -or $file.Name -cne $ExpectedName `
+        -or $file.Length -le 0 `
+        -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "startup measurement requires one regular nonempty non-reparse $ExpectedName"
+    }
+
+    return $resolved
+}
+
 $project = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "../tests/ScreenFix.Windows.Tests/ScreenFix.Windows.Tests.csproj"))
 $verifierProject = [IO.Path]::GetFullPath(
@@ -81,6 +108,30 @@ elseif (-not [string]::IsNullOrWhiteSpace($ExpectedCompression)) {
     throw "published executable is required with expected compression"
 }
 
+$hasCompressedStartupExecutable = -not [string]::IsNullOrWhiteSpace(
+    $CompressedExecutable)
+$hasUncompressedStartupExecutable = -not [string]::IsNullOrWhiteSpace(
+    $UncompressedExecutable)
+if ($MeasureStartup) {
+    if (-not $AllowDisposableAccountMutation) {
+        throw "startup measurement requires -AllowDisposableAccountMutation"
+    }
+    if ($hasPublishedExecutable `
+        -or -not [string]::IsNullOrWhiteSpace($ExpectedCompression)) {
+        throw "startup measurement cannot be combined with one-package verification"
+    }
+
+    $CompressedExecutable = Resolve-StartupExecutable `
+        -Path $CompressedExecutable `
+        -ExpectedName "ScreenFix-Windows-x64.exe"
+    $UncompressedExecutable = Resolve-StartupExecutable `
+        -Path $UncompressedExecutable `
+        -ExpectedName "ScreenFix-Windows-x64-uncompressed.exe"
+}
+elseif ($hasCompressedStartupExecutable -or $hasUncompressedStartupExecutable) {
+    throw "startup executable paths require -MeasureStartup"
+}
+
 & $DotnetPath build $project -c Release
 if ($LASTEXITCODE -ne 0) {
     throw "Windows native test build failed with exit code $LASTEXITCODE"
@@ -101,9 +152,33 @@ if (-not $IsWindows) {
     return
 }
 
+if ($MeasureStartup) {
+    $previousAllow = $env:SCREENFIX_ALLOW_DISPOSABLE_ACCOUNT_MUTATION
+    $previousCompressed = $env:SCREENFIX_STARTUP_COMPRESSED_EXE
+    $previousUncompressed = $env:SCREENFIX_STARTUP_UNCOMPRESSED_EXE
+    try {
+        $env:SCREENFIX_ALLOW_DISPOSABLE_ACCOUNT_MUTATION = "true"
+        $env:SCREENFIX_STARTUP_COMPRESSED_EXE = $CompressedExecutable
+        $env:SCREENFIX_STARTUP_UNCOMPRESSED_EXE = $UncompressedExecutable
+        & $DotnetPath test $project -c Release --no-build `
+            --filter "(ScreenFixCategory=DisposableAccount)&(ScreenFixStartup=Measurement)" `
+            --logger "console;verbosity=detailed"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Windows startup measurement failed with exit code $LASTEXITCODE"
+        }
+    }
+    finally {
+        $env:SCREENFIX_ALLOW_DISPOSABLE_ACCOUNT_MUTATION = $previousAllow
+        $env:SCREENFIX_STARTUP_COMPRESSED_EXE = $previousCompressed
+        $env:SCREENFIX_STARTUP_UNCOMPRESSED_EXE = $previousUncompressed
+    }
+
+    return
+}
+
 if ($AllowDisposableAccountMutation) {
     & $DotnetPath test $project -c Release --no-build `
-        --filter "ScreenFixCategory=DisposableAccount"
+        --filter "(ScreenFixCategory=DisposableAccount)&(ScreenFixStartup!=Measurement)"
     if ($LASTEXITCODE -ne 0) {
         throw "disposable-account Windows tests failed with exit code $LASTEXITCODE"
     }

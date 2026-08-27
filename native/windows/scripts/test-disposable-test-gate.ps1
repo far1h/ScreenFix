@@ -26,12 +26,23 @@ function Set-TestEnvironment {
 function Invoke-Gate {
     param(
         [hashtable]$Environment,
-        [switch]$AllowDisposableAccountMutation
+        [switch]$AllowDisposableAccountMutation,
+        [switch]$MeasureStartup,
+        [string]$CompressedExecutable,
+        [string]$UncompressedExecutable
     )
 
     Remove-Item -LiteralPath $capturePath -Force -ErrorAction SilentlyContinue
     Set-TestEnvironment $Environment
-    if ($AllowDisposableAccountMutation) {
+    if ($MeasureStartup) {
+        & $scriptUnderTest `
+            -DotnetPath $fakeDotnet `
+            -AllowDisposableAccountMutation:$AllowDisposableAccountMutation `
+            -MeasureStartup `
+            -CompressedExecutable $CompressedExecutable `
+            -UncompressedExecutable $UncompressedExecutable
+    }
+    elseif ($AllowDisposableAccountMutation) {
         & $scriptUnderTest `
             -DotnetPath $fakeDotnet `
             -AllowDisposableAccountMutation
@@ -71,6 +82,42 @@ function Assert-RefusedBeforeTest {
         })
         if ($testCalls.Count -ne 0) {
             throw "$Name reached test execution before refusing mutation"
+        }
+    }
+}
+
+function Assert-StartupRefusedBeforeTest {
+    param(
+        [string]$Name,
+        [string]$Expected,
+        [hashtable]$Environment,
+        [bool]$AllowDisposableAccountMutation,
+        [string]$CompressedExecutable,
+        [string]$UncompressedExecutable
+    )
+
+    $diagnostic = $null
+    try {
+        $null = Invoke-Gate `
+            -Environment $Environment `
+            -AllowDisposableAccountMutation:$AllowDisposableAccountMutation `
+            -MeasureStartup `
+            -CompressedExecutable $CompressedExecutable `
+            -UncompressedExecutable $UncompressedExecutable
+    }
+    catch {
+        $diagnostic = $_.Exception.Message
+    }
+    if ($diagnostic -cne $Expected) {
+        throw "$Name returned an unexpected diagnostic. Expected: $Expected Actual: $diagnostic"
+    }
+
+    if (Test-Path -LiteralPath $capturePath -PathType Leaf) {
+        $testCalls = @(Get-Content -LiteralPath $capturePath | Where-Object {
+            $_ -match '(^|\s)test(\s|$)'
+        })
+        if ($testCalls.Count -ne 0) {
+            throw "$Name reached test execution before refusing startup measurement"
         }
     }
 }
@@ -145,12 +192,70 @@ try {
     if ($IsWindows) {
         if ($disposableTests.Count -ne 1 `
             -or $disposableTests[0] -notmatch 'ScreenFixCategory=DisposableAccount' `
+            -or $disposableTests[0] -notmatch 'ScreenFixStartup!=Measurement' `
             -or $disposableTests[0] -match 'ScreenFixCategory!=DisposableAccount') {
-            throw "disposable invocation must select only the DisposableAccount trait"
+            throw "disposable invocation must exclude startup measurement"
         }
     }
-    elseif ($scriptText -notmatch '--filter\s+"ScreenFixCategory=DisposableAccount"') {
-        throw "disposable invocation must select only the DisposableAccount trait"
+    elseif ($scriptText -notmatch '--filter\s+"\(ScreenFixCategory=DisposableAccount\)&\(ScreenFixStartup!=Measurement\)"') {
+        throw "disposable invocation must exclude startup measurement"
+    }
+
+    $compressed = Join-Path $temporaryRoot "ScreenFix-Windows-x64.exe"
+    $uncompressed = Join-Path $temporaryRoot "ScreenFix-Windows-x64-uncompressed.exe"
+    [IO.File]::WriteAllBytes($compressed, [byte[]](1))
+    [IO.File]::WriteAllBytes($uncompressed, [byte[]](1))
+    Assert-StartupRefusedBeforeTest `
+        -Name "startup without mutation opt-in" `
+        -Expected "startup measurement requires -AllowDisposableAccountMutation" `
+        -Environment $valid `
+        -AllowDisposableAccountMutation $false `
+        -CompressedExecutable $compressed `
+        -UncompressedExecutable $uncompressed
+    Assert-StartupRefusedBeforeTest `
+        -Name "missing compressed startup path" `
+        -Expected "startup measurement requires an absolute ScreenFix-Windows-x64.exe path" `
+        -Environment $valid `
+        -AllowDisposableAccountMutation $true `
+        -CompressedExecutable "" `
+        -UncompressedExecutable $uncompressed
+    $wrongName = Join-Path $temporaryRoot "ScreenFix.exe"
+    [IO.File]::WriteAllBytes($wrongName, [byte[]](1))
+    Assert-StartupRefusedBeforeTest `
+        -Name "wrong compressed startup filename" `
+        -Expected "startup measurement requires one regular nonempty non-reparse ScreenFix-Windows-x64.exe" `
+        -Environment $valid `
+        -AllowDisposableAccountMutation $true `
+        -CompressedExecutable $wrongName `
+        -UncompressedExecutable $uncompressed
+    [IO.File]::WriteAllBytes($uncompressed, [byte[]]::new(0))
+    Assert-StartupRefusedBeforeTest `
+        -Name "empty uncompressed startup executable" `
+        -Expected "startup measurement requires one regular nonempty non-reparse ScreenFix-Windows-x64-uncompressed.exe" `
+        -Environment $valid `
+        -AllowDisposableAccountMutation $true `
+        -CompressedExecutable $compressed `
+        -UncompressedExecutable $uncompressed
+    [IO.File]::WriteAllBytes($uncompressed, [byte[]](1))
+    $startupCalls = Invoke-Gate `
+        -Environment $valid `
+        -AllowDisposableAccountMutation `
+        -MeasureStartup `
+        -CompressedExecutable $compressed `
+        -UncompressedExecutable $uncompressed
+    $startupTests = @($startupCalls | Where-Object {
+        $_ -match '(^|\s)test(\s|$)'
+    })
+    if ($IsWindows) {
+        if ($startupTests.Count -ne 1 `
+            -or $startupTests[0] -notmatch 'ScreenFixCategory=DisposableAccount' `
+            -or $startupTests[0] -notmatch 'ScreenFixStartup=Measurement' `
+            -or $startupTests[0] -match 'ScreenFixStartup!=Measurement') {
+            throw "startup invocation must select only the startup measurement trait"
+        }
+    }
+    elseif ($scriptText -notmatch '--filter\s+"\(ScreenFixCategory=DisposableAccount\)&\(ScreenFixStartup=Measurement\)"') {
+        throw "startup invocation must select only the startup measurement trait"
     }
 
     $workflowText = Get-Content -LiteralPath $workflow -Raw
@@ -187,15 +292,45 @@ try {
         throw "workflow must not invoke bare dotnet"
     }
 
-    if (($workflowText | Select-String -Pattern 'SCREENFIX_RUNNER_ENVIRONMENT:' -AllMatches).Matches.Count -ne 1 `
-        -or $workflowText -notmatch 'SCREENFIX_RUNNER_ENVIRONMENT:\s*\$\{\{ runner\.environment \}\}') {
-        throw "workflow must map runner.environment once through SCREENFIX_RUNNER_ENVIRONMENT"
+    $runnerEnvironmentMatches = @(
+        ($workflowText | Select-String `
+            -Pattern 'SCREENFIX_RUNNER_ENVIRONMENT:\s*\$\{\{ runner\.environment \}\}' `
+            -AllMatches).Matches)
+    $allRunnerEnvironmentMappings = @(
+        ($workflowText | Select-String `
+            -Pattern 'SCREENFIX_RUNNER_ENVIRONMENT:' `
+            -AllMatches).Matches)
+    if ($runnerEnvironmentMatches.Count -ne 2 `
+        -or $allRunnerEnvironmentMappings.Count -ne 2) {
+        throw "workflow must map runner.environment only for the two authorized steps"
     }
 
     $gateIndex = $workflowText.IndexOf("test-disposable-test-gate.ps1")
     $disposableIndex = $workflowText.IndexOf("-AllowDisposableAccountMutation")
     if ($gateIndex -lt 0 -or $disposableIndex -le $gateIndex) {
         throw "workflow must run the gate regression before the disposable test step"
+    }
+
+    $disposableStepIndex = $workflowText.IndexOf(
+        "- name: Run disposable-account Windows tests")
+    $portableStepIndex = $workflowText.IndexOf(
+        "- name: Run portable Windows tests")
+    $publishStepIndex = $workflowText.IndexOf(
+        "- name: Publish, assert, and measure dual win-x64 packages")
+    $publishIndex = $workflowText.IndexOf("publish-win-x64.ps1")
+    $measureIndex = $workflowText.IndexOf("-MeasureStartup", $publishIndex)
+    $uploadIndex = $workflowText.IndexOf("actions/upload-artifact@v7")
+    if ($disposableStepIndex -lt 0 `
+        -or $portableStepIndex -le $disposableStepIndex `
+        -or $runnerEnvironmentMatches[0].Index -le $disposableStepIndex `
+        -or $runnerEnvironmentMatches[0].Index -ge $portableStepIndex `
+        -or $publishStepIndex -lt 0 `
+        -or $runnerEnvironmentMatches[1].Index -le $publishStepIndex `
+        -or $publishIndex -le $runnerEnvironmentMatches[1].Index `
+        -or $measureIndex -le $publishIndex `
+        -or $uploadIndex -le $measureIndex `
+        -or $runnerEnvironmentMatches[1].Index -ge $uploadIndex) {
+        throw "workflow must measure exact staged files after publishing and before upload"
     }
 
     Write-Output "Disposable-account test gate regressions passed."
