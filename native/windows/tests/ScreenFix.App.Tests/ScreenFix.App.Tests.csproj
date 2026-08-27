@@ -20,6 +20,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="../../src/ScreenFix.App/ScreenFixApplicationIdentity.cs" Link="ScreenFixApplicationIdentity.cs" />
+    <Compile Include="../../src/ScreenFix.App/ScreenFixPaths.cs" Link="ScreenFixPaths.cs" />
     <Compile Include="../../src/ScreenFix.App/Calibration/CalibrationCommandAdapter.cs" Link="Calibration/CalibrationCommandAdapter.cs" />
     <Compile Include="../../src/ScreenFix.App/Guard/GuardScheduler.cs" Link="Guard/GuardScheduler.cs" />
     <Compile Include="../../src/ScreenFix.App/Guard/WinEventHookSet.cs" Link="Guard/WinEventHookSet.cs" />

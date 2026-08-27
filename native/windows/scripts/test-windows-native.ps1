@@ -2,7 +2,8 @@ param(
     [string]$DotnetPath,
     [string]$PublishedExecutable,
     [ValidateSet("compressed", "uncompressed")]
-    [string]$ExpectedCompression
+    [string]$ExpectedCompression,
+    [switch]$AllowDisposableAccountMutation
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,6 +26,17 @@ $dotnetFile = Get-Item -LiteralPath $DotnetPath
 if ($dotnetFile.Length -eq 0 `
     -or ($dotnetFile.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
     throw "dotnet path must be one absolute regular nonempty file"
+}
+
+if ($AllowDisposableAccountMutation) {
+    $runnerTempIsAbsolute = -not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP) `
+        -and [IO.Path]::IsPathFullyQualified($env:RUNNER_TEMP)
+    if ($env:CI -cne "true" `
+        -or $env:GITHUB_ACTIONS -cne "true" `
+        -or $env:SCREENFIX_RUNNER_ENVIRONMENT -cne "github-hosted" `
+        -or -not $runnerTempIsAbsolute) {
+        throw "disposable account mutation requires CI=true, GITHUB_ACTIONS=true, SCREENFIX_RUNNER_ENVIRONMENT=github-hosted, and an absolute RUNNER_TEMP"
+    }
 }
 
 $project = [IO.Path]::GetFullPath(
@@ -68,8 +80,18 @@ if (-not $IsWindows) {
     return
 }
 
+if ($AllowDisposableAccountMutation) {
+    & $DotnetPath test $project -c Release --no-build `
+        --filter "ScreenFixCategory=DisposableAccount"
+    if ($LASTEXITCODE -ne 0) {
+        throw "disposable-account Windows tests failed with exit code $LASTEXITCODE"
+    }
+
+    return
+}
+
 & $DotnetPath test $project -c Release --no-build `
-    --filter "FullyQualifiedName!~PublishedExecutableIconTests"
+    --filter "(FullyQualifiedName!~PublishedExecutableIconTests)&(ScreenFixCategory!=DisposableAccount)"
 if ($LASTEXITCODE -ne 0) {
     throw "Windows native tests failed with exit code $LASTEXITCODE"
 }
