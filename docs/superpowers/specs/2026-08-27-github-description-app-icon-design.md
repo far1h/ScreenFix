@@ -7,6 +7,7 @@ behavior:
 
 - Set the GitHub repository description to `Masks damaged display regions and keeps
   ordinary windows in the usable area on either side.`
+- Add a concise README link directing binary users to the repository's Releases page.
 - Add the user-selected Screen Patch application icon to the native macOS bundle so it
   appears in Finder and Applications.
 
@@ -126,7 +127,8 @@ keeps collaborator setup concise.
 
 The description change is applied separately with `gh repo edit` and accepted only after
 an exact `gh repo view --json description` readback. Issue #1 is closed only after that
-readback succeeds.
+readback succeeds and the tracked README directs users to the repository's Releases page
+for ready-to-run downloads.
 
 Source changes are committed to `fix/remaining-github-issues`, pushed, and proposed in a
 pull request targeting `main`. The PR body includes verification evidence and `Fixes #2`

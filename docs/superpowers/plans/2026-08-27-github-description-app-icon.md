@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Set the GitHub repository description and add the approved Screen Patch Finder/Applications icon to the manually packaged macOS app without changing its menu-bar-only runtime behavior.
+**Goal:** Set the GitHub repository description, direct binary users to GitHub Releases, and add the approved Screen Patch Finder/Applications icon to the manually packaged macOS app without changing its menu-bar-only runtime behavior.
 
 **Architecture:** Keep one deterministic SVG source and generate the release `.icns` during macOS packaging with built-in `sips` and `iconutil`. Extend the existing bundle assembler and add a black-box package regression test; apply and verify the GitHub metadata separately through `gh`.
 
@@ -18,6 +18,7 @@
 - Modify `native/macos/Resources/Info.plist`: associate `ScreenFix.icns` with the app bundle.
 - Modify `native/macos/scripts/package-arm64.sh`: generate, copy, verify, sign, and archive the app icon.
 - Modify `native/macos/README.md`: document the new source and package test concisely.
+- Modify `README.md`: link ready-to-run downloads to the repository's Releases page.
 - Update GitHub repository metadata through `gh`; no tracked file represents that state.
 
 ### Task 1: Reproduce the missing packaged app icon
@@ -338,12 +339,18 @@ git add native/macos/Resources/ScreenFixAppIcon.svg \
 git commit -m "fix: add native macOS app icon"
 ```
 
-### Task 4: Document the reproducible icon workflow
+### Task 4: Document downloads and the reproducible icon workflow
 
 **Files:**
+- Modify: `README.md`
 - Modify: `native/macos/README.md`
 
-- [ ] **Step 1: Add the focused package test to collaborator commands**
+- [ ] **Step 1: Direct binary users to GitHub Releases**
+
+Add one concise sentence after the project introduction linking ready-to-run macOS and
+Windows builds to `https://github.com/far1h/ScreenFix/releases`.
+
+- [ ] **Step 2: Add the focused package test to collaborator commands**
 
 Update the Build and test command block to include:
 
@@ -351,13 +358,13 @@ Update the Build and test command block to include:
 native/macos/scripts/test-package-arm64.sh
 ```
 
-- [ ] **Step 2: Explain the source/generated boundary concisely**
+- [ ] **Step 3: Explain the source/generated boundary concisely**
 
 Add one short paragraph: `Resources/ScreenFixAppIcon.svg` is the editable source;
 `build-app-icon.sh` creates the `.icns` during packaging with macOS system tools, so no
 generated icon files are committed and full Xcode is not required.
 
-- [ ] **Step 3: Verify and commit the docs increment**
+- [ ] **Step 4: Verify and commit the docs increment**
 
 Run:
 
@@ -368,8 +375,8 @@ git diff --check
 Expected: exit 0.
 
 ```bash
-git add native/macos/README.md
-git commit -m "docs: explain macOS icon packaging"
+git add README.md native/macos/README.md
+git commit -m "docs: link releases and explain icon packaging"
 ```
 
 ### Task 5: Apply and verify the GitHub repository description
@@ -407,12 +414,22 @@ test "$(gh repo view --json description --jq .description)" = \
 
 Expected: exit 0.
 
-- [ ] **Step 4: Close issue #1 with the verified outcome**
+- [ ] **Step 4: Verify the tracked Releases link**
 
 Run:
 
 ```bash
-gh issue close 1 --comment "Set the repository description and verified the exact GitHub metadata value."
+rg -F 'https://github.com/far1h/ScreenFix/releases' README.md
+```
+
+Expected: the concise ready-to-run download sentence is present.
+
+- [ ] **Step 5: Close issue #1 with the verified outcome**
+
+Run:
+
+```bash
+gh issue close 1 --comment "Set and verified the repository description, and linked ready-to-run downloads to GitHub Releases."
 gh issue view 1 --json state --jq .state
 ```
 
