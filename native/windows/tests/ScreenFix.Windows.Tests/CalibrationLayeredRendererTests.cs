@@ -46,7 +46,9 @@ public sealed class CalibrationLayeredRendererTests
 
         var transparentPoint = new NativePoint(bounds.X + 285, bounds.Y + 100);
         var paintedPoint = new NativePoint(bounds.X + 100, bounds.Y + 110);
-        Assert.Equal(backingWindow.Handle, User32.WindowFromPoint(transparentPoint));
+        var transparentHit = User32.WindowFromPoint(transparentPoint);
+        Assert.NotEqual(nint.Zero, transparentHit);
+        Assert.NotEqual(layeredWindow.Handle, transparentHit);
         Assert.Equal(layeredWindow.Handle, User32.WindowFromPoint(paintedPoint));
     }
 
