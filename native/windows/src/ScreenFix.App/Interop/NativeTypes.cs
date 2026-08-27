@@ -27,7 +27,6 @@ internal struct NativeWindowPlacement
     internal NativePoint MinimizedPosition;
     internal NativePoint MaximizedPosition;
     internal NativeRect NormalPosition;
-    internal NativeRect DeviceRectangle;
 }
 
 [StructLayout(LayoutKind.Sequential)]

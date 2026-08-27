@@ -41,8 +41,7 @@ public readonly record struct WindowPlacementData(
     uint ShowCommand,
     NativeWindowPoint MinimizedPosition,
     NativeWindowPoint MaximizedPosition,
-    NativeWindowRectangle NormalPosition,
-    NativeWindowRectangle DeviceRectangle);
+    NativeWindowRectangle NormalPosition);
 
 public interface IWindowNativeWriter
 {
