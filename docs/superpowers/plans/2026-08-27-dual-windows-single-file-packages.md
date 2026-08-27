@@ -50,6 +50,7 @@ New publishing and startup files:
 - `native/windows/scripts/test-assert-win-x64-release.ps1` — release staging regressions.
 - `native/windows/scripts/assert-windows-download-docs.ps1` — README names/recommendation contract.
 - `native/windows/scripts/test-assert-windows-download-docs.ps1` — README contract regressions.
+- `native/windows/scripts/test-disposable-test-gate.ps1` — default exclusion and hosted-runner evidence regressions.
 
 Existing files changed:
 
@@ -95,7 +96,9 @@ dotnet --version     => 10.0.100
 dotnet --list-sdks   => exactly one SDK, 10.0.100, beneath the task root
 ```
 
-Record that absolute launcher as `SCREENFIX_PINNED_DOTNET` for every subsequent command. Each plan command spelling `"$SCREENFIX_PINNED_DOTNET"` or `& $screenfixPinnedDotnet` means that exact absolute file, never a bare `dotnet` lookup.
+Write the validated absolute launcher path plus one newline to `.superpowers/screenfix-pinned-dotnet-path`, an already gitignored state file, with owner-only write permission. Validate that the state file is one regular non-reparse file and contains one absolute executable beneath the task SDK root.
+
+At the start of every subsequent task and every fresh worker turn, reload this file, normalize the path, and repeat the regular-file, executable, `--version=10.0.100`, and single-private-SDK checks before any .NET command. Record it in that shell as `SCREENFIX_PINNED_DOTNET`/`$screenfixPinnedDotnet`. Each plan command using that name means the freshly revalidated absolute file, never inherited shell state or a bare `dotnet` lookup.
 
 - [ ] **Step 3: Add narrow generated-output ignores**
 
@@ -371,6 +374,8 @@ git commit -m "test: verify icons in both Windows bundles"
 - Modify: `native/windows/tests/ScreenFix.App.Tests/ScreenFix.App.Tests.csproj`
 - Modify: `native/windows/tests/ScreenFix.App.Tests/LifecycleTests.cs`
 - Modify: `native/windows/scripts/test-windows-native.ps1`
+- Create: `native/windows/scripts/test-disposable-test-gate.ps1`
+- Modify: `.github/workflows/windows-native.yml`
 
 - [ ] **Step 1: Write identity/path contract tests and prove RED**
 
@@ -386,7 +391,9 @@ Run portable app tests and a Windows cross-build. Expected: no behavior test cha
 
 Add `[Trait("ScreenFixCategory", "DisposableAccount")]` to every test that can touch the production mutex name, real Local App Data ScreenFix path, or a real published process. Change the ordinary `test-windows-native.ps1` filter to exclude `ScreenFixCategory=DisposableAccount` by default.
 
-Add an `-AllowDisposableAccountMutation` switch. It may run that category only when all of `CI=true`, `GITHUB_ACTIONS=true`, workflow-owned `SCREENFIX_RUNNER_ENVIRONMENT=github-hosted`, and a nonempty absolute `RUNNER_TEMP` are present. Refuse the switch before test execution otherwise. The workflow explicitly maps `${{ runner.environment }}` into the dedicated ScreenFix variable for that one step, then invokes the category separately; local/default runs can never select it accidentally. Add PowerShell regressions for default exclusion and every missing/invalid evidence value.
+Add an `-AllowDisposableAccountMutation` switch. It may run that category only when all of `CI=true`, `GITHUB_ACTIONS=true`, workflow-owned `SCREENFIX_RUNNER_ENVIRONMENT=github-hosted`, and a nonempty absolute `RUNNER_TEMP` are present. Refuse the switch before test execution otherwise. The workflow explicitly maps `${{ runner.environment }}` into the dedicated ScreenFix variable for that one step, then invokes the category separately; local/default runs can never select it accidentally.
+
+Create `test-disposable-test-gate.ps1` and prove the default invocation's captured filter excludes the category, then test every missing/invalid evidence value independently. The workflow runs this regression before its separate disposable invocation. Commit the filter, regression, workflow mapping, and destructive tests atomically in this task.
 
 - [ ] **Step 4: Write real mutex lifetime RED tests**
 
@@ -415,11 +422,11 @@ Expose one operation that:
 7. calls production `TryAcquire` and requires fresh creation;
 8. only then removes test-created configuration.
 
-Outer disposal restores the original directory only while owning a freshly created gate. If fresh creation fails, preserve both paths and report them without moving/deleting either.
+Own the `Process` and every observer in nested `try/finally`. On every success or exception path, close observer handles first, kill the exact child if still alive, and bounded-wait for that exact process to exit before attempting fresh gate creation or any filesystem cleanup. Outer disposal restores the original directory only while owning a freshly created gate. If termination cannot be proven or fresh creation fails, preserve both config paths and report them without moving/deleting either.
 
 - [ ] **Step 6: Add refusal and restore tests one at a time**
 
-Cover opt-in absent; owned and unowned production object refusal before backup creation; root/outside-Local-AppData path; reparse directory/ancestor; clean missing directory; byte-for-byte backup/restore; per-launch cleanup; child exits before mutex; child creates mutex but exits before input idle; leaked observer; cleanup failure; restore failure; and success leaving no backup/test directory.
+Cover opt-in absent; owned and unowned production object refusal before backup creation; root/outside-Local-AppData path; reparse directory/ancestor; clean missing directory; byte-for-byte backup/restore; per-launch cleanup; child exits before mutex; child creates mutex but hangs past input idle; observer failure; child exits before input idle; leaked observer; termination failure; cleanup failure; restore failure; and success leaving no backup/test directory. The timeout/observer/endpoint cases must prove the exact child was terminated before restoration; the injected termination-failure case must prove both config paths were preserved.
 
 - [ ] **Step 7: Run ordinary and disposable Windows tests twice**
 
@@ -428,7 +435,7 @@ First run the default invocation and prove from the filter/log that the disposab
 - [ ] **Step 8: Commit safe startup isolation**
 
 ```bash
-git add native/windows/src/ScreenFix.App native/windows/tests/ScreenFix.App.Tests native/windows/tests/ScreenFix.Windows.Tests/Startup
+git add native/windows/src/ScreenFix.App native/windows/tests/ScreenFix.App.Tests native/windows/tests/ScreenFix.Windows.Tests/Startup native/windows/scripts/test-windows-native.ps1 native/windows/scripts/test-disposable-test-gate.ps1 .github/workflows/windows-native.yml
 git commit -m "test: isolate Windows startup measurements"
 ```
 
@@ -464,6 +471,8 @@ Normalize paths with `GetFullPath`, use separator-aware descendant checks, and r
 Thread required `-DotnetPath` parameters through test and publish scripts. Replace every bare `dotnet` call. Repeat-safe scripts must restore all environment variables in `finally` and never rewrite `PATH`, `DOTNET_ROOT`, or user configuration.
 
 - [ ] **Step 4: Configure isolated and external SDK roots in CI**
+
+Define `SCREENFIX_SOURCE_SHA` as `${{ github.event.pull_request.head.sha }}` for `pull_request` and `${{ github.sha }}` otherwise. Pass that exact expression to `actions/checkout@v7` through `with.ref`, then fail immediately unless `git rev-parse HEAD` equals `SCREENFIX_SOURCE_SHA`. Use this source SHA in logs and every uploaded artifact name; never identify PR artifacts by the synthetic merge `GITHUB_SHA`.
 
 Run `actions/setup-dotnet@v6` once with step-scoped `DOTNET_INSTALL_DIR=${{ runner.temp }}\screenfix-external-dotnet` and `dotnet-version: 10.0.x`, then once with a fresh `DOTNET_INSTALL_DIR=${{ runner.temp }}\screenfix-dotnet-10.0.100` and exact `10.0.100`. Store both absolute `dotnet.exe` paths in dedicated `SCREENFIX_*` environment variables; all commands invoke the private path directly. The assertion must prove the external version is newer and ignored by the real ScreenFix project.
 
@@ -563,19 +572,21 @@ Extract pure helpers for median and limits. Cover odd/even samples, overflow-saf
 
 - [ ] **Step 2: Write extraction-root safety tests before process measurement**
 
-`BundleExtractionTransaction` requires explicit disposable-account authorization and creates one unique root beneath the resolved absolute `RUNNER_TEMP`. Reject the temp root itself, filesystem roots, outside-root paths, preexisting paths, and any target/ancestor reparse point. Expose only validated unique child paths for first/warm extraction. In `finally`, after every exact child has terminated, revalidate the root identity/reparse state and remove only that transaction root. Cleanup failure fails the benchmark and prints the retained exact root without deleting elsewhere.
+`BundleExtractionTransaction` requires explicit disposable-account authorization and creates one unique root beneath the resolved absolute `RUNNER_TEMP`. Reject the temp root itself, filesystem roots, outside-root paths, preexisting paths, and any target/ancestor reparse point. Expose only validated unique child paths for first/warm extraction. In `finally`, only after every exact child is proven terminated, revalidate the root identity/reparse state and remove only that transaction root. Cleanup failure fails the benchmark and prints the retained exact root without deleting elsewhere. If child termination cannot be proven, preserve the extraction root for recovery and report it without deletion.
 
 Test successful removal, process-failure removal, cleanup-error reporting, outside/root rejection, and a reparse replacement that must be preserved and rejected. Use temporary roots and unique mutexes in ordinary tests; any test using the real runner root gets the disposable trait.
 
 - [ ] **Step 3: Write a one-launch Windows integration test**
 
-Mark the class `[Trait("ScreenFixCategory", "DisposableAccount")]`. Require two absolute staged executable paths and the script's validated workflow-only `-AllowDisposableAccountMutation` opt-in from the filtered invocation. Start a stopwatch immediately before `Process.Start`; require the child-owned production mutex through a short-lived observer; call `WaitForInputIdle` with a 10-second timeout; require the child still alive; stop timing; then terminate, wait, freshly acquire the mutex, and clean config through `ScreenFixConfigurationTransaction`.
+Mark the class `[Trait("ScreenFixCategory", "DisposableAccount")]`. Require two absolute staged executable paths and the script's validated workflow-only `-AllowDisposableAccountMutation` opt-in from the filtered invocation. Start a stopwatch immediately before `Process.Start`; require the child-owned production mutex through a short-lived observer; call `WaitForInputIdle` with a 10-second timeout; require the child still alive; and stop timing.
+
+Wrap observer and process ownership in nested `try/finally`: close every observer; kill the exact child if still alive; bounded-wait for its exit; and only after proven exit freshly create the mutex and clean config/extraction state. This sequence applies equally to observer exceptions, mutex timeouts, input-idle timeouts, endpoint exceptions, and threshold failures.
 
 Use only child paths supplied by `BundleExtractionTransaction` for `DOTNET_BUNDLE_EXTRACT_BASE_DIR`. Preserve and restore any inherited environment value. Assert the outer extraction root no longer exists after success or injected process failure.
 
 - [ ] **Step 4: Prove the safety RED cases**
 
-With a production mutex already existing, run the filtered measurement test and require refusal before any config path mutation. With an injected leaked observer, require non-destructive failure and exact recovery-path diagnostics. Run these before enabling the multi-launch benchmark.
+With a production mutex already existing, run the filtered measurement test and require refusal before any config path mutation. Add RED controls for observer failure, a child that creates the mutex but hangs past input idle, and termination failure. The first two must prove the child is gone before restoration and extraction removal; termination failure must preserve both config paths and the extraction root with exact recovery diagnostics. With an injected leaked observer, require the same non-destructive preservation. Run these before enabling the multi-launch benchmark.
 
 - [ ] **Step 5: Implement alternating first-start measurements**
 
@@ -657,11 +668,11 @@ Expected: every suite passes, the Windows projects cross-build warning-free, mac
 
 - [ ] **Step 2: Push the branch and capture exact Windows CI evidence**
 
-Push `optimize/windows-single-file-size`. Locate the push run by exact `headSha`, wait for completion, and record the run ID, commit, two staged byte sizes/hashes, reduction percentage, runtime-pack set, and first/warm samples/medians.
+Push `optimize/windows-single-file-size`. Locate the push run by exact `headSha`, wait for completion, and verify its logged/asserted `SCREENFIX_SOURCE_SHA` and artifact suffix equal that head. Record the run ID, source commit, two staged byte sizes/hashes, reduction percentage, runtime-pack set, and first/warm samples/medians.
 
 - [ ] **Step 3: Open the PR and run the pull-request workflow**
 
-Create a focused PR against `main` describing the two assets, measured size/startup trade-off, unchanged behavior, and fallback. Confirm the PR event run uses the exact PR head SHA and passes independently of the push run.
+Create a focused PR against `main` describing the two assets, measured size/startup trade-off, unchanged behavior, and fallback. GitHub may report the PR workflow run's outer `headSha` as a synthetic merge; inspect its checkout assertion, logs, and artifact name instead and require their `SCREENFIX_SOURCE_SHA` to equal the exact PR head SHA. Confirm it passes independently of the push run.
 
 - [ ] **Step 4: Request independent reviews**
 
@@ -729,7 +740,11 @@ Only after the draft audit passes, publish with `gh release edit v1.0.4 --draft=
 
 Remove only the validated temporary release directory and detached worktree. Confirm no ScreenFix config backup/test directory or bundle extraction root remains on the Windows runner.
 
-Clean repository-owned generated output without `git clean`: use the absolute pinned SDK's `dotnet clean` for the solution, then resolve each fixed `native/windows/artifacts`, `native/macos/.build`, and `native/macos/artifacts` root; require each to be a non-reparse descendant of its expected platform directory; and remove only those exact roots. Confirm `git status --short` contains no generated output.
+Clean repository-owned generated output without `git clean`: use the absolute pinned SDK's `dotnet clean` for the solution. Enumerate the known project directories from `ScreenFix.slnx` plus `ScreenFix.Windows.Tests`, `ScreenFix.PackageVerifier`, and `ScreenFix.PackageVerifier.Tests`; for each, resolve its exact `bin` and `obj` child, require any existing child to be a non-reparse descendant of that exact project directory, remove only that child, then assert it no longer exists.
+
+Resolve each fixed `native/windows/artifacts`, `native/macos/.build`, and `native/macos/artifacts` root; require each to be a non-reparse descendant of its expected platform directory; remove only those exact roots; and assert none remains. `git status` cannot prove ignored paths absent, so use explicit `Test-Path`/`test ! -e` assertions for every known generated root before also requiring clean Git status.
+
+Finally read and revalidate `.superpowers/screenfix-pinned-dotnet-path`, derive the exact task-scoped SDK root from that launcher, require the root to be the original non-reparse temporary child containing only SDK 10.0.100, remove that exact root, then remove only the state file and assert both are absent.
 
 After verifying `main` contains the merge and v1.0.4 is public, delete the merged remote feature branch if GitHub did not, switch the local workspace to updated `main`, and delete the local feature branch. Never remove source assets, committed icon resources, or user configuration.
 

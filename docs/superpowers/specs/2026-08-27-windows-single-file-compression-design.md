@@ -221,7 +221,7 @@ The script records every duration and each median. The candidate passes only whe
 - first-start median is at most the baseline median plus the greater of 750 ms or 75 percent of the baseline, and is below 5 seconds; and
 - warm-start median is at most the baseline median plus the greater of 250 ms or 50 percent of the baseline, and is below 2 seconds.
 
-Timeouts, early process exits, failure to acquire the production mutex, failure to reach input-idle, configuration backup/restoration failures, extraction cleanup failures, or process-termination failures fail the regression. Interactive functional checks must launch the exact accepted staged executables, not later rebuilds, and do not use the destructive measurement harness.
+Every observer and child process is owned through nested `try/finally`: close all observer handles, kill the exact child if still alive, and bounded-wait for proven exit before fresh mutex creation or filesystem cleanup. Timeouts, early process exits, failure to acquire the production mutex, failure to reach input-idle, configuration backup/restoration failures, extraction cleanup failures, or process-termination failures fail the regression. If exact-child termination cannot be proven, preserve both configuration paths and the extraction root for recovery without deleting or moving them. Interactive functional checks must launch the exact accepted staged executables, not later rebuilds, and do not use the destructive measurement harness.
 
 ## Testing
 
