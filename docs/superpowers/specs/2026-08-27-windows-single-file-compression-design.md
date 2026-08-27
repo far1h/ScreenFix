@@ -82,6 +82,8 @@ The outputs must use separate `--artifacts-path` and publish directories so apph
 
 The final production publish uses the compressed configuration only after this comparison passes. The test reports both byte counts and the percentage reduction.
 
+The comparison is pinned to the repository's .NET SDK 10.0.100 and its .NET 10.0.0 self-contained runtime pack. An SDK or runtime-pack update must establish a new same-commit baseline rather than reusing an older byte count.
+
 ### Publish configuration
 
 The production publish changes only `EnableCompressionInSingleFile` from `false` to `true`.
@@ -105,35 +107,91 @@ The current managed package assertion searches the final executable for the unco
 The Windows package test will:
 
 1. locate the official .NET single-file bundle signature and header offset;
-2. require the expected bundle major version;
-3. enumerate the bundle manifest with strict bounds checks;
+2. require bundle format 6.0 exactly, matching the pinned .NET 10 host;
+3. enumerate the bundle manifest with strict checked bounds;
 4. locate exactly one `ScreenFix.dll` assembly entry;
 5. require the entry to be compressed;
 6. decompress it with `DeflateStream` and require the declared uncompressed length;
-7. use `PEReader` and `MetadataReader` to locate the stable `ScreenFix.App.Resources.ScreenFix.ico` manifest resource;
+7. use `PEReader` and `MetadataReader` to locate the stable `ScreenFix.App.Resources.ScreenFix.ico` embedded manifest resource;
 8. compare that resource byte-for-byte with the committed canonical ICO.
 
-The parser is test/package infrastructure only. It rejects invalid offsets, negative or excessive sizes, duplicate application entries, unsupported bundle versions, malformed compressed data, missing resources, and trailing or truncated payloads with specific diagnostics.
+The parser is test/package infrastructure only. Before allocating or decompressing, it enforces all of these limits:
+
+- bundle file length is positive and no greater than 512 MiB;
+- exactly one valid bundle signature resolves to a header fully inside the file;
+- bundle version is exactly 6.0;
+- entry count is between 1 and 4096;
+- every UTF-8 path is at most 1024 bytes, normalized, relative, and unique;
+- every entry has a recognized file type;
+- offset, declared size, compressed size, and every addition use checked arithmetic;
+- stored payload spans are positive, disjoint, and entirely before the manifest;
+- each declared uncompressed entry is no greater than 256 MiB and all entries total no more than 512 MiB;
+- `ScreenFix.dll` is an `Assembly`, is no greater than 16 MiB uncompressed, and has a positive compressed size;
+- the manifest is consumed exactly, with no truncated or trailing manifest data.
+
+The decompressor receives a stream limited to exactly the entry's `CompressedSize` and a bounded output sink capped at the declared `Size`. It must consume the complete compressed span, produce exactly the declared number of bytes, reach a clean deflate end, and produce no extra byte. Short, oversized, truncated, corrupt, and trailing compressed payloads fail with distinct diagnostics.
+
+Managed resource extraction is also exact:
+
+1. require a valid CLR header and nonempty COR managed-resources directory;
+2. map `ResourcesDirectory.RelativeVirtualAddress` through the PE section table with checked file bounds;
+3. require exactly one `ManifestResource` metadata row with the stable icon name;
+4. require that row's `Implementation` handle to be nil so the resource is embedded in `ScreenFix.dll` rather than linked elsewhere;
+5. treat the row's offset as relative to the managed-resources directory;
+6. require a complete four-byte little-endian length prefix inside that directory;
+7. require the length-prefixed payload to remain entirely inside that directory and to equal the canonical ICO length;
+8. compare the payload byte-for-byte with the canonical ICO.
+
+Duplicate names, linked resources, missing or invalid COR resource directories, RVA/offset overflow, truncated prefixes, and payloads outside the resource directory all fail explicitly.
+
+### Existing raw-assertion migration
+
+Two current checks depend on the canonical ICO appearing raw inside the uncompressed executable:
+
+- the `ByteSearch` check in `assert-win-x64-package.ps1`;
+- `PublishedExecutableIconTests.PublishedExecutable_ContainsCanonicalManagedIconBytes`, invoked through `test-windows-native.ps1`.
+
+Both must change together. The PowerShell assertion retains package shape, hash, MZ, PE32+, AMD64, and Windows GUI subsystem checks, but removes `ByteSearch` and the raw managed-ICO requirement. The C# published-executable test becomes the single shared bundle-aware managed-resource verifier described above and is renamed accordingly. `test-windows-native.ps1` continues to run the complete published-executable test class, so the production publish cannot pass without both managed and native icon verification. The PowerShell regression updates its positive and mutation controls to invoke that shared C# verifier rather than maintaining a second bundle parser.
 
 The existing independent native PE validation remains unchanged: it enumerates `RT_GROUP_ICON`, requires a nine-frame icon group, and compares every referenced `RT_ICON` payload with the canonical ICO frames.
 
 ### Runtime behavior
 
-At launch, the .NET host reads and decompresses bundled files before normal managed startup. After that boundary, the same `ScreenFix.dll`, resource loader, application context, tray icon, calibration code, and window-correction code execute.
+At launch, the .NET host reads and decompresses managed bundle entries before normal managed startup. Because `IncludeNativeLibrariesForSelfExtract=true` remains enabled, bundled native libraries are decompressed into the bundle extraction cache; first and warm starts therefore have different costs. After that host boundary, the same `ScreenFix.dll`, resource loader, application context, tray icon, calibration code, and window-correction code execute.
 
-Expected behavior is therefore identical. A small startup-time increase is acceptable; missing icons, new loose files, crashes, configuration changes, or different window behavior are not.
+Expected application behavior is therefore identical. Missing icons, new loose package files, crashes, configuration changes, or different window behavior are not acceptable.
+
+### Startup measurement
+
+The Windows package regression measures the exact baseline and candidate executables on the same runner. Each process receives an isolated `LOCALAPPDATA` and `DOTNET_BUNDLE_EXTRACT_BASE_DIR`, so it cannot read user configuration or reuse the other variant's extraction cache.
+
+The endpoint is `Process.WaitForInputIdle`: ScreenFix creates and shows its `NotifyIcon` before entering the WinForms message loop, so the first idle state occurs after tray initialization. Each launch has a 10-second timeout, must remain alive through the endpoint, and is terminated by the measurement harness afterward.
+
+Measurements alternate baseline and candidate to reduce runner drift:
+
+- **First start:** five measured launches per variant, each with a fresh extraction and app-data directory.
+- **Warm start:** one unmeasured seed plus five measured launches per variant, reusing only that variant's extraction and app-data directories.
+
+The script records every duration and each median. The candidate passes only when:
+
+- first-start median is at most the baseline median plus the greater of 750 ms or 75 percent of the baseline, and is below 5 seconds; and
+- warm-start median is at most the baseline median plus the greater of 250 ms or 50 percent of the baseline, and is below 2 seconds.
+
+Timeouts, early process exits, failure to reach input-idle, or cleanup failures fail the regression. Interactive functional checks must launch the exact accepted candidate executable, not a later rebuild.
 
 ## Testing
 
 Testing remains incremental and preserves the existing RED/GREEN evidence standard.
 
-1. Add a regression that publishes a compressed candidate and proves the old raw-byte managed assertion fails for representational reasons.
-2. Add focused malformed-bundle tests for signature, header, bounds, duplicate entry, compression, decompression length, managed PE, resource name, and resource bytes.
-3. Prove the new parser accepts the real compressed package and rejects a candidate with a mutated managed ICO.
-4. Keep the native PE icon negative control and exact payload comparison.
-5. Run all Windows-native and portable Windows tests.
-6. Run the existing macOS and Lua suites to prove the packaging-only change has no cross-platform regression.
-7. Run the final Windows workflow twice at the exact commit: push and pull-request events.
+1. Add a regression that publishes a compressed candidate and proves both existing raw-byte managed assertions fail for representational reasons.
+2. Add focused malformed-bundle tests for: missing/duplicate signature; 6.0 version mismatch; entry count; malformed, rooted, parent, duplicate, and oversized paths; unknown type; checked offset and size overflow; overlapping or out-of-manifest payloads; per-entry and cumulative caps; manifest truncation/trailing data; duplicate or wrong-type `ScreenFix.dll`; missing compression; corrupt, short, oversized, truncated, and trailing deflate data.
+3. Add focused managed-resource tests for: invalid or missing CLR/resource directory; RVA mapping and overflow; missing/duplicate resource name; non-nil implementation; resource offset overflow; truncated length prefix; payload outside the directory; wrong length; and mutated bytes.
+4. Prove the one shared C# verifier accepts the real compressed package and rejects a real candidate whose managed ICO is mutated before bundling.
+5. Keep the native PE icon negative control and exact payload comparison unchanged.
+6. Run the isolated same-commit size comparison and the first/warm startup measurements with their stated limits.
+7. Run all Windows-native and portable Windows tests.
+8. Run the existing macOS and Lua suites to prove the packaging-only change has no cross-platform regression.
+9. Run the final Windows workflow twice at the exact commit: push and pull-request events.
 
 ## Acceptance criteria
 
@@ -145,8 +203,9 @@ The change is ready only when all of the following are true:
 - the native executable icon still contains the exact nine canonical frames;
 - all existing Windows behavior tests pass unchanged;
 - package mutation and iconless negative controls fail for the intended reason;
+- first-start and warm-start medians satisfy the documented relative and absolute limits;
 - Windows, macOS, and Lua regression suites pass;
-- interactive Windows checks confirm the tray icon, Explorer icon, calibration, settings, snap, ordinary maximize, and full-screen exclusion behavior;
+- interactive Windows checks use the exact accepted candidate and confirm the tray icon, Explorer icon, calibration, settings, snap, ordinary maximize, and full-screen exclusion behavior;
 - release notes report the measured size instead of estimating it.
 
 If the 20 percent reduction is not achieved or behavior differs, the production publish setting remains uncompressed and no smaller release is claimed.
