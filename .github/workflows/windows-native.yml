@@ -3,11 +3,13 @@ name: Windows native
 on:
   push:
     paths:
+      - "README.md"
       - ".github/workflows/windows-native.yml"
       - "global.json"
       - "native/windows/**"
   pull_request:
     paths:
+      - "README.md"
       - ".github/workflows/windows-native.yml"
       - "global.json"
       - "native/windows/**"

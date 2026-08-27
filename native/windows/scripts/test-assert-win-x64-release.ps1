@@ -9,6 +9,10 @@ $publishScript = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "publish-win-x64.ps1"))
 $workflow = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "../../../.github/workflows/windows-native.yml"))
+$documentationAssertion = [IO.Path]::GetFullPath(
+    (Join-Path $PSScriptRoot "assert-windows-download-docs.ps1"))
+$readme = [IO.Path]::GetFullPath(
+    (Join-Path $PSScriptRoot "../../../README.md"))
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) (
     "ScreenFix.ReleaseAssertionTests." + [Guid]::NewGuid().ToString("N"))
 $recommendedName = "ScreenFix-Windows-x64.exe"
@@ -129,6 +133,13 @@ try {
         if (-not $workflowSource.Contains($requiredWorkflowMarker)) {
             throw "Windows workflow artifact contract is incomplete: $requiredWorkflowMarker"
         }
+    }
+    $passedControls++
+
+    $documentationOutput = @(& $documentationAssertion -ReadmePath $readme)
+    if (($documentationOutput -join "`n") -cne `
+        "Windows download documentation is current.") {
+        throw "Windows release documentation assertion returned unexpected output"
     }
     $passedControls++
 
