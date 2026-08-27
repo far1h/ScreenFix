@@ -424,16 +424,15 @@ rg -F 'https://github.com/far1h/ScreenFix/releases' README.md
 
 Expected: the concise ready-to-run download sentence is present.
 
-- [ ] **Step 5: Close issue #1 with the verified outcome**
+- [ ] **Step 5: Confirm issue #1 remains open for the tracked README fix**
 
 Run:
 
 ```bash
-gh issue close 1 --comment "Set and verified the repository description, and linked ready-to-run downloads to GitHub Releases."
 gh issue view 1 --json state --jq .state
 ```
 
-Expected: `CLOSED`.
+Expected: `OPEN`. The pull request will close it after the tracked Releases link merges.
 
 ### Task 6: Complete verification and open the pull request
 
@@ -496,10 +495,11 @@ git push -u origin fix/remaining-github-issues
 - [ ] **Step 8: Open the pull request**
 
 Create a PR targeting `main` whose body summarizes the Screen Patch icon pipeline,
-records the exact verification commands, notes that issue #1 was completed as GitHub
-metadata, and includes:
+records the exact verification commands, notes that the repository description was
+applied and verified separately, and includes:
 
 ```text
+Fixes #1
 Fixes #2
 ```
 
@@ -512,5 +512,5 @@ gh pr view --json number,title,url,state,baseRefName,headRefName
 gh issue list --state open --limit 100 --json number,title,url
 ```
 
-Expected: the PR is OPEN against `main`, issue #1 is closed, and issue #2 remains open
-until the PR merges.
+Expected: the PR is OPEN against `main`, and issues #1 and #2 remain open until the PR
+merges.

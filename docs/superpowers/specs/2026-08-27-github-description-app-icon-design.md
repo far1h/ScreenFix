@@ -126,11 +126,10 @@ keeps collaborator setup concise.
 ## GitHub Delivery
 
 The description change is applied separately with `gh repo edit` and accepted only after
-an exact `gh repo view --json description` readback. Issue #1 is closed only after that
-readback succeeds and the tracked README directs users to the repository's Releases page
-for ready-to-run downloads.
+an exact `gh repo view --json description` readback. The tracked README directs users to
+the repository's Releases page for ready-to-run downloads.
 
 Source changes are committed to `fix/remaining-github-issues`, pushed, and proposed in a
-pull request targeting `main`. The PR body includes verification evidence and `Fixes #2`
-so the app-icon issue closes on merge. It records issue #1 as a separately completed
-repository-metadata change rather than claiming the PR carries that external state.
+pull request targeting `main`. The PR body includes verification evidence, `Fixes #1`,
+and `Fixes #2` so both issues close only after the tracked Releases link and app icon
+merge. It records the repository description as separately applied and verified metadata.
