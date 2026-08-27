@@ -110,12 +110,13 @@ contains an Explorer icon. The project also includes that same file as an
 
 A short resource loader opens the manifest resource and constructs
 `new Icon(stream, SystemInformation.SmallIconSize)` before cloning it. Selecting the
-system-requested small-icon size makes Windows choose the appropriate ICO frame for the
-current tray DPI instead of depending on the file's default frame. The loader then
-closes the source `Icon` and stream. The clone is assigned to `NotifyIcon` and is owned
-for the application lifetime. Teardown hides and disposes `NotifyIcon` before disposing
-the cloned icon handle. This ordering prevents the tray component from referencing a
-closed stream or destroyed handle.
+Windows small-icon metric makes the loader request a suitable small representation
+instead of depending on the file's default frame. It is not guaranteed to describe the
+current tray monitor's DPI; Windows remains responsible for notification-area scaling.
+The loader then closes the source `Icon` and stream. The clone is assigned to
+`NotifyIcon` and is owned for the application lifetime. Teardown hides and disposes
+`NotifyIcon` before disposing the cloned icon handle. This ordering prevents the tray
+component from referencing a closed stream or destroyed handle.
 
 If the embedded resource is missing or invalid at runtime, the loader catches that load
 failure and returns an owned clone of `SystemIcons.Application`. The fallback keeps the
@@ -158,11 +159,12 @@ Work in small red-green increments.
    and prove the fallback separately with a missing-resource case.
 3. Extend the package assertion regression test so a package without the canonical
    embedded ICO bytes is rejected.
-4. On Windows, load the published executable as data with `LoadLibraryEx`, locate its
-   `RT_GROUP_ICON` with `FindResource`, and verify every referenced `RT_ICON` exists.
-   Read the compact group-icon directory to require dimensions matching the canonical
-   ICO frames. Use the operating system's PE resource loader instead of implementing a
-   large portable PE resource parser.
+4. On Windows, load the published executable as data with `LoadLibraryEx`, enumerate
+   `RT_GROUP_ICON` names with `EnumResourceNames`, and pass each discovered name or ID
+   to `FindResource` instead of assuming a resource ID. Verify every group entry's
+   referenced `RT_ICON` exists. Read the compact group-icon directory to require
+   dimensions matching the canonical ICO frames. Use the operating system's PE
+   resource loader instead of implementing a large portable PE resource parser.
 5. Publish and assert the real `ScreenFix.exe`, proving both the managed tray resource
    and native Explorer icon survived single-file bundling.
 
@@ -175,20 +177,23 @@ accepted as proof of the other.
 1. Link the native placement structure into the portable app test assembly and add a
    failing `Marshal.SizeOf<NativeWindowPlacement>() == 44` assertion. It initially
    reports 60 and proves the interop defect without requiring Windows.
-2. Remove `DeviceRectangle` and update the placement mappings and existing corrector
-   fixtures until the portable tests pass.
-3. Add a Windows-native red test whose dedicated STA owner thread creates a normal
-   resizable top-level probe, maximizes it using the same Win32 zoomed state produced by
-   Windows-key-Up and the maximize button, and continuously pumps that window's
-   messages. From the test thread, call the production `WindowNative` placement API
-   across threads. Before the fix, require the current 60-byte call to fail and preserve
-   `ERROR_INVALID_PARAMETER` (`87`) as the last P/Invoke error. This proves the actual
-   production failure rather than only inferring it from managed structure size.
-4. After removing the extra field, use the same harness to require the cross-thread
-   production placement call to succeed. Restore the probe without activation, apply a
-   known safe outer frame, and assert the end state is not zoomed and its final
-   rectangle equals the safe target. Keep message pumping on the owner thread until
-   teardown so the test cannot hang on cross-thread window operations.
+2. Before removing `DeviceRectangle`, add and run a Windows-native regression whose
+   dedicated STA owner thread creates a normal resizable top-level probe, maximizes it
+   using the same Win32 zoomed state produced by Windows-key-Up and the maximize button,
+   and continuously pumps that window's messages. From the test thread, exercise the
+   production `WindowNative` placement API across threads. Its unchanged expectation is
+   complete success: get the placement, set the nonactivating restored placement, apply
+   a known safe outer frame, then observe a non-zoomed window at exactly that target.
+3. Capture the pre-fix failure from that success-expecting red test as root-cause
+   evidence. Diagnostics identify whichever production operation actually returned
+   false and report `Marshal.GetLastPInvokeError()` immediately at that boundary. Do not
+   prescribe which placement call must fail or a particular error value; Windows
+   versions may accept the get operation and reject the set operation.
+4. Remove `DeviceRectangle`, update the placement mappings and existing corrector
+   fixtures, and rerun both regressions without changing their expectations. Require the
+   portable size assertion and the full Windows-native end state to pass. Keep message
+   pumping on the owner thread until teardown so the test cannot hang on cross-thread
+   window operations.
 5. Retain or add eligibility coverage proving a borderless full-screen probe is
    excluded and never restored.
 
@@ -254,9 +259,9 @@ separate from correction policy.
 - The notification-area icon and Explorer `.exe` icon both display the approved Screen
   Patch artwork from one multi-resolution ICO.
 - The ICO contains validated 16, 20, 24, 32, 40, 48, 64, 128, and 256 pixel frames.
-- Tray loading requests `SystemInformation.SmallIconSize`, selects those dimensions,
-  remains valid after its resource stream closes, and disposes in the correct order at
-  application shutdown.
+- Tray loading requests the Windows `SystemInformation.SmallIconSize` metric, selects
+  those dimensions, remains valid after its resource stream closes, and disposes in the
+  correct order at application shutdown.
 - `NativeWindowPlacement` is exactly 44 bytes on the portable test host and Windows.
 - An ordinary window maximized with Windows-key-Up or the maximize button is restored
   and placed entirely within the same safe candidate used for snapping.
