@@ -1,4 +1,5 @@
 param(
+    [Parameter(Mandatory = $true)]
     [string]$DotnetPath,
     [string]$PublishedExecutable,
     [ValidateSet("compressed", "uncompressed")]
@@ -6,26 +7,39 @@ param(
     [switch]$AllowDisposableAccountMutation
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-
-if (-not $PSBoundParameters.ContainsKey("DotnetPath")) {
-    $DotnetPath = (Get-Command dotnet -ErrorAction Stop).Source
-}
 
 if ([string]::IsNullOrWhiteSpace($DotnetPath) `
     -or -not [IO.Path]::IsPathFullyQualified($DotnetPath)) {
-    throw "dotnet path must be one absolute regular nonempty file"
+    throw "dotnet path must be one absolute regular non-reparse executable file"
 }
 
 $DotnetPath = [IO.Path]::GetFullPath($DotnetPath)
 if (-not (Test-Path -LiteralPath $DotnetPath -PathType Leaf)) {
-    throw "dotnet path must be one absolute regular nonempty file"
+    throw "dotnet path must be one absolute regular non-reparse executable file"
 }
 
 $dotnetFile = Get-Item -LiteralPath $DotnetPath
 if ($dotnetFile.Length -eq 0 `
     -or ($dotnetFile.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-    throw "dotnet path must be one absolute regular nonempty file"
+    throw "dotnet path must be one absolute regular non-reparse executable file"
+}
+
+if ($IsWindows) {
+    if (@(".exe", ".com", ".cmd", ".bat", ".ps1") -cnotcontains `
+        $dotnetFile.Extension.ToLowerInvariant()) {
+        throw "dotnet path must be one absolute regular non-reparse executable file"
+    }
+}
+else {
+    $executeMask = [int]([IO.UnixFileMode]::UserExecute -bor `
+        [IO.UnixFileMode]::GroupExecute -bor `
+        [IO.UnixFileMode]::OtherExecute)
+    $mode = [int][IO.File]::GetUnixFileMode($DotnetPath)
+    if (($mode -band $executeMask) -eq 0) {
+        throw "dotnet path must be one absolute regular non-reparse executable file"
+    }
 }
 
 if ($AllowDisposableAccountMutation) {

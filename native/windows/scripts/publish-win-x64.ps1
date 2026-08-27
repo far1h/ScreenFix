@@ -1,7 +1,44 @@
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$DotnetPath
+)
+
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$dotnetPath = [IO.Path]::GetFullPath(
-    (Get-Command dotnet -ErrorAction Stop).Source)
+if ([string]::IsNullOrWhiteSpace($DotnetPath) `
+    -or -not [IO.Path]::IsPathFullyQualified($DotnetPath)) {
+    throw "dotnet path must be one absolute regular non-reparse executable file"
+}
+
+$dotnetPath = [IO.Path]::GetFullPath($DotnetPath)
+$dotnetFile = Get-Item `
+    -LiteralPath $dotnetPath `
+    -Force `
+    -ErrorAction SilentlyContinue
+if ($null -eq $dotnetFile `
+    -or $dotnetFile -isnot [IO.FileInfo] `
+    -or $dotnetFile.Length -le 0 `
+    -or ($dotnetFile.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw "dotnet path must be one absolute regular non-reparse executable file"
+}
+
+if ($IsWindows) {
+    if (@(".exe", ".com", ".cmd", ".bat", ".ps1") -cnotcontains `
+        $dotnetFile.Extension.ToLowerInvariant()) {
+        throw "dotnet path must be one absolute regular non-reparse executable file"
+    }
+}
+else {
+    $executeMask = [int]([IO.UnixFileMode]::UserExecute -bor `
+        [IO.UnixFileMode]::GroupExecute -bor `
+        [IO.UnixFileMode]::OtherExecute)
+    $mode = [int][IO.File]::GetUnixFileMode($dotnetPath)
+    if (($mode -band $executeMask) -eq 0) {
+        throw "dotnet path must be one absolute regular non-reparse executable file"
+    }
+}
+
 $project = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "../src/ScreenFix.App/ScreenFix.App.csproj"))
 $output = [IO.Path]::GetFullPath(

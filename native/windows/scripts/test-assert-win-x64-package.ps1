@@ -1,32 +1,63 @@
 param(
-    [string]$DotnetPath
+    [Parameter(Mandatory = $true)]
+    [string]$DotnetPath,
+    [Parameter(Mandatory = $true)]
+    [string]$ExternalDotnetPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-if (-not $PSBoundParameters.ContainsKey("DotnetPath")) {
-    $DotnetPath = (Get-Command dotnet -ErrorAction Stop).Source
+function Resolve-DotnetLauncher {
+    param(
+        [string]$Path,
+        [string]$Name
+    )
+
+    $diagnostic = (
+        "$Name dotnet path must be one absolute regular non-reparse executable file")
+    if ([string]::IsNullOrWhiteSpace($Path) `
+        -or -not [IO.Path]::IsPathFullyQualified($Path)) {
+        throw $diagnostic
+    }
+
+    $normalized = [IO.Path]::GetFullPath($Path)
+    $item = Get-Item -LiteralPath $normalized -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item `
+        -or $item -isnot [IO.FileInfo] `
+        -or $item.Length -le 0 `
+        -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw $diagnostic
+    }
+
+    if ($IsWindows) {
+        if (@(".exe", ".com", ".cmd", ".bat", ".ps1") -cnotcontains `
+            $item.Extension.ToLowerInvariant()) {
+            throw $diagnostic
+        }
+    }
+    else {
+        $executeMask = [int]([IO.UnixFileMode]::UserExecute -bor `
+            [IO.UnixFileMode]::GroupExecute -bor `
+            [IO.UnixFileMode]::OtherExecute)
+        $mode = [int][IO.File]::GetUnixFileMode($normalized)
+        if (($mode -band $executeMask) -eq 0) {
+            throw $diagnostic
+        }
+    }
+
+    return $normalized
 }
 
-if ([string]::IsNullOrWhiteSpace($DotnetPath) `
-    -or -not [IO.Path]::IsPathFullyQualified($DotnetPath)) {
-    throw "dotnet path must be one absolute regular nonempty file"
-}
-
-$DotnetPath = [IO.Path]::GetFullPath($DotnetPath)
-if (-not (Test-Path -LiteralPath $DotnetPath -PathType Leaf)) {
-    throw "dotnet path must be one absolute regular nonempty file"
-}
-
-$dotnetFile = Get-Item -LiteralPath $DotnetPath
-if ($dotnetFile.Length -eq 0 `
-    -or ($dotnetFile.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-    throw "dotnet path must be one absolute regular nonempty file"
-}
+$DotnetPath = Resolve-DotnetLauncher -Path $DotnetPath -Name "private"
+$ExternalDotnetPath = Resolve-DotnetLauncher `
+    -Path $ExternalDotnetPath `
+    -Name "external"
 
 $assertion = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "assert-win-x64-package.ps1"))
+$toolchainAssertion = [IO.Path]::GetFullPath(
+    (Join-Path $PSScriptRoot "assert-pinned-win-x64-toolchain.ps1"))
 $canonicalIcon = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "../src/ScreenFix.App/Resources/ScreenFix.ico"))
 $appProject = [IO.Path]::GetFullPath(
@@ -39,7 +70,30 @@ $windowsTestProject = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "../tests/ScreenFix.Windows.Tests/ScreenFix.Windows.Tests.csproj"))
 $publishScript = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "publish-win-x64.ps1"))
+$regressionScriptSource = [IO.File]::ReadAllText($MyInvocation.MyCommand.Path)
+$ambientDotnetResolver = "Get-Command " + "dotnet"
+if ($regressionScriptSource.Contains($ambientDotnetResolver)) {
+    throw "package regressions must require an absolute dotnet launcher"
+}
+
+$toolchainCallMarker = "& " + '$toolchainAssertion'
+$externalArgumentMarker = "-ExternalDotnetPath " + '$ExternalDotnetPath'
+$baselineArgumentMarker = "-BaselineAssetsPath " + '$realAssets["uncompressed"]'
+$candidateArgumentMarker = "-CandidateAssetsPath " + '$realAssets["compressed"]'
+if (-not $regressionScriptSource.Contains($toolchainCallMarker) `
+    -or -not $regressionScriptSource.Contains($externalArgumentMarker) `
+    -or -not $regressionScriptSource.Contains($baselineArgumentMarker) `
+    -or -not $regressionScriptSource.Contains($candidateArgumentMarker)) {
+    throw "package regressions must assert both isolated runtime-pack assets"
+}
+
 $publishScriptSource = [IO.File]::ReadAllText($publishScript)
+if ($publishScriptSource.Contains($ambientDotnetResolver) `
+    -or $publishScriptSource -notmatch `
+        '(?s)\[Parameter\(Mandatory\s*=\s*\$true\)\]\s*\[string\]\$DotnetPath') {
+    throw "publish script must require an absolute dotnet launcher"
+}
+
 if (-not $publishScriptSource.Contains('& $dotnetPath publish')) {
     throw "publish script must use its resolved absolute dotnet launcher"
 }
@@ -102,6 +156,28 @@ function Invoke-ScreenFixPublish {
 
     Invoke-CheckedDotnet -Arguments $arguments -Failure "$Mode publish failed"
     & $assertion -OutputDirectory $OutputPath
+}
+
+function Resolve-AppAssetsPath {
+    param(
+        [string]$ArtifactsPath,
+        [ValidateSet("compressed", "uncompressed")]
+        [string]$Mode
+    )
+
+    $matches = @(Get-ChildItem `
+        -LiteralPath $ArtifactsPath `
+        -Recurse `
+        -File `
+        -Filter "project.assets.json" | Where-Object {
+            $relative = [IO.Path]::GetRelativePath($ArtifactsPath, $_.FullName)
+            $relative -match '^obj[\\/]ScreenFix\.App[\\/]project\.assets\.json$'
+        })
+    if ($matches.Count -ne 1) {
+        throw "$Mode artifacts must contain exactly one ScreenFix.App project.assets.json; found $($matches.Count)"
+    }
+
+    return [IO.Path]::GetFullPath($matches[0].FullName)
 }
 
 function Invoke-PackageVerifier {
@@ -593,6 +669,7 @@ try {
         -Failure "package verifier build failed"
 
     $realPackages = @{}
+    $realAssets = @{}
     foreach ($mode in @("uncompressed", "compressed")) {
         $artifactsPath = Join-Path $temporaryRoot "real-$mode-artifacts"
         $outputPath = Join-Path $temporaryRoot "real-$mode-publish"
@@ -603,6 +680,9 @@ try {
         $executable = Join-Path $outputPath "ScreenFix.exe"
         Invoke-PackageVerifier -Executable $executable -Mode $mode
         $realPackages[$mode] = $executable
+        $realAssets[$mode] = Resolve-AppAssetsPath `
+            -ArtifactsPath $artifactsPath `
+            -Mode $mode
 
         $wrongMode = if ($mode -ceq "compressed") { "uncompressed" } else { "compressed" }
         $wrongModeDiagnostic = Get-VerifierRejection `
@@ -618,6 +698,13 @@ try {
             throw "unexpected wrong-mode rejection: $wrongModeDiagnostic"
         }
     }
+
+    & $toolchainAssertion `
+        -DotnetPath $DotnetPath `
+        -ExternalDotnetPath $ExternalDotnetPath `
+        -Project $appProject `
+        -BaselineAssetsPath $realAssets["uncompressed"] `
+        -CandidateAssetsPath $realAssets["compressed"]
 
     $globalPackagesOutput = & $DotnetPath nuget locals global-packages --list
     if ($LASTEXITCODE -ne 0) {

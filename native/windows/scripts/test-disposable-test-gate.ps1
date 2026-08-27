@@ -87,6 +87,12 @@ try {
         "Add-Content -LiteralPath `"$capturePath`" -Value (`$Remaining -join ' ')",
         'exit 0'
     ) | Set-Content -LiteralPath $fakeDotnet -Encoding Utf8
+    if (-not $IsWindows) {
+        $mode = [IO.UnixFileMode]::UserRead -bor `
+            [IO.UnixFileMode]::UserWrite -bor `
+            [IO.UnixFileMode]::UserExecute
+        [IO.File]::SetUnixFileMode($fakeDotnet, $mode)
+    }
 
     $valid = @{
         CI = "true"
@@ -98,6 +104,12 @@ try {
     $defaultCalls = Invoke-Gate -Environment $valid
     $defaultTests = @($defaultCalls | Where-Object { $_ -match '(^|\s)test(\s|$)' })
     $scriptText = Get-Content -LiteralPath $scriptUnderTest -Raw
+    $ambientDotnetResolver = "Get-Command " + "dotnet"
+    if ($scriptText.Contains($ambientDotnetResolver) `
+        -or $scriptText -notmatch `
+            '(?s)\[Parameter\(Mandatory\s*=\s*\$true\)\]\s*\[string\]\$DotnetPath') {
+        throw "Windows native tests must require an absolute dotnet launcher"
+    }
     if ($IsWindows) {
         if ($defaultTests.Count -ne 1 `
             -or $defaultTests[0] -notmatch 'ScreenFixCategory!=DisposableAccount') {
@@ -142,6 +154,39 @@ try {
     }
 
     $workflowText = Get-Content -LiteralPath $workflow -Raw
+    $workflowRequirements = @(
+        'SCREENFIX_SOURCE_SHA: ${{ github.event_name == ''pull_request'' && github.event.pull_request.head.sha || github.sha }}',
+        'ref: ${{ env.SCREENFIX_SOURCE_SHA }}',
+        'actions/checkout@v7',
+        'actions/setup-dotnet@v6',
+        '${{ runner.temp }}\screenfix-external-dotnet',
+        '${{ runner.temp }}\screenfix-dotnet-10.0.100',
+        'dotnet-version: 10.0.x',
+        'dotnet-quality: ga',
+        'dotnet-version: 10.0.100',
+        'SCREENFIX_EXTERNAL_DOTNET',
+        'SCREENFIX_PRIVATE_DOTNET',
+        'git rev-parse HEAD',
+        '-DotnetPath $env:SCREENFIX_PRIVATE_DOTNET',
+        '-ExternalDotnetPath $env:SCREENFIX_EXTERNAL_DOTNET')
+    foreach ($requirement in $workflowRequirements) {
+        if (-not $workflowText.Contains($requirement)) {
+            throw "workflow is missing pinned-toolchain contract: $requirement"
+        }
+    }
+
+    $externalSetupIndex = $workflowText.IndexOf(
+        '${{ runner.temp }}\screenfix-external-dotnet')
+    $privateSetupIndex = $workflowText.IndexOf(
+        '${{ runner.temp }}\screenfix-dotnet-10.0.100')
+    if ($externalSetupIndex -lt 0 -or $privateSetupIndex -le $externalSetupIndex) {
+        throw "workflow must install the external SDK before the private SDK"
+    }
+
+    if ($workflowText -match '(?m)^\s*(?:run:\s*)?dotnet(?:\.exe)?\s') {
+        throw "workflow must not invoke bare dotnet"
+    }
+
     if (($workflowText | Select-String -Pattern 'SCREENFIX_RUNNER_ENVIRONMENT:' -AllMatches).Matches.Count -ne 1 `
         -or $workflowText -notmatch 'SCREENFIX_RUNNER_ENVIRONMENT:\s*\$\{\{ runner\.environment \}\}') {
         throw "workflow must map runner.environment once through SCREENFIX_RUNNER_ENVIRONMENT"
