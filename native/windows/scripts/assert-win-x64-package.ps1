@@ -1,5 +1,6 @@
 param(
-    [string]$OutputDirectory
+    [string]$OutputDirectory,
+    [string]$CanonicalIcon
 )
 
 $ErrorActionPreference = "Stop"
@@ -8,9 +9,41 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $PSScriptRoot "../artifacts/windows/win-x64"
 }
 
+if ([string]::IsNullOrWhiteSpace($CanonicalIcon)) {
+    $CanonicalIcon = Join-Path $PSScriptRoot "../src/ScreenFix.App/Resources/ScreenFix.ico"
+}
+
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) {
     throw "package directory does not exist"
+}
+
+$CanonicalIcon = [IO.Path]::GetFullPath($CanonicalIcon)
+if (-not (Test-Path -LiteralPath $CanonicalIcon -PathType Leaf)) {
+    throw "canonical icon must be one regular nonempty file"
+}
+
+$canonicalIconFile = Get-Item -LiteralPath $CanonicalIcon
+if ($canonicalIconFile.Length -eq 0 `
+    -or ($canonicalIconFile.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw "canonical icon must be one regular nonempty file"
+}
+
+if (-not ("ScreenFix.Package.ByteSearch" -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+
+namespace ScreenFix.Package
+{
+    public static class ByteSearch
+    {
+        public static bool Contains(byte[] source, byte[] pattern)
+        {
+            return source.AsSpan().IndexOf(pattern) >= 0;
+        }
+    }
+}
+'@
 }
 
 $files = @(Get-ChildItem -LiteralPath $OutputDirectory -File -Recurse)
@@ -91,4 +124,9 @@ $subsystem = [int]$bytes[$optionalHeaderOffset + $subsystemOffset] `
     -bor ([int]$bytes[$optionalHeaderOffset + $subsystemOffset + 1] -shl 8)
 if ($subsystem -ne 2) {
     throw "executable subsystem is not Windows GUI: $subsystem"
+}
+
+$canonicalIconBytes = [IO.File]::ReadAllBytes($canonicalIconFile.FullName)
+if (-not [ScreenFix.Package.ByteSearch]::Contains($bytes, $canonicalIconBytes)) {
+    throw "executable does not contain the canonical managed ScreenFix icon"
 }

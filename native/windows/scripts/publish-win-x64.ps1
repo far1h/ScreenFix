@@ -17,6 +17,7 @@ $publishOutput = & dotnet publish $project `
     -o $output `
     -p:PublishSingleFile=true `
     -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:EnableCompressionInSingleFile=false `
     -p:PublishTrimmed=false `
     -p:DebugType=None `
     -p:DebugSymbols=false `
@@ -28,6 +29,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 & $assertion -OutputDirectory $output
+& (Join-Path $PSScriptRoot "test-windows-native.ps1") `
+    -PublishedExecutable (Join-Path $output "ScreenFix.exe")
 
 $artifact = Get-Item -LiteralPath (Join-Path $output "ScreenFix.exe")
 Write-Output ("{0} ({1} bytes)" -f $artifact.FullName, $artifact.Length)
