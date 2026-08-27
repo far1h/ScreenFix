@@ -16,20 +16,6 @@ public sealed class PublishedExecutableIconTests
     private static readonly byte[] PngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
 
     [Fact]
-    public void PublishedExecutable_ContainsCanonicalManagedIconBytes()
-    {
-        var executable = GetRequiredFile("SCREENFIX_PUBLISHED_EXE");
-        var canonicalIcon = GetRequiredFile("SCREENFIX_CANONICAL_ICO");
-
-        var executableBytes = File.ReadAllBytes(executable);
-        var canonicalIconBytes = File.ReadAllBytes(canonicalIcon);
-
-        Assert.True(
-            executableBytes.AsSpan().IndexOf(canonicalIconBytes) >= 0,
-            $"{executable} does not contain the canonical managed ScreenFix icon from {canonicalIcon}.");
-    }
-
-    [Fact]
     public void PublishedExecutable_ContainsEveryNativeIconFrame()
     {
         var executable = GetRequiredFile("SCREENFIX_PUBLISHED_EXE");

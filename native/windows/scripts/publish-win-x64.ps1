@@ -1,5 +1,7 @@
 $ErrorActionPreference = "Stop"
 
+$dotnetPath = [IO.Path]::GetFullPath(
+    (Get-Command dotnet -ErrorAction Stop).Source)
 $project = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "../src/ScreenFix.App/ScreenFix.App.csproj"))
 $output = [IO.Path]::GetFullPath(
@@ -10,7 +12,7 @@ if (Test-Path -LiteralPath $output) {
     Remove-Item -LiteralPath $output -Recurse -Force
 }
 
-$publishOutput = & dotnet publish $project `
+$publishOutput = & $dotnetPath publish $project `
     -c Release `
     -r win-x64 `
     --self-contained true `
@@ -30,7 +32,9 @@ if ($LASTEXITCODE -ne 0) {
 
 & $assertion -OutputDirectory $output
 & (Join-Path $PSScriptRoot "test-windows-native.ps1") `
-    -PublishedExecutable (Join-Path $output "ScreenFix.exe")
+    -DotnetPath $dotnetPath `
+    -PublishedExecutable (Join-Path $output "ScreenFix.exe") `
+    -ExpectedCompression uncompressed
 
 $artifact = Get-Item -LiteralPath (Join-Path $output "ScreenFix.exe")
 Write-Output ("{0} ({1} bytes)" -f $artifact.FullName, $artifact.Length)
