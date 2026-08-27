@@ -33,6 +33,21 @@ cream display, a dark central mask, and a simple stand. The artwork uses only em
 SVG geometry, fills, strokes, and gradients. It has no text, fonts, linked files,
 scripts, or external resources.
 
+The master uses a transparent 220-by-220 view box and preserves the approved mockup's
+exact drawing primitives:
+
+- Background: `rect(10, 10, 200, 200, rx 45)` with a linear gradient from `(28, 18)`
+  to `(192, 207)`, stopping at `#FFB23E`, 54% `#F46744`, and `#A92C4D`.
+- Display body: `rect(38, 54, 144, 103, rx 18)` filled `#FFF7E8`.
+- Display surface: `rect(50, 67, 120, 77, rx 9)` filled `#FFD8A0`.
+- Left damage line: path `M57 77 L91 134`; right damage line: path
+  `M133 77 L163 126`; both use `#FF9F61`, width 8, round caps, and 80% opacity.
+- Central mask: `rect(96, 54, 28, 103, rx 8)` filled `#27212B`.
+- Stand: path `M88 172 H132` and path `M110 158 V172`, both using `#FFF5E5`,
+  width 10, and round caps.
+- Mask marks: four horizontal paths from x 103 to 117 at y 75, 94, 113, and 132,
+  using `#F7C46C`, width 4, and round caps.
+
 The composition must remain recognizable at 16 pixels. Small representations may lose
 fine crack and stitch details, but the display, central mask, warm field, and stand must
 remain distinct. The SVG is deterministic and reviewable; image generation is not used
@@ -96,8 +111,12 @@ must:
 - expand the ICNS and validate all ten standard representation names and dimensions;
 - verify the app's strict code signature and ZIP integrity;
 - extract the ZIP, verify the icon entry and extracted signature, and confirm the bundle
-  remains menu-bar-only; and
-- inspect a fresh bundle in Finder/Applications at normal and small icon sizes.
+  remains menu-bar-only.
+
+After automated checks pass, manual acceptance inspects a freshly packaged and extracted
+bundle in Finder/Applications at normal and small icon sizes. This smoke test confirms
+the artwork is visible and recognizable; it is not part of the shell test because Finder
+and Launch Services cache state is outside the package contract.
 
 The existing 244-test native suite and complete Lua suite run afterward as regression
 coverage. The native macOS README adds only the new icon source/build/test commands and
