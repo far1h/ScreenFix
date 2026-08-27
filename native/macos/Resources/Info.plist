@@ -10,6 +10,8 @@
     <string>ScreenFix</string>
     <key>CFBundleDisplayName</key>
     <string>ScreenFix</string>
+    <key>CFBundleIconFile</key>
+    <string>ScreenFix.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

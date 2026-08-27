@@ -4,6 +4,9 @@ ScreenFix masks a damaged vertical display region and keeps ordinary windows in 
 usable space on either side. It includes a complete Hammerspoon version and standalone
 native apps for Apple Silicon macOS and x64 Windows.
 
+Ready-to-run macOS and Windows downloads are available on the
+[Releases page](https://github.com/far1h/ScreenFix/releases).
+
 ![A MacBook display with a damaged vertical band](assets/screenfix-damaged-display.png)
 
 *The very practical reason ScreenFix exists.*
