@@ -27,6 +27,7 @@
     <Compile Include="../../src/ScreenFix.App/Guard/WindowGuard.cs" Link="Guard/WindowGuard.cs" />
     <Compile Include="../../src/ScreenFix.App/Guard/WindowNativeQuery.cs" Link="Guard/WindowNativeQuery.cs" />
     <Compile Include="../../src/ScreenFix.App/Guard/WindowsWindowInspector.cs" Link="Guard/WindowsWindowInspector.cs" />
+    <Compile Include="../../src/ScreenFix.App/Interop/NativeTypes.cs" Link="Interop/NativeTypes.cs" />
     <Compile Include="../../src/ScreenFix.App/Lifecycle/ApplicationLifetime.cs" Link="Lifecycle/ApplicationLifetime.cs" />
     <Compile Include="../../src/ScreenFix.App/Lifecycle/ResourceOwner.cs" Link="Lifecycle/ResourceOwner.cs" />
     <Compile Include="../../src/ScreenFix.App/Lifecycle/SingleInstanceGate.cs" Link="Lifecycle/SingleInstanceGate.cs" />

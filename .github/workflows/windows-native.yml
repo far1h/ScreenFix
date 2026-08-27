@@ -1,0 +1,44 @@
+name: Windows native
+
+on:
+  push:
+    paths:
+      - ".github/workflows/windows-native.yml"
+      - "global.json"
+      - "native/windows/**"
+  pull_request:
+    paths:
+      - ".github/workflows/windows-native.yml"
+      - "global.json"
+      - "native/windows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.100
+      - name: Restore
+        run: dotnet restore native\windows\ScreenFix.slnx
+      - name: Run Windows native tests
+        shell: pwsh
+        run: native\windows\scripts\test-windows-native.ps1
+      - name: Run portable Windows tests
+        run: dotnet test native\windows\ScreenFix.slnx -c Release --no-restore
+      - name: Run package assertion regressions
+        shell: pwsh
+        run: native\windows\scripts\test-assert-win-x64-package.ps1
+      - name: Publish and assert win-x64 package
+        shell: pwsh
+        run: native\windows\scripts\publish-win-x64.ps1
