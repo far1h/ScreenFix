@@ -20,6 +20,16 @@
 - The local system `dotnet` lacks the pinned .NET 10 SDK and local `pwsh` is unavailable. Where present, `/private/tmp/screenfix-dotnet10.469wuK/sdk/dotnet` is an environment example only; never commit that path or depend on it in scripts.
 - Use ordinary Windows paths in the workflow (`native\windows\...`) and repository-relative paths in cross-platform shell commands.
 
+## Dependency waves and isolated worktrees
+
+Never run feature workers in the same worktree or let them share an index. Use one branch and one isolated worktree per worker, then cherry-pick only verified commits into `fix/windows-icons-maximize`:
+
+1. **Wave A, parallel:** Task 1 runs in the dedicated `fix/windows-icons-maximize` placement worktree; Task 3 runs in a separate worktree on `build/windows-icon-assets`. Only the Task 1 placement branch is pushed, solely to capture the required RED Windows run. Task 3 remains local.
+2. **Integration checkpoint:** after both commits are reviewed locally and the Task 1 RED is recorded, cherry-pick the verified Task 3 commit into `fix/windows-icons-maximize`. Task 1 is already present there. Do not start dependent Tasks 2 or 4 before this integrated commit exists.
+3. **Wave B, parallel:** branch Task 2 and Task 4 from that same integrated commit into separate worktrees. Task 2 depends only on Task 1; Task 4 depends only on Task 3. Neither worker touches or pushes the other's branch.
+4. **Second checkpoint:** cherry-pick Task 2 first, push only `fix/windows-icons-maximize`, and wait for the exact-commit GREEN workflow. Then cherry-pick Task 4. Run Task 5 after Task 4 is integrated; run Task 6 after the final command names are stable.
+5. Only the orchestrator pushes the integration branch. Never push two workflow-triggering branches concurrently: `cancel-in-progress` would hide required RED/GREEN evidence. Delete isolated worktrees only after their commits are integrated and verified.
+
 ## File map and ownership
 
 | Area | Files | Responsibility |
@@ -86,14 +96,15 @@ Expected: FAIL, with expected `44` and actual `60`. This is the portable proof t
 
 Create `native/windows/tests/ScreenFix.Windows.Tests/WindowNativePlacementTests.cs` with one focused test named `MaximizedWindow_RestoresAndMovesAcrossThreads`. Implement these exact behaviors:
 
-1. Start a dedicated `Thread`, call `SetApartmentState(ApartmentState.STA)`, construct a normal resizable top-level WinForms `Form`, show it, and keep `Application.Run(form)` pumping messages until teardown.
-2. Publish the handle through a `TaskCompletionSource<nint>` and bound every wait to 15 seconds so CI cannot hang.
-3. On the owner thread, maximize the probe with `WindowState = FormWindowState.Maximized`; from the xUnit thread, wait until `((IWindowNativeQuery)native).IsZoomed(handle)` is true.
-4. Call production `WindowNative.TryGetThreadProcessId`, create the current `WindowIdentity`, and then exercise production `TryGetPlacement`, `TrySetPlacement`, and `TrySetFrame` from the xUnit thread.
-5. Restore by copying the returned placement with `AsyncWindowPlacement` and `ShowNoActivate`, exactly as `WindowCorrector` does. Apply a known integer `NativeWindowFrame` wholly inside `Screen.PrimaryScreen.WorkingArea` with `NoActivate | NoZOrder | NoOwnerZOrder | AsyncWindowPosition`.
-6. Immediately after each false production call, capture `Marshal.GetLastPInvokeError()` and include the operation name and error in the `Assert.True` message. Do not assert that a particular get or set call must fail, and do not assert a fixed Win32 error number.
-7. Poll until the window is no longer zoomed and `TryGetOuterFrame` equals the target exactly. Report the last observed zoom state and rectangle on timeout.
-8. In `finally`, post teardown to the owner thread, let `Application.Run` exit, join the thread with a timeout, and surface any owner-thread exception.
+1. Disable parallel execution for this Windows-native test assembly with `[assembly: CollectionBehavior(DisableTestParallelization = true)]` so desktop-global window state cannot race another test.
+2. Start a dedicated `Thread`, set `IsBackground = true`, call `SetApartmentState(ApartmentState.STA)`, construct a normal resizable top-level WinForms `Form`, and call `Application.Run(form)` exactly once. Do not call `Show` before the message loop.
+3. Signal readiness from `Form.Shown` or a queued owner-thread callback after `Application.Run(form)` has created the handle and begun pumping. Publish the form/handle through a `TaskCompletionSource` and bound every wait to 15 seconds.
+4. From the xUnit thread, marshal the maximize operation to the owner with `form.BeginInvoke`; wait until `((IWindowNativeQuery)native).IsZoomed(handle)` is true. This removes the pre-show race and exercises the same zoomed state as Windows-key-Up or the maximize button.
+5. Call production `WindowNative.TryGetThreadProcessId`, create the current `WindowIdentity`, and then exercise production `TryGetPlacement`, `TrySetPlacement`, and `TrySetFrame` from the xUnit thread.
+6. Restore by copying the returned placement with `AsyncWindowPlacement` and `ShowNoActivate`, exactly as `WindowCorrector` does. Apply a known integer `NativeWindowFrame` wholly inside `Screen.PrimaryScreen.WorkingArea` with `NoActivate | NoZOrder | NoOwnerZOrder | AsyncWindowPosition`.
+7. Immediately after each false production call, capture `Marshal.GetLastPInvokeError()` and include the operation name and error in the `Assert.True` message. Do not assert that a particular get or set call must fail, and do not assert a fixed Win32 error number.
+8. Poll with a bounded deadline until the window is no longer zoomed and `TryGetOuterFrame` equals the target exactly. Report the last observed zoom state and rectangle on timeout.
+9. In `finally`, marshal `Close` with `BeginInvoke`, wait for `Application.Run` to exit, and join the background thread with a bounded timeout. A failed join is an explicit test failure; because the thread is background, it cannot hang the test process. Surface any owner-thread exception.
 
 Use a small private `StaProbeWindow` helper in this test file only. Do not add test hooks to production.
 
@@ -127,7 +138,8 @@ on:
       - "native/windows/**"
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: windows-native-${{ github.workflow }}-${{ github.ref }}
@@ -167,13 +179,22 @@ git add .github/workflows/windows-native.yml \
   native/windows/tests/ScreenFix.App.Tests/NativeWindowPlacementTests.cs \
   native/windows/tests/ScreenFix.Windows.Tests/WindowNativePlacementTests.cs
 git commit -m "test: reproduce Windows maximize placement failure"
+HEAD_SHA="$(git rev-parse HEAD)"
 git push -u origin fix/windows-icons-maximize
 ```
 
 - [ ] **Step 8: Observe the real Windows RED before touching production**
 
 ```bash
-SCREENFIX_RUN_ID="$(gh run list --workflow windows-native.yml --branch fix/windows-icons-maximize --limit 1 --json databaseId --jq '.[0].databaseId')"
+HEAD_SHA="$(git rev-parse HEAD)"
+SCREENFIX_RUN_ID=""
+SCREENFIX_ATTEMPT=0
+while [ -z "$SCREENFIX_RUN_ID" ] && [ "$SCREENFIX_ATTEMPT" -lt 30 ]; do
+  SCREENFIX_RUN_ID="$(gh run list --workflow windows-native.yml --branch fix/windows-icons-maximize --commit "$HEAD_SHA" --json databaseId --jq '.[0].databaseId // empty')"
+  SCREENFIX_ATTEMPT=$((SCREENFIX_ATTEMPT + 1))
+  [ -n "$SCREENFIX_RUN_ID" ] || sleep 2
+done
+test -n "$SCREENFIX_RUN_ID"
 gh run watch "$SCREENFIX_RUN_ID" --exit-status
 ```
 
@@ -263,13 +284,25 @@ git add native/windows/src/ScreenFix.App/Interop/NativeTypes.cs \
   native/windows/src/ScreenFix.App/Guard/WindowCorrector.cs \
   native/windows/tests/ScreenFix.App.Tests/WindowCorrectorTests.cs
 git commit -m "fix: correct Windows placement ABI"
-git push
+TASK2_SHA="$(git rev-parse HEAD)"
 ```
 
-- [ ] **Step 7: Observe the unchanged Windows regression turn GREEN**
+- [ ] **Step 7: Integrate the placement fix and observe the unchanged Windows regression turn GREEN**
+
+After the Task 2 worker reports `TASK2_SHA`, the orchestrator cherry-picks it in the `fix/windows-icons-maximize` integration worktree, then performs the only Wave B push:
 
 ```bash
-SCREENFIX_RUN_ID="$(gh run list --workflow windows-native.yml --branch fix/windows-icons-maximize --limit 1 --json databaseId --jq '.[0].databaseId')"
+git cherry-pick "$TASK2_SHA"
+HEAD_SHA="$(git rev-parse HEAD)"
+git push -u origin fix/windows-icons-maximize
+SCREENFIX_RUN_ID=""
+SCREENFIX_ATTEMPT=0
+while [ -z "$SCREENFIX_RUN_ID" ] && [ "$SCREENFIX_ATTEMPT" -lt 30 ]; do
+  SCREENFIX_RUN_ID="$(gh run list --workflow windows-native.yml --branch fix/windows-icons-maximize --commit "$HEAD_SHA" --json databaseId --jq '.[0].databaseId // empty')"
+  SCREENFIX_ATTEMPT=$((SCREENFIX_ATTEMPT + 1))
+  [ -n "$SCREENFIX_RUN_ID" ] || sleep 2
+done
+test -n "$SCREENFIX_RUN_ID"
 gh run watch "$SCREENFIX_RUN_ID" --exit-status
 ```
 
@@ -294,7 +327,7 @@ Create executable `native/windows/scripts/test-build-app-icon.sh`. It must:
 - invoke `build-app-icon.sh` with an explicit temporary output path;
 - call `python3 icon_ico.py validate` on the result and require exactly `16 20 24 32 40 48 64 128 256`;
 - require a regular nonempty result with mode `0644`;
-- reject a directory target and a symbolic-link target without writing through either;
+- reject a directory target and a symbolic-link target without writing through either; directly call the publish command with an existing destination directory and assert the candidate was not moved inside it, then point a symlink at a sentinel and assert the sentinel is unchanged;
 - extract 256-, 32-, and 16-pixel PNG frames with `icon_ico.py extract` and let `sips -g pixelWidth -g pixelHeight` assert their dimensions; and
 - validate the committed `Resources/ScreenFix.ico` separately.
 
@@ -344,6 +377,7 @@ Create `native/windows/scripts/icon_ico.py` with three narrow commands:
 pack OUTPUT SIZE=PNG [SIZE=PNG ...]
 validate ICO
 extract ICO OUTPUT_DIRECTORY SIZE [SIZE ...]
+publish CANDIDATE OUTPUT
 ```
 
 Use only `argparse`, `pathlib`, `struct`, and other Python standard-library modules. The validator must parse `ICONDIR` and every 16-byte `ICONDIRENTRY`, then require:
@@ -356,7 +390,7 @@ Use only `argparse`, `pathlib`, `struct`, and other Python standard-library modu
 - a PNG signature for every payload; and
 - IHDR width and height equal to the directory frame size.
 
-`pack` must validate all input PNGs before writing the ICO and then validate its candidate output. `extract` must reuse the same parser rather than duplicate ICO parsing. On success, `validate` prints the space-separated size list so the shell regression can assert it exactly.
+`pack` must validate all input PNGs before writing the ICO and then validate its candidate output. `extract` must reuse the same parser rather than duplicate ICO parsing. `publish` must `lstat` the destination, reject directories and symbolic links, revalidate and `chmod(0o644)` the candidate, recheck the destination, and finish with `os.replace(candidate, output)`. On success, `validate` prints the space-separated size list so the shell regression can assert it exactly.
 
 - [ ] **Step 5: Implement the Bash 3.2 generator with safe publication**
 
@@ -374,12 +408,12 @@ Default `OUTPUT` is `native/windows/src/ScreenFix.App/Resources/ScreenFix.ico`. 
 4. use `mktemp -d` plus a cleanup trap;
 5. call `sips -s format png --resampleHeightWidth 1024 1024` directly on the SVG;
 6. create separate PNGs at 16, 20, 24, 32, 40, 48, 64, 128, and 256 with direct `sips` calls;
-7. invoke `icon_ico.py pack` into a candidate file in the output directory;
+7. create the candidate with `mktemp` in `OUTPUT`'s destination directory, not the general temporary frame directory, and invoke `icon_ico.py pack` there;
 8. invoke `icon_ico.py validate` and require the exact frame list;
-9. set mode `0644`; and
-10. atomically replace only a regular output file after every check succeeds.
+9. invoke `icon_ico.py publish CANDIDATE OUTPUT`, which validates again, sets mode `0644`, rechecks the destination with `lstat`, and uses `os.replace`; and
+10. fail if a directory wins the destination race rather than moving the candidate inside it. If a symlink appears after the recheck, `os.replace` may replace only the link itself and must never follow it.
 
-Do not leave PNGs or candidate ICOs outside the temporary directory.
+The cleanup trap must remove an unpublished destination-directory candidate. Do not leave PNGs or candidate ICOs after either success or failure.
 
 - [ ] **Step 6: Generate the committed ICO and make the regression GREEN**
 
@@ -423,7 +457,10 @@ git add native/windows/src/ScreenFix.App/Resources/ScreenFixAppIcon.svg \
   native/windows/scripts/icon_ico.py \
   native/windows/scripts/test-build-app-icon.sh
 git commit -m "build: add Windows Screen Patch icon"
+TASK3_SHA="$(git rev-parse HEAD)"
 ```
+
+Report `TASK3_SHA` to the orchestrator. Do not push this branch; the orchestrator cherry-picks it into `fix/windows-icons-maximize` at the Wave A integration checkpoint.
 
 ## Task 4: Use the same ICO for the apphost and tray
 
@@ -449,15 +486,15 @@ The first two call an internal overload that accepts a resource name and request
 
 The fallback test loads two missing resource names, disposes the first result, and proves the second still has a valid handle. This prevents returning the shared `SystemIcons.Application` instance directly.
 
-- [ ] **Step 2: Run the tests and record the RED**
+- [ ] **Step 2: Cross-compile on macOS and record the RED**
 
-On Windows:
+Run the exact Windows-targeted build with the pinned SDK:
 
-```powershell
-dotnet test native\windows\tests\ScreenFix.Windows.Tests\ScreenFix.Windows.Tests.csproj -c Release --filter FullyQualifiedName~TrayIconLoaderTests
+```bash
+"$SCREENFIX_DOTNET" build native/windows/tests/ScreenFix.Windows.Tests/ScreenFix.Windows.Tests.csproj -c Release
 ```
 
-Expected: compile or test failure because `TrayIconLoader` and the stable resource do not exist.
+Expected: FAIL at compile time because `TrayIconLoader` and/or its stable resource contract does not exist. Record the missing-type/member diagnostic before implementing production; do not try to execute WinForms tests on macOS.
 
 - [ ] **Step 3: Configure one physical ICO for both consumers**
 
@@ -490,13 +527,11 @@ In the overload, open `typeof(TrayIconLoader).Assembly.GetManifestResourceStream
 
 - [ ] **Step 5: Assign and dispose the owned icon in strict order**
 
-In `ScreenFixApplicationContext.InitializeTrayAndRuntime`:
+In `ScreenFixApplicationContext.InitializeTrayAndRuntime`, keep `uiBridge`, `Icon? ownedIcon`, and `NotifyIcon? icon` in locals until lifetime ownership is registered. Do not use a `NotifyIcon` object initializer: construct it first, then set `Icon` and `Text`, so a property-set failure cannot lose the partial instance.
 
-1. call `var ownedIcon = TrayIconLoader.Load()`;
-2. assign `ownedIcon` to the new `NotifyIcon` instead of `SystemIcons.Application`; and
-3. in the existing `OwnTrayIcon` cleanup action, set `Visible = false`, dispose the `NotifyIcon`, dispose `ownedIcon`, then dispose `uiBridge`.
+Wrap `TrayIconLoader.Load`, `NotifyIcon` construction/property assignment, and `lifetime.OwnTrayIcon` registration in one ownership-transfer `try/catch`. Until registration succeeds, the catch owns cleanup and must dispose any partial `NotifyIcon`, then `ownedIcon`, then `uiBridge`, using nested `try/finally` so every acquired resource is released exactly once. After registration succeeds, the catch must not dispose them because the lifetime callback owns them.
 
-Use nested `try/finally` inside the cleanup action so a failing earlier dispose cannot skip a later owned resource. Keep the existing application-lifetime order: menu cleanup runs before tray cleanup, and the `NotifyIcon` is destroyed before its icon handle.
+The registered callback sets `Visible = false`, disposes the `NotifyIcon`, disposes `ownedIcon`, then disposes `uiBridge`, again with nested `try/finally`. This preserves normal `NotifyIcon -> Icon -> bridge` order even if one dispose throws. Keep the existing application-lifetime order: menu cleanup runs before the combined tray cleanup.
 
 - [ ] **Step 6: Make loader and existing lifetime tests GREEN**
 
@@ -507,7 +542,7 @@ dotnet test native\windows\tests\ScreenFix.Windows.Tests\ScreenFix.Windows.Tests
 dotnet test native\windows\tests\ScreenFix.App.Tests\ScreenFix.App.Tests.csproj -c Release --filter FullyQualifiedName~LifecycleTests
 ```
 
-Expected: loader tests pass; existing lifecycle tests still prove menu cleanup precedes the combined tray cleanup. Review the application cleanup action to confirm `NotifyIcon.Dispose()` precedes `ownedIcon.Dispose()`.
+Expected: Windows loader tests pass; existing lifecycle tests still prove menu cleanup precedes the combined tray cleanup. Review both the pre-registration failure path and registered callback to confirm partial resources are disposed exactly once in `NotifyIcon -> Icon -> bridge` order.
 
 - [ ] **Step 7: Verify the production call uses the Windows small-icon metric**
 
@@ -525,7 +560,10 @@ git add native/windows/src/ScreenFix.App/ScreenFix.App.csproj \
   native/windows/src/ScreenFix.App/ScreenFixApplicationContext.cs \
   native/windows/tests/ScreenFix.Windows.Tests/TrayIconLoaderTests.cs
 git commit -m "feat: brand Windows executable and tray"
+TASK4_SHA="$(git rev-parse HEAD)"
 ```
+
+Report `TASK4_SHA` to the orchestrator. After the exact-commit Task 2 GREEN run completes, the orchestrator cherry-picks Task 4 into `fix/windows-icons-maximize`. Do not push the Task 4 branch, and do not start Task 5 before that cherry-pick.
 
 ## Task 5: Assert both icon publication paths in the single-file package
 
@@ -542,7 +580,7 @@ git commit -m "feat: brand Windows executable and tray"
 
 Extend `test-assert-win-x64-package.ps1` to locate the canonical ICO at `../src/ScreenFix.App/Resources/ScreenFix.ico`. Preserve every existing DOS, PE, machine, subsystem, extra-file, and empty-file negative case.
 
-Adapt the current synthetic positive PE fixture by appending the exact canonical ICO bytes after its structural PE bytes. Add a separate negative fixture that is otherwise identical but omits or mutates one canonical ICO byte. Run the assertion against that negative fixture before modifying the assertion script.
+Adapt the current synthetic positive PE fixture by appending the exact canonical ICO bytes after its structural PE bytes, so it remains a meaningful positive for DOS/PE/machine/subsystem plus managed-resource validation. Add a separate negative fixture that is otherwise identical but omits or mutates one canonical ICO byte. Run the assertion against that negative fixture before modifying the assertion script.
 
 Expected RED: the iconless or mismatched synthetic package is accepted, proving the existing package assertion does not validate the managed tray resource.
 
@@ -550,7 +588,7 @@ Expected RED: the iconless or mismatched synthetic package is accepted, proving 
 
 Update `assert-win-x64-package.ps1` to accept an optional `CanonicalIcon` path whose default resolves from `$PSScriptRoot`. Validate it is one regular nonempty file. Add a small exact byte-sequence matcher and require the full canonical ICO byte sequence to occur in `ScreenFix.exe`; a header-only or partial ICO match is insufficient.
 
-If direct PowerShell byte scanning would become quadratic, compile a short in-memory C# helper with `Add-Type` whose only public method performs a linear exact byte-pattern search. Keep it local to this assertion script; do not add a portable PE parser.
+Compile a short in-memory C# helper whose only public method performs a linear full-byte-pattern search. Guard repeated invocation in the same PowerShell process before `Add-Type`, for example `if (-not ("ScreenFix.Package.ByteSearch" -as [type])) { Add-Type ... }`; the assertion script must be safely callable more than once. Keep the helper local to this assertion script and do not add a portable PE parser.
 
 Use one stable diagnostic for the negative test:
 
@@ -577,40 +615,75 @@ PublishedExecutable_ContainsCanonicalManagedIconBytes
 PublishedExecutable_ContainsEveryNativeIconFrame
 ```
 
-The first performs an exact full-byte-sequence search, independent of native resource enumeration. The second must:
+The first performs a linear exact full-byte-sequence search, independent of native resource enumeration. The second parses the canonical ICO into a map from size to its exact PNG payload bytes, then must:
 
 1. call `LoadLibraryExW(executable, 0, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE)`;
-2. call `EnumResourceNamesW` for `RT_GROUP_ICON` (`MAKEINTRESOURCE(14)`) and retain every discovered string or integer name;
+2. call `EnumResourceNamesW` for `RT_GROUP_ICON` (`MAKEINTRESOURCE(14)`) and finish collecting every discovered string or integer name before calling `FindResourceW` for any group;
 3. pass each discovered name unchanged to `FindResourceW`, rather than assuming resource ID `1`;
-4. load and parse each compact `GRPICONDIR`/`GRPICONDIRENTRY` block;
-5. require the union of group dimensions to equal `16, 20, 24, 32, 40, 48, 64, 128, 256`; and
-6. for every group entry, call `FindResourceW` with its referenced icon ID and `RT_ICON` (`MAKEINTRESOURCE(3)`), requiring a nonempty resource.
+4. load and parse each compact `GRPICONDIR`/`GRPICONDIRENTRY` block, preserving entries per group rather than taking a union across groups;
+5. require at least one individual group to contain exactly `16, 20, 24, 32, 40, 48, 64, 128, 256`, with no missing or extra frame; and
+6. for every entry in that qualifying group, call `FindResourceW` with its referenced icon ID and `RT_ICON` (`MAKEINTRESOURCE(3)`), copy exactly `SizeofResource` bytes, and require byte-for-byte equality with the matching canonical ICO PNG payload, including equal lengths.
 
-Always call `FreeLibrary` in `finally`, retain the enumeration delegate with `GC.KeepAlive`, and include the executable path/resource name in assertion diagnostics. Parse the canonical ICO directory only to obtain expected dimensions; do not implement PE section/RVA parsing.
+Always call `FreeLibrary` in `finally`, retain the enumeration delegate with `GC.KeepAlive`, and include the executable path/resource name/frame size in assertion diagnostics. Parse the canonical ICO directory and PNG payload ranges only; do not implement PE section/RVA parsing.
 
 - [ ] **Step 5: Make the native resource test prove a meaningful negative control**
 
-Publish once to a temporary directory while overriding the apphost icon:
+Build the Windows test project, then publish once to a unique temporary directory while overriding the apphost icon. This exact negative-control block restores environment state and removes the temporary publish even after failure:
 
 ```powershell
-dotnet publish native\windows\src\ScreenFix.App\ScreenFix.App.csproj `
-  -c Release -r win-x64 --self-contained true `
-  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-  -p:PublishTrimmed=false -p:UseAppHost=true -p:ApplicationIcon= `
-  -o $env:RUNNER_TEMP\screenfix-no-app-icon
+$project = "native\windows\tests\ScreenFix.Windows.Tests\ScreenFix.Windows.Tests.csproj"
+$temporaryPublish = Join-Path ([IO.Path]::GetTempPath()) ("screenfix-no-app-icon-" + [Guid]::NewGuid().ToString("N"))
+$previousExecutable = $env:SCREENFIX_PUBLISHED_EXE
+$previousCanonical = $env:SCREENFIX_CANONICAL_ICO
+try {
+    dotnet build $project -c Release
+    if ($LASTEXITCODE -ne 0) { throw "Windows test build failed" }
+
+    dotnet publish native\windows\src\ScreenFix.App\ScreenFix.App.csproj `
+      -c Release -r win-x64 --self-contained true `
+      -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+      -p:EnableCompressionInSingleFile=false `
+      -p:PublishTrimmed=false -p:UseAppHost=true -p:ApplicationIcon= `
+      -o $temporaryPublish
+    if ($LASTEXITCODE -ne 0) { throw "negative-control publish failed" }
+
+    $env:SCREENFIX_PUBLISHED_EXE = Join-Path $temporaryPublish "ScreenFix.exe"
+    $env:SCREENFIX_CANONICAL_ICO = [IO.Path]::GetFullPath(
+        "native\windows\src\ScreenFix.App\Resources\ScreenFix.ico")
+    dotnet test $project -c Release --no-build `
+      --filter "FullyQualifiedName~PublishedExecutableIconTests"
+    $negativeExit = $LASTEXITCODE
+    if ($negativeExit -eq 0) { throw "iconless apphost was accepted" }
+}
+finally {
+    $env:SCREENFIX_PUBLISHED_EXE = $previousExecutable
+    $env:SCREENFIX_CANONICAL_ICO = $previousCanonical
+    if (Test-Path -LiteralPath $temporaryPublish) {
+        Remove-Item -LiteralPath $temporaryPublish -Recurse -Force
+    }
+}
 ```
 
-Run `PublishedExecutableIconTests` with its two environment variables pointed at that executable and the canonical ICO.
-
-Expected: the managed-byte test passes, while the native-resource test fails because no valid Screen Patch `RT_GROUP_ICON`/`RT_ICON` set exists. This distinguishes the tray resource from the Explorer resource without a synthetic PE resource writer.
+Expected: `PublishedExecutable_ContainsCanonicalManagedIconBytes` passes and `PublishedExecutable_ContainsEveryNativeIconFrame` fails because the iconless apphost has no exact Screen Patch group/payload set. This distinguishes the tray resource from the Explorer resource without a synthetic PE resource writer.
 
 - [ ] **Step 6: Teach the native test script to run published-executable tests only when requested**
 
-Add an optional `PublishedExecutable` parameter to `test-windows-native.ps1`.
+Add an optional `PublishedExecutable` parameter to `test-windows-native.ps1`. It must build once before either `--no-build` call, then use these exact filters and ordering:
 
-- Its baseline call continues to build and run all Windows tests except `PublishedExecutableIconTests`, preserving Task 1's workflow command.
-- When `PublishedExecutable` is supplied, validate it as a file, set `SCREENFIX_PUBLISHED_EXE` and `SCREENFIX_CANONICAL_ICO` for a second filtered `dotnet test --no-build` invocation, then restore the caller's prior environment values in `finally`.
-- The placement test invocation and expectations remain unchanged.
+```powershell
+& dotnet build $project -c Release
+& dotnet test $project -c Release --no-build `
+    --filter "FullyQualifiedName!~PublishedExecutableIconTests"
+```
+
+The baseline call stops there, so Task 1's workflow command runs placement and other native tests while explicitly excluding `PublishedExecutableIconTests`. When `PublishedExecutable` is supplied, validate it as a file, save both prior environment values, set `SCREENFIX_PUBLISHED_EXE` and `SCREENFIX_CANONICAL_ICO`, and run exactly:
+
+```powershell
+& dotnet test $project -c Release --no-build `
+    --filter "FullyQualifiedName~PublishedExecutableIconTests"
+```
+
+Restore both prior environment values in `finally`, including when the filtered test fails. Check `$LASTEXITCODE` after the build and each test invocation. The placement test invocation and expectations remain unchanged.
 
 This separation prevents the early native step from depending on an executable that has not been published yet.
 
@@ -623,7 +696,7 @@ After the existing `assert-win-x64-package.ps1` call in `publish-win-x64.ps1`, i
     -PublishedExecutable (Join-Path $output "ScreenFix.exe")
 ```
 
-Keep `PublishSingleFile=true`, self-contained `win-x64`, `UseAppHost=true`, and the exactly-one-file package contract unchanged.
+Add `-p:EnableCompressionInSingleFile=false` to the real `dotnet publish` arguments so the exact embedded ICO bytes remain directly assertable. Keep `PublishSingleFile=true`, self-contained `win-x64`, `UseAppHost=true`, and the exactly-one-file package contract unchanged. The negative publish in Step 5 must use the same explicit compression setting.
 
 - [ ] **Step 8: Publish and make every package check GREEN on Windows**
 
@@ -632,7 +705,7 @@ native\windows\scripts\test-assert-win-x64-package.ps1
 native\windows\scripts\publish-win-x64.ps1
 ```
 
-Expected: synthetic regressions pass; publish produces exactly one nonempty AMD64 GUI `ScreenFix.exe`; the full canonical ICO bytes are present; at least one enumerated `RT_GROUP_ICON` references all nine required nonempty `RT_ICON` frames.
+Expected: synthetic regressions pass; publish produces exactly one nonempty AMD64 GUI `ScreenFix.exe`; the full canonical managed ICO bytes are present; one individual enumerated `RT_GROUP_ICON` has exactly all nine required sizes, and every referenced `RT_ICON` payload is byte-for-byte equal to the matching canonical ICO PNG payload.
 
 - [ ] **Step 9: Commit package validation**
 
@@ -643,13 +716,21 @@ git add native/windows/scripts/assert-win-x64-package.ps1 \
   native/windows/scripts/publish-win-x64.ps1 \
   native/windows/tests/ScreenFix.Windows.Tests/PublishedExecutableIconTests.cs
 git commit -m "test: verify Windows icons in published executable"
-git push
 ```
 
 - [ ] **Step 10: Require the unchanged workflow entry points to pass**
 
 ```bash
-SCREENFIX_RUN_ID="$(gh run list --workflow windows-native.yml --branch fix/windows-icons-maximize --limit 1 --json databaseId --jq '.[0].databaseId')"
+HEAD_SHA="$(git rev-parse HEAD)"
+git push
+SCREENFIX_RUN_ID=""
+SCREENFIX_ATTEMPT=0
+while [ -z "$SCREENFIX_RUN_ID" ] && [ "$SCREENFIX_ATTEMPT" -lt 30 ]; do
+  SCREENFIX_RUN_ID="$(gh run list --workflow windows-native.yml --branch fix/windows-icons-maximize --commit "$HEAD_SHA" --json databaseId --jq '.[0].databaseId // empty')"
+  SCREENFIX_ATTEMPT=$((SCREENFIX_ATTEMPT + 1))
+  [ -n "$SCREENFIX_RUN_ID" ] || sleep 2
+done
+test -n "$SCREENFIX_RUN_ID"
 gh run watch "$SCREENFIX_RUN_ID" --exit-status
 ```
 
@@ -755,8 +836,16 @@ Expected: no whitespace errors; no generated preview/publish/temp files; `Device
 - [ ] **Step 5: Push and require the Windows workflow to pass at HEAD**
 
 ```bash
+HEAD_SHA="$(git rev-parse HEAD)"
 git push
-SCREENFIX_RUN_ID="$(gh run list --workflow windows-native.yml --branch fix/windows-icons-maximize --limit 1 --json databaseId --jq '.[0].databaseId')"
+SCREENFIX_RUN_ID=""
+SCREENFIX_ATTEMPT=0
+while [ -z "$SCREENFIX_RUN_ID" ] && [ "$SCREENFIX_ATTEMPT" -lt 30 ]; do
+  SCREENFIX_RUN_ID="$(gh run list --workflow windows-native.yml --branch fix/windows-icons-maximize --commit "$HEAD_SHA" --json databaseId --jq '.[0].databaseId // empty')"
+  SCREENFIX_ATTEMPT=$((SCREENFIX_ATTEMPT + 1))
+  [ -n "$SCREENFIX_RUN_ID" ] || sleep 2
+done
+test -n "$SCREENFIX_RUN_ID"
 gh run watch "$SCREENFIX_RUN_ID" --exit-status
 ```
 
@@ -773,7 +862,7 @@ On a normal Windows x64 desktop, run the asserted `ScreenFix.exe` and check one 
 5. Windows-key-Left and Windows-key-Right still fit the same safe region.
 6. Borderless or F11 full screen remains untouched.
 
-Record Windows version, DPI, and pass/fail results in the PR. A visual icon check is not replaced by structural package tests.
+Record Windows version, DPI, and pass/fail results in the PR. A visual icon check is not replaced by structural package tests. If no interactive Windows desktop is available, write `Pending: interactive Windows UAT was unavailable` in the PR; do not infer or claim a pass from GitHub Actions.
 
 - [ ] **Step 7: Request three independent reviews**
 
@@ -791,7 +880,31 @@ Repeat Steps 1-5 at the final commit. Do not rely on older output. Confirm `git 
 
 - [ ] **Step 9: Open the focused Windows pull request**
 
+Use `apply_patch` to create `/tmp/screenfix-windows-pr-body.md` before invoking `gh`. Include this structure with real commands/run URL and either actual manual results or the explicit pending sentence:
+
+```markdown
+## Summary
+
+- Correct the Windows `WINDOWPLACEMENT` ABI from 60 bytes to 44 bytes.
+- Use one validated Screen Patch ICO for the tray and executable.
+- Verify managed ICO bytes and native PE icon payloads independently.
+
+## Verification
+
+- `<exact local command and result>`
+- Windows workflow: `<exact green run URL>`
+
+## Manual Windows UAT
+
+- `<Windows version/DPI and results, or: Pending: interactive Windows UAT was unavailable>`
+```
+
+Inspect the complete body, replace every angle-bracket placeholder, and only then create the PR:
+
 ```bash
+sed -n '1,240p' /tmp/screenfix-windows-pr-body.md
+test -s /tmp/screenfix-windows-pr-body.md
+! rg -n '<[^>]+>' /tmp/screenfix-windows-pr-body.md
 gh pr create \
   --base main \
   --head fix/windows-icons-maximize \
@@ -799,7 +912,7 @@ gh pr create \
   --body-file /tmp/screenfix-windows-pr-body.md
 ```
 
-The PR body must summarize the 44-byte ABI correction, the one-ICO dual use, and independent managed/native package checks. Include exact local commands, the GREEN Windows workflow URL, and manual acceptance results. Link the relevant GitHub issue if one exists; do not claim borderless/F11 behavior changed.
+The PR body must summarize the 44-byte ABI correction, the one-ICO dual use, and independent managed/native package checks. Include exact local commands and the GREEN Windows workflow URL. Link the relevant GitHub issue if one exists; do not claim borderless/F11 behavior changed or claim manual UAT passed when it remains pending.
 
 - [ ] **Step 10: Verify the remote handoff**
 
