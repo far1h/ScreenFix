@@ -20,22 +20,34 @@ case "$BINARY_PATH" in
 esac
 test -f "$BINARY_PATH"
 
+ICON_PATH="$("$MACOS_DIR/scripts/build-app-icon.sh")"
+case "$ICON_PATH" in
+    "$RELEASE_DIR/ScreenFix.icns") ;;
+    *) printf 'Unexpected app icon path: %s\n' "$ICON_PATH" >&2; exit 1 ;;
+esac
+test -f "$ICON_PATH"
+test -s "$ICON_PATH"
+
 rm -rf "$APP_PATH"
 rm -f "$ZIP_PATH"
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 cp "$BINARY_PATH" "$APP_PATH/Contents/MacOS/ScreenFix"
 cp "$MACOS_DIR/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
+cp "$ICON_PATH" "$APP_PATH/Contents/Resources/ScreenFix.icns"
 cp "$MACOS_DIR/Resources/ScreenFixMenuIcon.png" "$APP_PATH/Contents/Resources/ScreenFixMenuIcon.png"
 chmod 755 "$APP_PATH/Contents/MacOS/ScreenFix"
 
 plutil -lint "$APP_PATH/Contents/Info.plist"
 test "$(plutil -extract CFBundleExecutable raw "$APP_PATH/Contents/Info.plist")" = "ScreenFix"
 test "$(plutil -extract CFBundleIdentifier raw "$APP_PATH/Contents/Info.plist")" = "com.screenfix.ScreenFix"
+test "$(plutil -extract CFBundleIconFile raw "$APP_PATH/Contents/Info.plist")" = "ScreenFix.icns"
 test "$(plutil -extract CFBundleShortVersionString raw "$APP_PATH/Contents/Info.plist")" = "1.0.2"
 test "$(plutil -extract LSMinimumSystemVersion raw "$APP_PATH/Contents/Info.plist")" = "13.0"
 test "$(plutil -extract LSUIElement raw "$APP_PATH/Contents/Info.plist")" = "true"
 test "$(plutil -extract LSMultipleInstancesProhibited raw "$APP_PATH/Contents/Info.plist")" = "true"
 test -x "$APP_PATH/Contents/MacOS/ScreenFix"
+test -f "$APP_PATH/Contents/Resources/ScreenFix.icns"
+test -s "$APP_PATH/Contents/Resources/ScreenFix.icns"
 test -f "$APP_PATH/Contents/Resources/ScreenFixMenuIcon.png"
 test "$(sips -g pixelWidth "$APP_PATH/Contents/Resources/ScreenFixMenuIcon.png" 2>/dev/null | awk '/pixelWidth/ {print $2}')" = "36"
 test "$(sips -g pixelHeight "$APP_PATH/Contents/Resources/ScreenFixMenuIcon.png" 2>/dev/null | awk '/pixelHeight/ {print $2}')" = "22"
@@ -60,6 +72,7 @@ done < <(unzip -Z1 "$ZIP_PATH")
 ZIP_ENTRIES="$(unzip -Z1 "$ZIP_PATH")"
 printf '%s\n' "$ZIP_ENTRIES" | grep -q '^ScreenFix.app/Contents/MacOS/ScreenFix$'
 printf '%s\n' "$ZIP_ENTRIES" | grep -q '^ScreenFix.app/Contents/Info.plist$'
+printf '%s\n' "$ZIP_ENTRIES" | grep -q '^ScreenFix.app/Contents/Resources/ScreenFix.icns$'
 printf '%s\n' "$ZIP_ENTRIES" | grep -q '^ScreenFix.app/Contents/Resources/ScreenFixMenuIcon.png$'
 printf '%s\n' "$ZIP_ENTRIES" | grep -q '^ScreenFix.app/Contents/_CodeSignature/CodeResources$'
 
