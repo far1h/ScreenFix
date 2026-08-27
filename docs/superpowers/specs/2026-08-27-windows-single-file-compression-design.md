@@ -155,7 +155,9 @@ The parser is test/package infrastructure only. Before allocating or decompressi
 - `ScreenFix.dll` is an `Assembly`, is no greater than 16 MiB uncompressed, and matches the caller's expected compression mode;
 - the manifest is consumed exactly, with no truncated or trailing manifest data.
 
-For a compressed entry, the decompressor receives a stream limited to exactly the entry's `CompressedSize` and a bounded output sink capped at the declared `Size`. It must consume the complete compressed span, produce exactly the declared number of bytes, reach a clean deflate end, and produce no extra byte. For an uncompressed entry, the reader consumes exactly `Size` bytes from the declared span without allocating beyond the same cap. Short, oversized, truncated, corrupt, trailing, or wrong-mode payloads fail with distinct diagnostics.
+Each real package verification runs in a fresh verifier process. Before any `DeflateStream` type initialization, its entry point enables the .NET 10 `System.IO.Compression.UseStrictValidation` AppContext switch and proves the switch is enabled. This makes an exact-output but nonterminated deflate stream fail instead of being accepted as ordinary EOF.
+
+For a compressed entry, the decompressor receives a stream limited to exactly the entry's `CompressedSize` whose `Read` and `ReadAsync` methods return at most one byte per call. The one-byte throttle prevents `DeflateStream`'s internal 8,192-byte buffer from reading appended bytes past the logical deflate end. The verifier reads no more than declared `Size + 1`, performs one additional nonempty read to require clean stream termination, requires exactly declared output, and then requires the bounded input to have no unread byte. For an uncompressed entry, the reader consumes exactly `Size` bytes from the declared span without allocating beyond the same cap. Short, oversized, exact-output-but-nonterminated, corrupt, appended/trailing, or wrong-mode payloads fail with distinct diagnostics.
 
 Managed resource extraction is also exact:
 
@@ -189,7 +191,7 @@ Expected application behavior is therefore identical. Missing icons, new loose p
 
 ### Startup measurement
 
-The Windows package regression measures the exact baseline and candidate executables on the same disposable Windows runner account. Each process receives an isolated `DOTNET_BUNDLE_EXTRACT_BASE_DIR`, so it cannot reuse the other variant's extraction cache. The destructive configuration-isolation path is disabled by default and requires an explicit workflow-owned opt-in; interactive/local UAT never invokes it.
+The Windows package regression measures the exact baseline and candidate executables on the same disposable Windows runner account. Each process receives an isolated `DOTNET_BUNDLE_EXTRACT_BASE_DIR`, so it cannot reuse the other variant's extraction cache. One extraction transaction owns a unique initially absent root beneath the validated hosted runner temporary directory, rejects root/outside-root/reparse targets, and removes only that root in `finally` after every exact child exits. Reparse replacement, cleanup failure, or a remaining extraction root fails the regression without deleting outside the validated root. The destructive configuration-isolation and real-path tests are excluded from default/local test filters and require a separate trait plus explicit workflow-owned hosted-runner opt-in; interactive/local UAT never invokes them.
 
 Changing the `LOCALAPPDATA` environment variable is not sufficient because .NET resolves `SpecialFolder.LocalApplicationData` through the Windows known-folder API. The startup harness instead calls the same internal `ScreenFixPaths.ConfigFile` and `ScreenFixApplicationIdentity.SingleInstanceMutexName` members used by production, derives the exact ScreenFix directory, and protects the mutex and real path for the complete measurement transaction:
 
@@ -226,7 +228,7 @@ Timeouts, early process exits, failure to acquire the production mutex, failure 
 Testing remains incremental and preserves the existing RED/GREEN evidence standard.
 
 1. Add a regression that publishes both variants and proves the existing raw-byte managed assertions fail only for the compressed representation.
-2. Add focused malformed-bundle tests for: missing/duplicate signature; 6.0 version mismatch; entry count; malformed, rooted, parent, duplicate, and oversized paths; unknown type; checked offset and size overflow; overlapping or out-of-manifest payloads; per-entry and cumulative caps; manifest truncation/trailing data; duplicate or wrong-type `ScreenFix.dll`; missing compression; corrupt, short, oversized, truncated, and trailing deflate data.
+2. Add focused malformed-bundle tests for: missing/duplicate signature; 6.0 version mismatch; entry count; malformed, rooted, parent, duplicate, and oversized paths; unknown type; checked offset and size overflow; overlapping or out-of-manifest payloads; per-entry and cumulative caps; manifest truncation/trailing data; duplicate or wrong-type `ScreenFix.dll`; missing compression; strict-validation-disabled startup; corrupt, short, oversized, exact-output-but-nonterminated, truncated, and appended/trailing deflate data.
 3. Add focused managed-resource tests for: invalid or missing CLR/resource directory; RVA mapping and overflow; missing/duplicate resource name; non-nil implementation; resource offset overflow; truncated length prefix; payload outside the directory; wrong length; and mutated bytes.
 4. Prove the one shared C# verifier accepts both real packages in their declared modes, rejects a mode mismatch, and rejects a real candidate whose managed ICO is mutated before bundling.
 5. Run the native PE icon negative control and exact payload comparison unchanged against both real packages.
@@ -256,7 +258,7 @@ The change is ready only when all of the following are true:
 - the startup harness runs only with explicit disposable-runner opt-in, refuses without mutation whenever the production mutex object already exists, disposes every handle before launching the child, and owns a freshly created production mutex whenever it moves or deletes configuration data;
 - the pre-measurement ScreenFix configuration directory is restored byte-for-byte and no test directory remains after a successful measurement;
 - Windows, macOS, and Lua regression suites pass;
-- interactive Windows checks use both exact staged executables and confirm the tray icon, Explorer icon, calibration, settings, snap, ordinary maximize, and full-screen exclusion behavior;
+- interactive Windows checks use both exact staged executables and confirm the tray icon, Explorer icon, calibration, settings, snap, ordinary maximize, and full-screen exclusion behavior; release artifacts must match those approved bytes exactly or repeat the full checks on the final release bytes;
 - the versioned checksum file contains correct entries for both Windows assets and the macOS asset;
 - the GitHub release contains both Windows assets with the approved names and labels;
 - `README.md` identifies the compressed filename as recommended and the uncompressed filename as fallback, with no obsolete Windows ZIP or bare `ScreenFix.exe` release instruction;

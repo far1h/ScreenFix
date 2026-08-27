@@ -22,7 +22,7 @@ New package-verifier files:
 - `native/windows/tools/ScreenFix.PackageVerifier/Program.cs` — strict CLI parsing and exit codes.
 - `native/windows/tools/ScreenFix.PackageVerifier/Bundle/BundleCompressionMode.cs` — explicit compressed/uncompressed contract.
 - `native/windows/tools/ScreenFix.PackageVerifier/Bundle/BundleEntry.cs` — immutable validated manifest entry.
-- `native/windows/tools/ScreenFix.PackageVerifier/Bundle/BoundedReadStream.cs` — prevents deflate reads beyond one manifest span.
+- `native/windows/tools/ScreenFix.PackageVerifier/Bundle/SingleByteBoundedReadStream.cs` — bounds one manifest span and prevents `DeflateStream` read-ahead.
 - `native/windows/tools/ScreenFix.PackageVerifier/Bundle/SingleFileBundleReader.cs` — format-6 manifest validation and bounded assembly extraction.
 - `native/windows/tools/ScreenFix.PackageVerifier/Resources/ManagedIconResourceReader.cs` — checked CLR/PE managed-resource extraction.
 - `native/windows/tools/ScreenFix.PackageVerifier/PackageIconVerifier.cs` — composes bundle and managed-resource checks.
@@ -42,10 +42,14 @@ New publishing and startup files:
 - `native/windows/tests/ScreenFix.Windows.Tests/Startup/ScreenFixConfigurationTransaction.cs` — config backup/restore guarded by a freshly created production mutex.
 - `native/windows/tests/ScreenFix.Windows.Tests/Startup/ScreenFixConfigurationTransactionTests.cs` — refusal, restore, reparse, and non-destructive failure tests.
 - `native/windows/tests/ScreenFix.Windows.Tests/Startup/PublishedExecutableStartupTests.cs` — alternating first/warm startup measurements and thresholds.
+- `native/windows/tests/ScreenFix.Windows.Tests/Startup/BundleExtractionTransaction.cs` — validated task-scoped extraction-cache ownership and cleanup.
 - `native/windows/scripts/assert-pinned-win-x64-toolchain.ps1` — exact CLI, MSBuild SDK, and runtime-pack assertions.
 - `native/windows/scripts/test-assert-pinned-win-x64-toolchain.ps1` — toolchain assertion regressions.
-- `native/windows/scripts/assert-win-x64-release.ps1` — exact staged names, count, hashes, sizes, and README-name contract.
+- `native/windows/scripts/assert-win-x64-executable.ps1` — reusable per-file PE structure assertion.
+- `native/windows/scripts/assert-win-x64-release.ps1` — exact staged names, count, hashes, and sizes.
 - `native/windows/scripts/test-assert-win-x64-release.ps1` — release staging regressions.
+- `native/windows/scripts/assert-windows-download-docs.ps1` — README names/recommendation contract.
+- `native/windows/scripts/test-assert-windows-download-docs.ps1` — README contract regressions.
 
 Existing files changed:
 
@@ -64,6 +68,57 @@ Existing files changed:
 - `README.md` — exact recommended/fallback Windows names and collaborator command changes.
 - `native/macos/Resources/Info.plist` — v1.0.4.
 - `native/macos/scripts/package-arm64.sh` — v1.0.4 assertion.
+- `native/macos/scripts/test-package-arm64.sh` — packaged/extracted v1.0.4 build-number assertions.
+- `.gitignore` — only repository-owned generated .NET, Windows artifact, and macOS build/artifact roots.
+
+## Task 0: Establish the pinned SDK and generated-output boundary
+
+**Files:**
+- Modify: `.gitignore`
+
+- [ ] **Step 1: Prove the repository SDK failure before changing anything**
+
+Run the current absolute system launcher:
+
+```bash
+/usr/local/share/dotnet/dotnet --version
+```
+
+Expected on the current workspace: FAIL because only SDK 8.0.402 is installed while `global.json` requests 10.0.100. Record this as the toolchain root cause; do not edit `global.json` or roll forward.
+
+- [ ] **Step 2: Install SDK 10.0.100 into a task-scoped root**
+
+Use Microsoft's official `dotnet-install` script with exact version `10.0.100` and a new task-specific directory under the OS temporary root. Require the directory to be absent first, invoke its absolute `dotnet`/`dotnet.exe`, and prove:
+
+```text
+dotnet --version     => 10.0.100
+dotnet --list-sdks   => exactly one SDK, 10.0.100, beneath the task root
+```
+
+Record that absolute launcher as `SCREENFIX_PINNED_DOTNET` for every subsequent command. Each plan command spelling `"$SCREENFIX_PINNED_DOTNET"` or `& $screenfixPinnedDotnet` means that exact absolute file, never a bare `dotnet` lookup.
+
+- [ ] **Step 3: Add narrow generated-output ignores**
+
+Add only:
+
+```gitignore
+native/windows/**/bin/
+native/windows/**/obj/
+native/windows/artifacts/
+native/macos/.build/
+native/macos/artifacts/
+```
+
+Do not ignore source/resource/spec/plan files or a broad repository directory.
+
+- [ ] **Step 4: Validate and commit the boundary**
+
+Run `git check-ignore` on one fixture path under each intended generated root and one source file that must remain visible. Expected: generated fixtures are ignored and the source file is not. Remove the fixtures, run `git status --short`, then commit:
+
+```bash
+git add .gitignore
+git commit -m "build: isolate generated release outputs"
+```
 
 ## Task 1: Add the portable package-verifier boundary
 
@@ -106,7 +161,7 @@ Use exit code `2` for invalid command input and `1` for a verification failure. 
 Run:
 
 ```powershell
-dotnet test native/windows/tests/ScreenFix.PackageVerifier.Tests/ScreenFix.PackageVerifier.Tests.csproj -c Release --filter FullyQualifiedName~PackageIconVerifierTests
+& $screenfixPinnedDotnet test native/windows/tests/ScreenFix.PackageVerifier.Tests/ScreenFix.PackageVerifier.Tests.csproj -c Release --filter FullyQualifiedName~PackageIconVerifierTests
 ```
 
 Expected: FAIL because the verifier project and CLI contract do not exist.
@@ -126,7 +181,7 @@ Make `Program.Main` delegate to a short `Run(string[] args, TextWriter output, T
 Run the focused test, then:
 
 ```powershell
-dotnet build native/windows/ScreenFix.slnx -c Release
+& $screenfixPinnedDotnet build native/windows/ScreenFix.slnx -c Release
 ```
 
 Expected: CLI validation tests PASS; the solution builds with zero warnings/errors.
@@ -142,7 +197,7 @@ git commit -m "test: establish Windows package verifier"
 
 **Files:**
 - Create: `native/windows/tools/ScreenFix.PackageVerifier/Bundle/BundleEntry.cs`
-- Create: `native/windows/tools/ScreenFix.PackageVerifier/Bundle/BoundedReadStream.cs`
+- Create: `native/windows/tools/ScreenFix.PackageVerifier/Bundle/SingleByteBoundedReadStream.cs`
 - Create: `native/windows/tools/ScreenFix.PackageVerifier/Bundle/SingleFileBundleReader.cs`
 - Create: `native/windows/tests/ScreenFix.PackageVerifier.Tests/BundleFixtureBuilder.cs`
 - Create: `native/windows/tests/ScreenFix.PackageVerifier.Tests/SingleFileBundleReaderTests.cs`
@@ -154,7 +209,7 @@ git commit -m "test: establish Windows package verifier"
 - [ ] **Step 2: Run only the happy-path test and prove RED**
 
 ```powershell
-dotnet test native/windows/tests/ScreenFix.PackageVerifier.Tests/ScreenFix.PackageVerifier.Tests.csproj -c Release --filter FullyQualifiedName~SingleFileBundleReaderTests.Valid
+& $screenfixPinnedDotnet test native/windows/tests/ScreenFix.PackageVerifier.Tests/ScreenFix.PackageVerifier.Tests.csproj -c Release --filter FullyQualifiedName~SingleFileBundleReaderTests.Valid
 ```
 
 Expected: FAIL because `SingleFileBundleReader` does not exist.
@@ -187,15 +242,17 @@ Every case must assert one stable diagnostic fragment so a bounds failure cannot
 
 Calculate stored size as `CompressedSize > 0 ? CompressedSize : Size`. Sort spans by offset and require `previousEnd <= nextOffset <= manifestOffset`. Sum declared sizes with `checked`; reject before allocating. Require exactly one case-sensitive `ScreenFix.dll` of type `Assembly`.
 
-- [ ] **Step 6: Add and implement bounded raw/deflate extraction**
+- [ ] **Step 6: Add and implement strict bounded raw/deflate extraction**
 
-Tests must cover both expected modes plus wrong mode, corrupt deflate, truncated deflate, declared output too short/long, trailing compressed bytes, incomplete compressed-span consumption, and raw span truncation. `BoundedReadStream` must expose at most the manifest's stored span and record exact consumption. The decompressed sink must stop at declared size plus one byte, require exactly declared output, require clean deflate end, and reject unread bytes inside the compressed span.
+Each real compressed verification runs through a fresh verifier process. `Program.Main` must call `AppContext.SetSwitch("System.IO.Compression.UseStrictValidation", true)` as its first runtime action, before any `DeflateStream` type use, then read the switch back and fail if it is not enabled. `SingleByteBoundedReadStream` exposes at most the manifest's stored span, returns at most one byte from every synchronous or asynchronous read even when the caller requests 8,192 bytes, and records remaining input. This prevents `DeflateStream`'s internal buffer from consuming appended bytes past the logical DEFLATE end.
+
+Tests must spawn the fresh CLI process for compressed verification and cover both expected modes plus wrong mode, strict switch not enabled, corrupt deflate, truncated deflate, an exact-output stream with its end marker removed, declared output too short/long, appended bytes, incomplete compressed-span consumption, and raw span truncation. Read at most declared output plus one byte, then perform one more nonempty read to force strict end validation. Require exactly declared output and zero remaining bounded input. Never replace these controls with output-length-only checks.
 
 - [ ] **Step 7: Run focused and full portable tests**
 
 ```powershell
-dotnet test native/windows/tests/ScreenFix.PackageVerifier.Tests/ScreenFix.PackageVerifier.Tests.csproj -c Release
-dotnet test native/windows/ScreenFix.slnx -c Release
+& $screenfixPinnedDotnet test native/windows/tests/ScreenFix.PackageVerifier.Tests/ScreenFix.PackageVerifier.Tests.csproj -c Release
+& $screenfixPinnedDotnet test native/windows/ScreenFix.slnx -c Release
 ```
 
 Expected: all tests PASS with zero warnings.
@@ -224,7 +281,7 @@ Use `MetadataBuilder`, `MetadataRootBuilder`, and `ManagedPEBuilder` to create a
 - [ ] **Step 2: Run the valid fixture test and prove RED**
 
 ```powershell
-dotnet test native/windows/tests/ScreenFix.PackageVerifier.Tests/ScreenFix.PackageVerifier.Tests.csproj -c Release --filter FullyQualifiedName~ManagedIconResourceReaderTests.Valid
+& $screenfixPinnedDotnet test native/windows/tests/ScreenFix.PackageVerifier.Tests/ScreenFix.PackageVerifier.Tests.csproj -c Release --filter FullyQualifiedName~ManagedIconResourceReaderTests.Valid
 ```
 
 Expected: FAIL because the managed-resource reader does not exist.
@@ -313,6 +370,7 @@ git commit -m "test: verify icons in both Windows bundles"
 - Modify: `native/windows/src/ScreenFix.App/ScreenFixApplicationContext.cs`
 - Modify: `native/windows/tests/ScreenFix.App.Tests/ScreenFix.App.Tests.csproj`
 - Modify: `native/windows/tests/ScreenFix.App.Tests/LifecycleTests.cs`
+- Modify: `native/windows/scripts/test-windows-native.ps1`
 
 - [ ] **Step 1: Write identity/path contract tests and prove RED**
 
@@ -324,9 +382,15 @@ Test the exact mutex value `Local\ScreenFix.Native`; config path equal to `Path.
 
 Run portable app tests and a Windows cross-build. Expected: no behavior test changes and zero warnings.
 
-- [ ] **Step 3: Write real mutex lifetime RED tests**
+- [ ] **Step 3: Establish the destructive-test opt-in before writing fixed-name tests**
 
-On Windows, cover one case per test using unique names first, then one serialized production-name test on the disposable runner:
+Add `[Trait("ScreenFixCategory", "DisposableAccount")]` to every test that can touch the production mutex name, real Local App Data ScreenFix path, or a real published process. Change the ordinary `test-windows-native.ps1` filter to exclude `ScreenFixCategory=DisposableAccount` by default.
+
+Add an `-AllowDisposableAccountMutation` switch. It may run that category only when all of `CI=true`, `GITHUB_ACTIONS=true`, `RUNNER_ENVIRONMENT=github-hosted`, and a nonempty absolute `RUNNER_TEMP` are present. Refuse the switch before test execution otherwise. The workflow will invoke the category separately; local/default runs can never select it accidentally. Add PowerShell regressions for default exclusion and every missing/invalid evidence value.
+
+- [ ] **Step 4: Write real mutex lifetime RED tests**
+
+On Windows, cover one case per ordinary test using unique names and temporary paths. Put the serialized production-name proof only in the disposable category:
 
 - an owned existing object makes production `TryAcquire` return null;
 - an existing but unowned object also returns null;
@@ -336,7 +400,7 @@ On Windows, cover one case per test using unique names first, then one serialize
 
 Put fixed-name tests in a nonparallel xUnit collection. Do not use arbitrary sleeps; synchronize through process exit, handle disposal, and bounded polling only where the child creates a named object.
 
-- [ ] **Step 4: Implement the configuration transaction incrementally**
+- [ ] **Step 5: Implement the configuration transaction incrementally**
 
 The constructor requires an explicit `allowDisposableAccountMutation` boolean, creates/owns a fresh production gate before any filesystem operation, validates the absolute Local AppData child path and every existing ancestor for reparse points, chooses a unique nonexistent sibling backup, and atomically moves an existing directory.
 
@@ -353,15 +417,15 @@ Expose one operation that:
 
 Outer disposal restores the original directory only while owning a freshly created gate. If fresh creation fails, preserve both paths and report them without moving/deleting either.
 
-- [ ] **Step 5: Add refusal and restore tests one at a time**
+- [ ] **Step 6: Add refusal and restore tests one at a time**
 
 Cover opt-in absent; owned and unowned production object refusal before backup creation; root/outside-Local-AppData path; reparse directory/ancestor; clean missing directory; byte-for-byte backup/restore; per-launch cleanup; child exits before mutex; child creates mutex but exits before input idle; leaked observer; cleanup failure; restore failure; and success leaving no backup/test directory.
 
-- [ ] **Step 6: Run Windows tests twice**
+- [ ] **Step 7: Run ordinary and disposable Windows tests twice**
 
-Use the Windows workflow and require both attempts to pass. Inspect logs for no abandoned-mutex exception, no retained backup path on success, and the intended non-destructive diagnostic in injected failure cases.
+First run the default invocation and prove from the filter/log that the disposable category did not execute. Then run a separate workflow-only invocation with `-AllowDisposableAccountMutation` and an explicit trait filter. Require both attempts to pass. Inspect logs for no abandoned-mutex exception, no retained backup path on success, and the intended non-destructive diagnostic in injected failure cases.
 
-- [ ] **Step 7: Commit safe startup isolation**
+- [ ] **Step 8: Commit safe startup isolation**
 
 ```bash
 git add native/windows/src/ScreenFix.App native/windows/tests/ScreenFix.App.Tests native/windows/tests/ScreenFix.Windows.Tests/Startup
@@ -417,6 +481,7 @@ git commit -m "build: isolate Windows package toolchain"
 ## Task 7: Publish, compare, and stage both Windows executables
 
 **Files:**
+- Create: `native/windows/scripts/assert-win-x64-executable.ps1`
 - Create: `native/windows/scripts/assert-win-x64-release.ps1`
 - Create: `native/windows/scripts/test-assert-win-x64-release.ps1`
 - Modify: `native/windows/scripts/publish-win-x64.ps1`
@@ -426,7 +491,7 @@ git commit -m "build: isolate Windows package toolchain"
 
 - [ ] **Step 1: Write release-staging RED tests**
 
-Use temporary fixture files and README text to reject: missing either asset, legacy `ScreenFix.exe`, extra companion file, directory/reparse/empty file, swapped names, compressed size not smaller, candidate over 80 percent of baseline, absent/incorrect README names, obsolete `ScreenFix-windows-x64.zip`, and obsolete bare release instruction. Verify SHA-256 values are reported for both exact names.
+Use temporary fixture files to reject: missing either asset, legacy `ScreenFix.exe`, extra companion file, directory/reparse/empty file, swapped names, compressed size not smaller, and candidate over 80 percent of baseline. Verify SHA-256 values are reported for both exact names. README validation is intentionally separate in Task 9 so binary staging can reach GREEN first.
 
 - [ ] **Step 2: Refactor publishing into one mode-specific helper**
 
@@ -448,11 +513,15 @@ Pass all existing properties identically and set only:
 
 Require exactly one regular nonempty output per publish.
 
-- [ ] **Step 3: Verify before staging**
+- [ ] **Step 3: Extract reusable per-executable structure checks**
+
+Move regular/nonempty file, SHA-256, MZ, PE offset/signature, AMD64, PE32+, and GUI-subsystem logic into `assert-win-x64-executable.ps1`, which accepts one absolute executable and one exact expected filename. Keep `assert-win-x64-package.ps1` responsible for the native publish-directory shape: exactly one file named `ScreenFix.exe`, then delegate to the per-file assertion. Add focused regressions proving a staged public name is accepted only when passed as its explicit expected name, while native publish output still requires `ScreenFix.exe`.
+
+- [ ] **Step 4: Verify before staging**
 
 After both restores/publishes, locate exactly one app `project.assets.json` under each isolated artifacts root; run the toolchain/runtime-pack assertion; run structural package checks; run the shared managed verifier with the declared mode; and run independent native icon checks on both. Compare lengths and require `compressed <= floor(uncompressed * 0.80)`.
 
-- [ ] **Step 4: Stage with approved public names**
+- [ ] **Step 5: Stage with approved public names**
 
 Only after every prior gate passes, create a fresh staging directory containing exactly:
 
@@ -461,17 +530,17 @@ native/windows/artifacts/windows/release/ScreenFix-Windows-x64.exe
 native/windows/artifacts/windows/release/ScreenFix-Windows-x64-uncompressed.exe
 ```
 
-Copy the compressed candidate to the first/recommended name and the baseline to the fallback name. Re-run structural, managed, and native checks against the renamed bytes and require source/staged SHA-256 equality.
+Copy the compressed candidate to the first/recommended name and the baseline to the fallback name. Call the per-executable structural assertion once for each staged path with its exact expected public filename; call the shared managed and native icon checks once per file; and require source/staged SHA-256 equality. Never call the one-file native publish-directory assertion on the two-file staging directory.
 
-- [ ] **Step 5: Assert staging and rerun deterministically**
+- [ ] **Step 6: Assert staging and rerun deterministically**
 
 Run `assert-win-x64-release.ps1`, record sizes/hashes/reduction, rerun the entire publish in fresh intermediates, and require identical bytes for each corresponding asset. If deterministic equality is not provided by the pinned toolchain, stop and identify the changing PE/bundle field rather than weakening the check.
 
-- [ ] **Step 6: Upload the exact CI artifact**
+- [ ] **Step 7: Upload the exact CI artifact**
 
 Add `actions/upload-artifact@v7` after all tests with `if-no-files-found: error`, a commit-specific artifact name, and only the two staged executables. Download it in a later verification step and rerun the release assertion so upload packaging cannot rename or nest files unexpectedly.
 
-- [ ] **Step 7: Commit dual publishing**
+- [ ] **Step 8: Commit dual publishing**
 
 ```bash
 git add native/windows/scripts .github/workflows/windows-native.yml
@@ -482,6 +551,8 @@ git commit -m "build: publish dual Windows executables"
 
 **Files:**
 - Create: `native/windows/tests/ScreenFix.Windows.Tests/Startup/PublishedExecutableStartupTests.cs`
+- Create: `native/windows/tests/ScreenFix.Windows.Tests/Startup/BundleExtractionTransaction.cs`
+- Create: `native/windows/tests/ScreenFix.Windows.Tests/Startup/BundleExtractionTransactionTests.cs`
 - Modify: `native/windows/scripts/test-windows-native.ps1`
 - Modify: `native/windows/scripts/publish-win-x64.ps1`
 - Modify: `.github/workflows/windows-native.yml`
@@ -490,33 +561,39 @@ git commit -m "build: publish dual Windows executables"
 
 Extract pure helpers for median and limits. Cover odd/even samples, overflow-safe `TimeSpan` math, first limit `baseline + max(750 ms, 75%)` plus absolute `<5 s`, and warm limit `baseline + max(250 ms, 50%)` plus absolute `<2 s`.
 
-- [ ] **Step 2: Write a one-launch Windows integration test**
+- [ ] **Step 2: Write extraction-root safety tests before process measurement**
 
-Require two absolute staged executable paths and explicit disposable-runner opt-in from the filtered invocation. Start a stopwatch immediately before `Process.Start`; require the child-owned production mutex through a short-lived observer; call `WaitForInputIdle` with a 10-second timeout; require the child still alive; stop timing; then terminate, wait, freshly acquire the mutex, and clean config through `ScreenFixConfigurationTransaction`.
+`BundleExtractionTransaction` requires explicit disposable-account authorization and creates one unique root beneath the resolved absolute `RUNNER_TEMP`. Reject the temp root itself, filesystem roots, outside-root paths, preexisting paths, and any target/ancestor reparse point. Expose only validated unique child paths for first/warm extraction. In `finally`, after every exact child has terminated, revalidate the root identity/reparse state and remove only that transaction root. Cleanup failure fails the benchmark and prints the retained exact root without deleting elsewhere.
 
-Use a unique `DOTNET_BUNDLE_EXTRACT_BASE_DIR` passed only to the child. Preserve and restore any inherited environment value.
+Test successful removal, process-failure removal, cleanup-error reporting, outside/root rejection, and a reparse replacement that must be preserved and rejected. Use temporary roots and unique mutexes in ordinary tests; any test using the real runner root gets the disposable trait.
 
-- [ ] **Step 3: Prove the safety RED cases**
+- [ ] **Step 3: Write a one-launch Windows integration test**
+
+Mark the class `[Trait("ScreenFixCategory", "DisposableAccount")]`. Require two absolute staged executable paths and the script's validated workflow-only `-AllowDisposableAccountMutation` opt-in from the filtered invocation. Start a stopwatch immediately before `Process.Start`; require the child-owned production mutex through a short-lived observer; call `WaitForInputIdle` with a 10-second timeout; require the child still alive; stop timing; then terminate, wait, freshly acquire the mutex, and clean config through `ScreenFixConfigurationTransaction`.
+
+Use only child paths supplied by `BundleExtractionTransaction` for `DOTNET_BUNDLE_EXTRACT_BASE_DIR`. Preserve and restore any inherited environment value. Assert the outer extraction root no longer exists after success or injected process failure.
+
+- [ ] **Step 4: Prove the safety RED cases**
 
 With a production mutex already existing, run the filtered measurement test and require refusal before any config path mutation. With an injected leaked observer, require non-destructive failure and exact recovery-path diagnostics. Run these before enabling the multi-launch benchmark.
 
-- [ ] **Step 4: Implement alternating first-start measurements**
+- [ ] **Step 5: Implement alternating first-start measurements**
 
 Create five fresh extraction directories per variant. Alternate baseline/candidate ordering for ten measured launches, reset config after each through owned-gate cleanup, record every duration, and calculate medians. Fail any timeout, early exit, missing mutex, cleanup failure, or threshold violation.
 
-- [ ] **Step 5: Implement alternating warm-start measurements**
+- [ ] **Step 6: Implement alternating warm-start measurements**
 
 Use one extraction directory per variant, run one unmeasured seed each, then alternate five measured launches per variant while reusing only that variant's extraction directory. Reset protected config every time. Print samples, medians, relative deltas, and thresholds without user paths/config contents.
 
-- [ ] **Step 6: Wire the exact staged files into publishing**
+- [ ] **Step 7: Wire the exact staged files into publishing**
 
-The publish script runs the startup filter only after staging and passes explicit opt-in on CI. The workflow must not run if a user ScreenFix instance owns the mutex. Interactive UAT launches the same staged bytes later without the measurement switch.
+The default native-test invocation continues excluding the disposable category. Only after staging, the workflow calls a separate exact trait filter with `-AllowDisposableAccountMutation`; the script revalidates all hosted-runner evidence before invoking xUnit. The workflow must fail without config mutation if a ScreenFix instance already caused the production mutex object to exist. Interactive UAT launches the same staged bytes later without the measurement switch.
 
-- [ ] **Step 7: Run the complete Windows workflow twice**
+- [ ] **Step 8: Run the complete Windows workflow twice**
 
 Require both attempts at the same commit to meet size and startup gates. A single timing failure is investigated from raw samples; do not add sleeps, retries, or relaxed thresholds as a workaround.
 
-- [ ] **Step 8: Commit startup measurement**
+- [ ] **Step 9: Commit startup measurement**
 
 ```bash
 git add native/windows/tests/ScreenFix.Windows.Tests/Startup native/windows/scripts .github/workflows/windows-native.yml
@@ -526,15 +603,18 @@ git commit -m "test: measure compressed Windows startup"
 ## Task 9: Update documentation, version, and release contracts
 
 **Files:**
+- Create: `native/windows/scripts/assert-windows-download-docs.ps1`
+- Create: `native/windows/scripts/test-assert-windows-download-docs.ps1`
 - Modify: `README.md`
 - Modify: `native/windows/src/ScreenFix.App/ScreenFix.App.csproj`
 - Modify: `native/macos/Resources/Info.plist`
 - Modify: `native/macos/scripts/package-arm64.sh`
+- Modify: `native/macos/scripts/test-package-arm64.sh`
 - Modify: `native/windows/scripts/test-assert-win-x64-release.ps1`
 
-- [ ] **Step 1: Make the README-name regression RED**
+- [ ] **Step 1: Create a separate README-name regression and prove RED**
 
-Run the release assertion against the current README. Expected: FAIL because it names `ScreenFix-windows-x64.zip`/`ScreenFix.exe` instead of both staged assets.
+Keep the already-green binary release assertion independent. Create `assert-windows-download-docs.ps1` for one README path and test it against temporary positive/negative documents. Then run it against the current README. Expected: FAIL because it names `ScreenFix-windows-x64.zip`/`ScreenFix.exe` instead of both staged assets.
 
 - [ ] **Step 2: Update concise Windows install/collaboration instructions**
 
@@ -542,16 +622,16 @@ Name `ScreenFix-Windows-x64.exe` first as the recommended smaller self-contained
 
 - [ ] **Step 3: Bump all native release metadata to 1.0.4**
 
-Set Windows `Version`, `AssemblyVersion`, `FileVersion`, and `InformationalVersion` consistently to 1.0.4/1.0.4.0. Set macOS `CFBundleShortVersionString` to 1.0.4 and update the packaging assertion. Search the release-bearing source tree for stale `1.0.3`; allow it only in historical docs/spec context.
+Set Windows `Version`, `AssemblyVersion`, `FileVersion`, and `InformationalVersion` consistently to 1.0.4/1.0.4.0. Set macOS `CFBundleShortVersionString` to `1.0.4` and increment `CFBundleVersion` from `3` to `4`. Update both `package-arm64.sh` and `test-package-arm64.sh` to assert the short version and build version in the packaged and extracted app. Search the release-bearing source tree for stale `1.0.3`; allow it only in historical docs/spec context.
 
 - [ ] **Step 4: Run cross-platform documentation/version checks**
 
-Run the release assertion fixture tests, package-verifier tests, Windows cross-build, macOS native tests/package tests, and Lua suite. Expected: README names match staged names and every current package reports 1.0.4.
+Run the binary release assertion tests, README assertion tests, package-verifier tests, Windows cross-build, macOS native tests/package tests, and Lua suite. Expected: README names match staged names; both Info.plists report short version 1.0.4 and build 4; and every current package reports 1.0.4.
 
 - [ ] **Step 5: Commit release metadata and docs**
 
 ```bash
-git add README.md native/windows/src/ScreenFix.App/ScreenFix.App.csproj native/macos/Resources/Info.plist native/macos/scripts/package-arm64.sh native/windows/scripts/test-assert-win-x64-release.ps1
+git add README.md native/windows/src/ScreenFix.App/ScreenFix.App.csproj native/macos/Resources/Info.plist native/macos/scripts/package-arm64.sh native/macos/scripts/test-package-arm64.sh native/windows/scripts/assert-windows-download-docs.ps1 native/windows/scripts/test-assert-windows-download-docs.ps1
 git commit -m "docs: prepare ScreenFix 1.0.4 downloads"
 ```
 
@@ -565,7 +645,7 @@ git commit -m "docs: prepare ScreenFix 1.0.4 downloads"
 
 ```bash
 native/windows/scripts/test-build-app-icon.sh
-dotnet test native/windows/ScreenFix.slnx -c Release
+"$SCREENFIX_PINNED_DOTNET" test native/windows/ScreenFix.slnx -c Release
 native/macos/scripts/run-tests.sh
 native/macos/scripts/test-package-arm64.sh
 lua tests/run.lua
@@ -589,7 +669,7 @@ Run one spec-compliance review and one maintainability/safety review over the co
 
 - [ ] **Step 5: Perform Windows interactive UAT on both exact CI artifacts**
 
-Download the exact two-file CI artifact without rebuilding. On normal and high-DPI Windows x64, run one asset at a time and verify: Explorer icon, tray icon, single-instance exit, monitor selection, calibration Save/Cancel, persisted settings, snap left/right, Win+Up, maximize button, black-area avoidance, and exclusion of borderless/F11 full-screen windows. Confirm both variants behave the same; record any startup impression separately from correctness.
+Download the exact two-file CI artifact without rebuilding. Record SHA-256 for both UAT-approved bytes and the PR-head commit/tree IDs. On normal and high-DPI Windows x64, run one asset at a time and verify: Explorer icon, tray icon, single-instance exit, monitor selection, calibration Save/Cancel, persisted settings, snap left/right, Win+Up, maximize button, black-area avoidance, and exclusion of borderless/F11 full-screen windows. Confirm both variants behave the same; record any startup impression separately from correctness.
 
 - [ ] **Step 6: Re-run exact CI after the final fix**
 
@@ -608,6 +688,8 @@ Inspect PR state/body/checks, merge through GitHub, fetch `origin/main`, and rec
 
 Dispatch `windows-native.yml` on `main`, select the workflow-dispatch run whose `headSha` exactly equals the merge SHA, wait for green completion, and download its commit-specific two-file artifact. Rerun staged-name, size, SHA-256, PE structure, managed bundle icon, and native PE icon assertions without rebuilding.
 
+Compare the merge commit tree with the recorded PR-head UAT tree and compare both downloaded SHA-256 values with the recorded UAT-approved hashes. If the tree and both bytes are identical, preserve that equality as proof UAT covered the release bytes. If either tree or hash differs, run the complete Task 10 interactive UAT again on these exact merge-SHA artifacts before continuing.
+
 - [ ] **Step 3: Produce the macOS artifact from the same merge SHA**
 
 Create a temporary detached worktree at the merge SHA, run macOS native tests and `test-package-arm64.sh`, and copy only `ScreenFix-macos-arm64.zip` into a fresh release staging directory. Verify v1.0.4 metadata, arm64 architecture, macOS 13 minimum, code signature, ZIP contents, and SHA-256.
@@ -624,9 +706,11 @@ ScreenFix-macos-arm64.zip
 
 Generate `ScreenFix-v1.0.4-SHA256SUMS.txt` with lowercase SHA-256 and exact filenames in ordinal filename order. Verify every line against the bytes, then require exactly four final release files.
 
-- [ ] **Step 5: Create the GitHub release with explicit labels**
+- [ ] **Step 5: Create and audit a draft GitHub release**
 
-Create tag/release `v1.0.4` targeting the exact merge SHA. Release notes report measured byte sizes and startup medians, say both Windows variants are behavior-identical/self-contained, name the compressed asset as recommended, and name the uncompressed asset as fallback. Upload with labels:
+Create tag `v1.0.4` only after proving its target is the exact merge SHA, push it, and verify the remote tag resolves to that SHA. Release notes report measured byte sizes and startup medians, say both Windows variants are behavior-identical/self-contained, name the compressed asset as recommended, and name the uncompressed asset as fallback.
+
+Create the release with `gh release create v1.0.4 --verify-tag --draft`; quote every complete `file#label` argument so shells cannot interpret `#`. Upload with labels:
 
 ```text
 ScreenFix-Windows-x64.exe#Windows x64 (recommended, self-contained)
@@ -635,13 +719,19 @@ ScreenFix-macos-arm64.zip#macOS Apple Silicon (macOS 13+)
 ScreenFix-v1.0.4-SHA256SUMS.txt#SHA-256 checksums
 ```
 
-- [ ] **Step 6: Audit the public release**
+- [ ] **Step 6: Audit the draft, publish it, and re-audit public state**
 
-Use `gh release view v1.0.4 --json ...` and direct downloads to prove: tag target equals merge SHA; release is neither draft nor prerelease; exactly four assets exist; names/labels/sizes/digests match local staged files; checksum file verifies downloaded bytes; compressed Windows is at most 80 percent of uncompressed; and README links/instructions resolve to the new assets.
+While it remains invisible as a draft, use `gh release view v1.0.4 --json ...` and direct asset downloads to prove: tag target equals merge SHA; release is draft and not prerelease; exactly four assets exist; names/labels/sizes/digests match local staged files; checksum file verifies downloaded bytes; compressed Windows is at most 80 percent of uncompressed; notes contain exact measured values; and README instructions match the asset names. If any audit fails, preserve the draft for recovery and do not delete, recreate, or clobber it.
+
+Only after the draft audit passes, publish with `gh release edit v1.0.4 --draft=false`. Re-run the complete audit and additionally require `isDraft=false`, `isPrerelease=false`, and public download success.
 
 - [ ] **Step 7: Clean up recoverably**
 
-Remove only the validated temporary release directory and detached worktree. Confirm no ScreenFix config backup/test directory remains on the Windows runner. After verifying `main` contains the merge and v1.0.4 is public, delete the merged remote feature branch if GitHub did not, switch the local workspace to updated `main`, and delete the local feature branch. Never remove source artifacts or user configuration.
+Remove only the validated temporary release directory and detached worktree. Confirm no ScreenFix config backup/test directory or bundle extraction root remains on the Windows runner.
+
+Clean repository-owned generated output without `git clean`: use the absolute pinned SDK's `dotnet clean` for the solution, then resolve each fixed `native/windows/artifacts`, `native/macos/.build`, and `native/macos/artifacts` root; require each to be a non-reparse descendant of its expected platform directory; and remove only those exact roots. Confirm `git status --short` contains no generated output.
+
+After verifying `main` contains the merge and v1.0.4 is public, delete the merged remote feature branch if GitHub did not, switch the local workspace to updated `main`, and delete the local feature branch. Never remove source assets, committed icon resources, or user configuration.
 
 - [ ] **Step 8: Complete the active goal**
 
