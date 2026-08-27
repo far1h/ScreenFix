@@ -198,7 +198,7 @@ public sealed class PackageIconVerifierTests : IDisposable
         return
         [
             "--executable",
-            CreateFile("ScreenFix.exe"),
+            CreateBundle(compressionMode),
             "--canonical-icon",
             CreateFile("ScreenFix.ico"),
             "--compression",
@@ -210,6 +210,23 @@ public sealed class PackageIconVerifierTests : IDisposable
     {
         var path = Path.Combine(_temporaryDirectory, fileName);
         File.WriteAllBytes(path, [1]);
+        return path;
+    }
+
+    private string CreateBundle(string compressionMode)
+    {
+        var builder = new BundleFixtureBuilder();
+        if (compressionMode == "compressed")
+        {
+            var compressed = BundleFixtureBuilder.CreateStoredDeflate(
+                BundleFixtureBuilder.AssemblyBytes);
+            builder.Entries[0].Payload = compressed;
+            builder.Entries[0].Size = BundleFixtureBuilder.AssemblyBytes.Length;
+            builder.Entries[0].CompressedSize = compressed.LongLength;
+        }
+
+        var path = Path.Combine(_temporaryDirectory, "ScreenFix.exe");
+        File.WriteAllBytes(path, builder.Build());
         return path;
     }
 

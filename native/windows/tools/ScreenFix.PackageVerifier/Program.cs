@@ -22,6 +22,16 @@ internal static class Program
 
     internal static int Main(string[] args)
     {
+        AppContext.SetSwitch("System.IO.Compression.UseStrictValidation", true);
+        if (!AppContext.TryGetSwitch(
+                "System.IO.Compression.UseStrictValidation",
+                out var strictValidation)
+            || !strictValidation)
+        {
+            Console.Error.WriteLine("strict deflate validation could not be enabled");
+            return 1;
+        }
+
         return Run(args, Console.Out, Console.Error);
     }
 
@@ -31,10 +41,25 @@ internal static class Program
         TextWriter error)
     {
         _ = output;
-        if (!TryCreateRequest(args, out _, out var diagnostic))
+        if (!TryCreateRequest(args, out var request, out var diagnostic))
         {
             error.WriteLine(diagnostic);
             return 2;
+        }
+
+        try
+        {
+            _ = SingleFileBundleReader.ExtractScreenFixAssembly(
+                request!.Executable,
+                request.CompressionMode);
+        }
+        catch (Exception exception) when (
+            exception is InvalidDataException
+                or IOException
+                or UnauthorizedAccessException)
+        {
+            error.WriteLine(exception.Message);
+            return 1;
         }
 
         error.WriteLine("package verification is not implemented");
