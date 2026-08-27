@@ -386,7 +386,7 @@ Run portable app tests and a Windows cross-build. Expected: no behavior test cha
 
 Add `[Trait("ScreenFixCategory", "DisposableAccount")]` to every test that can touch the production mutex name, real Local App Data ScreenFix path, or a real published process. Change the ordinary `test-windows-native.ps1` filter to exclude `ScreenFixCategory=DisposableAccount` by default.
 
-Add an `-AllowDisposableAccountMutation` switch. It may run that category only when all of `CI=true`, `GITHUB_ACTIONS=true`, `RUNNER_ENVIRONMENT=github-hosted`, and a nonempty absolute `RUNNER_TEMP` are present. Refuse the switch before test execution otherwise. The workflow will invoke the category separately; local/default runs can never select it accidentally. Add PowerShell regressions for default exclusion and every missing/invalid evidence value.
+Add an `-AllowDisposableAccountMutation` switch. It may run that category only when all of `CI=true`, `GITHUB_ACTIONS=true`, workflow-owned `SCREENFIX_RUNNER_ENVIRONMENT=github-hosted`, and a nonempty absolute `RUNNER_TEMP` are present. Refuse the switch before test execution otherwise. The workflow explicitly maps `${{ runner.environment }}` into the dedicated ScreenFix variable for that one step, then invokes the category separately; local/default runs can never select it accidentally. Add PowerShell regressions for default exclusion and every missing/invalid evidence value.
 
 - [ ] **Step 4: Write real mutex lifetime RED tests**
 
