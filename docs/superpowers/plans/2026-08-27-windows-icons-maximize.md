@@ -651,9 +651,16 @@ try {
     $env:SCREENFIX_CANONICAL_ICO = [IO.Path]::GetFullPath(
         "native\windows\src\ScreenFix.App\Resources\ScreenFix.ico")
     dotnet test $project -c Release --no-build `
-      --filter "FullyQualifiedName~PublishedExecutableIconTests"
-    $negativeExit = $LASTEXITCODE
-    if ($negativeExit -eq 0) { throw "iconless apphost was accepted" }
+      --filter "FullyQualifiedName~PublishedExecutable_ContainsCanonicalManagedIconBytes"
+    if ($LASTEXITCODE -ne 0) {
+        throw "iconless apphost lost the required managed ScreenFix icon"
+    }
+
+    dotnet test $project -c Release --no-build `
+      --logger "console;verbosity=normal" `
+      --filter "FullyQualifiedName~PublishedExecutable_ContainsEveryNativeIconFrame"
+    $nativeIconExit = $LASTEXITCODE
+    if ($nativeIconExit -eq 0) { throw "iconless apphost was accepted" }
 }
 finally {
     $env:SCREENFIX_PUBLISHED_EXE = $previousExecutable
@@ -664,7 +671,12 @@ finally {
 }
 ```
 
-Expected: `PublishedExecutable_ContainsCanonicalManagedIconBytes` passes and `PublishedExecutable_ContainsEveryNativeIconFrame` fails because the iconless apphost has no exact Screen Patch group/payload set. This distinguishes the tray resource from the Explorer resource without a synthetic PE resource writer.
+Expected: the first filtered invocation exits 0. The second exits nonzero and its normal
+console output identifies `PublishedExecutable_ContainsEveryNativeIconFrame` failing
+because the iconless apphost has no exact Screen Patch group/payload set. Preserve that
+diagnostic; do not accept an unrelated infrastructure or P/Invoke failure as the negative
+control. This distinguishes the tray resource from the Explorer resource without a
+synthetic PE resource writer.
 
 - [ ] **Step 6: Teach the native test script to run published-executable tests only when requested**
 
@@ -880,7 +892,9 @@ Repeat Steps 1-5 at the final commit. Do not rely on older output. Confirm `git 
 
 - [ ] **Step 9: Open the focused Windows pull request**
 
-Use `apply_patch` to create `/tmp/screenfix-windows-pr-body.md` before invoking `gh`. Include this structure with real commands/run URL and either actual manual results or the explicit pending sentence:
+Use `apply_patch` to create the temporary repository-root file
+`screenfix-windows-pr-body.md` before invoking `gh`. Include this structure with real
+commands/run URL and either actual manual results or the explicit pending sentence:
 
 ```markdown
 ## Summary
@@ -902,15 +916,18 @@ Use `apply_patch` to create `/tmp/screenfix-windows-pr-body.md` before invoking 
 Inspect the complete body, replace every angle-bracket placeholder, and only then create the PR:
 
 ```bash
-sed -n '1,240p' /tmp/screenfix-windows-pr-body.md
-test -s /tmp/screenfix-windows-pr-body.md
-! rg -n '<[^>]+>' /tmp/screenfix-windows-pr-body.md
+sed -n '1,240p' screenfix-windows-pr-body.md
+test -s screenfix-windows-pr-body.md
+! rg -n '<[^>]+>' screenfix-windows-pr-body.md
 gh pr create \
   --base main \
   --head fix/windows-icons-maximize \
   --title "Fix Windows icons and maximized window correction" \
-  --body-file /tmp/screenfix-windows-pr-body.md
+  --body-file screenfix-windows-pr-body.md
 ```
+
+After `gh pr create` succeeds, remove `screenfix-windows-pr-body.md` with
+`apply_patch` and require `git status --short` to be empty.
 
 The PR body must summarize the 44-byte ABI correction, the one-ICO dual use, and independent managed/native package checks. Include exact local commands and the GREEN Windows workflow URL. Link the relevant GitHub issue if one exists; do not claim borderless/F11 behavior changed or claim manual UAT passed when it remains pending.
 
