@@ -66,7 +66,14 @@ if ($hasPublishedExecutable) {
     }
 
     $PublishedExecutable = [IO.Path]::GetFullPath($PublishedExecutable)
-    if (-not (Test-Path -LiteralPath $PublishedExecutable -PathType Leaf)) {
+    $publishedFile = Get-Item `
+        -LiteralPath $PublishedExecutable `
+        -Force `
+        -ErrorAction SilentlyContinue
+    if ($null -eq $publishedFile `
+        -or $publishedFile -isnot [IO.FileInfo] `
+        -or $publishedFile.Length -le 0 `
+        -or ($publishedFile.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
         throw "published executable does not exist"
     }
 }

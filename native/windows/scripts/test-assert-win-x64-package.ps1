@@ -56,6 +56,8 @@ $ExternalDotnetPath = Resolve-DotnetLauncher `
 
 $assertion = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "assert-win-x64-package.ps1"))
+$executableAssertion = [IO.Path]::GetFullPath(
+    (Join-Path $PSScriptRoot "assert-win-x64-executable.ps1"))
 $toolchainAssertion = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "assert-pinned-win-x64-toolchain.ps1"))
 $canonicalIcon = [IO.Path]::GetFullPath(
@@ -90,16 +92,18 @@ if (-not $regressionScriptSource.Contains($toolchainCallMarker) `
 $publishScriptSource = [IO.File]::ReadAllText($publishScript)
 if ($publishScriptSource.Contains($ambientDotnetResolver) `
     -or $publishScriptSource -notmatch `
-        '(?s)\[Parameter\(Mandatory\s*=\s*\$true\)\]\s*\[string\]\$DotnetPath') {
-    throw "publish script must require an absolute dotnet launcher"
+        '(?s)\[Parameter\(Mandatory\s*=\s*\$true\)\]\s*\[string\]\$DotnetPath' `
+    -or $publishScriptSource -notmatch `
+        '(?s)\[Parameter\(Mandatory\s*=\s*\$true\)\]\s*\[string\]\$ExternalDotnetPath') {
+    throw "publish script must require absolute private and external dotnet launchers"
 }
 
-if (-not $publishScriptSource.Contains('& $dotnetPath publish')) {
+if (-not $publishScriptSource.Contains('& $DotnetPath @arguments')) {
     throw "publish script must use its resolved absolute dotnet launcher"
 }
 
-if (-not $publishScriptSource.Contains('-DotnetPath $dotnetPath') `
-    -or -not $publishScriptSource.Contains('-ExpectedCompression uncompressed')) {
+if (-not $publishScriptSource.Contains('-DotnetPath $DotnetPath') `
+    -or -not $publishScriptSource.Contains('-ExpectedCompression $Mode')) {
     throw "publish script must declare its package mode to Windows native tests"
 }
 
@@ -619,6 +623,24 @@ try {
     $bytes[0xdc] = 0x02
     [IO.File]::WriteAllBytes($structuralExecutable, $bytes)
     & $assertion -OutputDirectory $structuralDirectory
+
+    $publicExecutable = Join-Path $temporaryRoot "ScreenFix-Windows-x64.exe"
+    Copy-Item -LiteralPath $structuralExecutable -Destination $publicExecutable
+    & $executableAssertion `
+        -Executable $publicExecutable `
+        -ExpectedFileName "ScreenFix-Windows-x64.exe"
+    $publicNameRejection = $null
+    try {
+        & $executableAssertion `
+            -Executable $publicExecutable `
+            -ExpectedFileName "ScreenFix.exe"
+    }
+    catch {
+        $publicNameRejection = $_.Exception.Message
+    }
+    if ($publicNameRejection -cne "executable file must be named ScreenFix.exe") {
+        throw "public executable name was accepted without an explicit expectation"
+    }
 
     $bytes[0x84] = 0x4c
     $bytes[0x85] = 0x01

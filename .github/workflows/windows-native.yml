@@ -23,7 +23,7 @@ concurrency:
 jobs:
   test:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       SCREENFIX_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -114,8 +114,46 @@ jobs:
           native\windows\scripts\test-assert-win-x64-package.ps1
           -DotnetPath $env:SCREENFIX_PRIVATE_DOTNET
           -ExternalDotnetPath $env:SCREENFIX_EXTERNAL_DOTNET
-      - name: Publish and assert win-x64 package
+      - name: Run release assertion regressions
+        shell: pwsh
+        run: native\windows\scripts\test-assert-win-x64-release.ps1
+      - name: Run publish preflight regressions
+        shell: pwsh
+        run: native\windows\scripts\test-publish-win-x64-preflight.ps1
+      - name: Run release transaction regressions
+        shell: pwsh
+        run: native\windows\scripts\test-win-x64-release-transaction.ps1
+      - name: Publish and assert dual win-x64 packages
         shell: pwsh
         run: >-
           native\windows\scripts\publish-win-x64.ps1
           -DotnetPath $env:SCREENFIX_PRIVATE_DOTNET
+          -ExternalDotnetPath $env:SCREENFIX_EXTERNAL_DOTNET
+      - name: Upload exact Windows release executables
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenfix-windows-x64-${{ env.SCREENFIX_SOURCE_SHA }}
+          if-no-files-found: error
+          path: |
+            native\windows\artifacts\windows\release\ScreenFix-Windows-x64.exe
+            native\windows\artifacts\windows\release\ScreenFix-Windows-x64-uncompressed.exe
+      - name: Require fresh artifact verification directory
+        shell: pwsh
+        run: |
+          $verificationRoot = [IO.Path]::GetFullPath(
+            '${{ runner.temp }}\screenfix-downloaded-release')
+          if (Test-Path -LiteralPath $verificationRoot) {
+            throw "artifact verification directory must be initially absent: $verificationRoot"
+          }
+          "SCREENFIX_DOWNLOADED_RELEASE=$verificationRoot" | Out-File `
+            -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Download exact Windows release artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: screenfix-windows-x64-${{ env.SCREENFIX_SOURCE_SHA }}
+          path: ${{ env.SCREENFIX_DOWNLOADED_RELEASE }}
+      - name: Verify downloaded Windows release layout
+        shell: pwsh
+        run: >-
+          native\windows\scripts\assert-win-x64-release.ps1
+          -ReleaseDirectory $env:SCREENFIX_DOWNLOADED_RELEASE
