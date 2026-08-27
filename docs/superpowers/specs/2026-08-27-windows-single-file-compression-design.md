@@ -117,7 +117,14 @@ Each isolated publish output is first validated under its native `ScreenFix.exe`
 
 The release staging directory contains exactly those two Windows executables. The versioned SHA-256 checksum file includes both exact names and digests alongside the macOS asset. Release notes identify the compressed asset as recommended, explain that both are self-contained and behavior-identical, report both measured sizes, and describe the uncompressed asset as the fallback for startup or extraction problems.
 
-One behavior-neutral refactor is permitted for safe test isolation: move the existing `Environment.GetFolderPath(LocalApplicationData)` plus `ScreenFix/config.json` computation into an internal `ScreenFixPaths.ConfigFile` member. `ScreenFixApplicationContext` and the Windows startup harness both use that exact member. The existing `InternalsVisibleTo("ScreenFix.Windows.Tests")` access remains sufficient; no environment override or user-facing configuration option is added.
+Two behavior-neutral extractions are permitted for safe test isolation:
+
+- move the existing `Environment.GetFolderPath(LocalApplicationData)` plus `ScreenFix/config.json` computation into an internal `ScreenFixPaths.ConfigFile` member;
+- move the existing `Local\\ScreenFix.Native` name into an internal `ScreenFixApplicationIdentity.SingleInstanceMutexName` constant.
+
+Production and the Windows startup harness use those exact shared members. Focused tests require `Program` and `ScreenFixApplicationContext` to consume them, so test infrastructure cannot silently protect a different mutex or path. The existing `InternalsVisibleTo("ScreenFix.Windows.Tests")` access remains sufficient; no environment override or user-facing configuration option is added.
+
+`README.md` changes with the package contract. Its Windows installation steps name `ScreenFix-Windows-x64.exe` as the recommended download, name `ScreenFix-Windows-x64-uncompressed.exe` as the compatibility fallback, state that neither requires a separate .NET installation, and remove the obsolete Windows ZIP and bare `ScreenFix.exe` release instructions.
 
 ### Compressed-bundle verification
 
@@ -182,19 +189,23 @@ Expected application behavior is therefore identical. Missing icons, new loose p
 
 ### Startup measurement
 
-The Windows package regression measures the exact baseline and candidate executables on the same runner. Each process receives an isolated `DOTNET_BUNDLE_EXTRACT_BASE_DIR`, so it cannot reuse the other variant's extraction cache.
+The Windows package regression measures the exact baseline and candidate executables on the same disposable Windows runner account. Each process receives an isolated `DOTNET_BUNDLE_EXTRACT_BASE_DIR`, so it cannot reuse the other variant's extraction cache. The destructive configuration-isolation path is disabled by default and requires an explicit workflow-owned opt-in; interactive/local UAT never invokes it.
 
-Changing the `LOCALAPPDATA` environment variable is not sufficient because .NET resolves `SpecialFolder.LocalApplicationData` through the Windows known-folder API. The startup harness instead calls the same internal `ScreenFixPaths.ConfigFile` member used by production, derives the exact ScreenFix directory, and protects that real path for the complete measurement transaction:
+Changing the `LOCALAPPDATA` environment variable is not sufficient because .NET resolves `SpecialFolder.LocalApplicationData` through the Windows known-folder API. The startup harness instead calls the same internal `ScreenFixPaths.ConfigFile` and `ScreenFixApplicationIdentity.SingleInstanceMutexName` members used by production, derives the exact ScreenFix directory, and protects the mutex and real path for the complete measurement transaction:
 
-1. require an absolute non-root path beneath the Windows Local AppData known folder;
-2. reject a ScreenFix directory or parent represented by a reparse point;
-3. choose a unique nonexistent sibling backup path;
-4. atomically move an existing ScreenFix directory to that backup before any launch;
-5. require the real ScreenFix directory to be absent before each measured process, then remove only test-created contents after that process exits;
-6. in an outer `finally`, remove any remaining test-created ScreenFix directory and atomically restore the original backup;
-7. fail the regression on backup, per-launch cleanup, or restoration errors after making every safe restoration attempt.
+1. acquire the exact production single-instance gate before any filesystem read, move, creation, or deletion; if it is already owned, refuse the measurement with no filesystem mutation;
+2. require an absolute non-root path beneath the Windows Local AppData known folder;
+3. reject a ScreenFix directory or parent represented by a reparse point;
+4. choose a unique nonexistent sibling backup path;
+5. atomically move an existing ScreenFix directory to that backup before any launch;
+6. while holding the gate, require the real ScreenFix directory to be absent, then release the gate immediately before starting one measured executable;
+7. require the measured process to create the exact production mutex before accepting `WaitForInputIdle`, proving it did not exit through the single-instance path;
+8. terminate and wait for that exact process, reacquire the production gate, and only while holding it remove that launch's test-created contents;
+9. repeat the release/process/reacquire sequence for every launch, never touching configuration without gate ownership;
+10. in an outer `finally`, while holding the gate, remove any remaining test-created ScreenFix directory and atomically restore the original backup;
+11. fail the regression on ownership, backup, per-launch cleanup, or restoration errors after making every safe restoration attempt. If the gate cannot be reacquired because an unexpected instance started, do not delete, overwrite, or move either the real directory or backup; fail with both exact recovery paths.
 
-A focused test requires `ScreenFixApplicationContext` to consume `ScreenFixPaths.ConfigFile`, so the harness cannot silently protect a different path than production uses. Baseline and candidate launches alternate while the protected real directory remains empty; no persistent user configuration is read or written.
+Baseline and candidate launches alternate while the protected real directory remains empty; no persistent user configuration is read or written. A focused refusal regression holds the production mutex before invoking the harness and proves the harness exits before creating a backup path or changing any configuration byte.
 
 The endpoint is `Process.WaitForInputIdle`: ScreenFix creates and shows its `NotifyIcon` before entering the WinForms message loop, so the first idle state occurs after tray initialization. Each launch has a 10-second timeout, must remain alive through the endpoint, and is terminated by the measurement harness afterward.
 
@@ -208,7 +219,7 @@ The script records every duration and each median. The candidate passes only whe
 - first-start median is at most the baseline median plus the greater of 750 ms or 75 percent of the baseline, and is below 5 seconds; and
 - warm-start median is at most the baseline median plus the greater of 250 ms or 50 percent of the baseline, and is below 2 seconds.
 
-Timeouts, early process exits, failure to reach input-idle, configuration backup/restoration failures, extraction cleanup failures, or process-termination failures fail the regression. Interactive functional checks must launch the exact accepted candidate executable, not a later rebuild.
+Timeouts, early process exits, failure to acquire the production mutex, failure to reach input-idle, configuration backup/restoration failures, extraction cleanup failures, or process-termination failures fail the regression. Interactive functional checks must launch the exact accepted staged executables, not later rebuilds, and do not use the destructive measurement harness.
 
 ## Testing
 
@@ -220,9 +231,9 @@ Testing remains incremental and preserves the existing RED/GREEN evidence standa
 4. Prove the one shared C# verifier accepts both real packages in their declared modes, rejects a mode mismatch, and rejects a real candidate whose managed ICO is mutated before bundling.
 5. Run the native PE icon negative control and exact payload comparison unchanged against both real packages.
 6. Prove the package scripts reject an SDK other than 10.0.100 or runtime packs other than 10.0.0, ignore a newer externally visible .NET 10 SDK, and log both CLI and MSBuild SDK resolution plus the runtime-pack set.
-7. Add configuration-isolation tests for path identity, invalid/reparse paths, existing-directory backup, clean launch state, per-launch cleanup, restoration after success, and restoration after measurement failure.
+7. Add configuration-isolation tests for path and mutex identity, refusal without mutation when an instance already owns the gate, invalid/reparse paths, existing-directory backup, gate handoff and reacquisition around every launch, clean launch state, per-launch cleanup, restoration after success, and non-destructive failure when ownership cannot be reacquired.
 8. Run the isolated same-commit size comparison and the first/warm startup measurements with their stated limits.
-9. Prove release staging contains exactly the two named Windows assets, identifies the compressed one as recommended, and emits matching SHA-256 entries for both.
+9. Prove release staging contains exactly the two named Windows assets, identifies the compressed one as recommended, emits matching SHA-256 entries for both, and matches the names in `README.md`.
 10. Run all Windows-native and portable Windows tests.
 11. Run the existing macOS and Lua suites to prove the packaging-only change has no cross-platform regression.
 12. Run the final Windows workflow twice at the exact commit: push and pull-request events.
@@ -242,11 +253,13 @@ The change is ready only when all of the following are true:
 - all existing Windows behavior tests pass unchanged;
 - package mutation and iconless negative controls fail for the intended reason;
 - first-start and warm-start medians satisfy the documented relative and absolute limits;
-- the pre-measurement ScreenFix configuration directory is restored byte-for-byte and no test directory remains;
+- the startup harness runs only with explicit disposable-runner opt-in, refuses without mutation when ScreenFix already owns the production mutex, and owns that mutex whenever it moves or deletes configuration data;
+- the pre-measurement ScreenFix configuration directory is restored byte-for-byte and no test directory remains after a successful measurement;
 - Windows, macOS, and Lua regression suites pass;
 - interactive Windows checks use both exact staged executables and confirm the tray icon, Explorer icon, calibration, settings, snap, ordinary maximize, and full-screen exclusion behavior;
 - the versioned checksum file contains correct entries for both Windows assets and the macOS asset;
 - the GitHub release contains both Windows assets with the approved names and labels;
+- `README.md` identifies the compressed filename as recommended and the uncompressed filename as fallback, with no obsolete Windows ZIP or bare `ScreenFix.exe` release instruction;
 - release notes report both measured sizes instead of estimating them.
 
 If the 20 percent reduction is not achieved, startup limits fail, or behavior differs, the compressed executable is not released or recommended. The validated uncompressed executable remains the Windows download and no smaller release is claimed.
