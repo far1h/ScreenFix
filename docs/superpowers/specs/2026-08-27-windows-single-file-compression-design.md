@@ -24,7 +24,7 @@ References:
 
 - [.NET single-file deployment](https://learn.microsoft.com/dotnet/core/deploying/single-file/overview)
 - [.NET trimming incompatibilities](https://learn.microsoft.com/dotnet/core/deploying/trimming/incompatibilities#windows-forms)
-- [.NET HostModel bundle compression](https://github.com/dotnet/runtime/blob/main/src/installer/managed/Microsoft.NET.HostModel/Bundle/Bundler.cs)
+- [.NET 10.0.0 HostModel bundle compression](https://github.com/dotnet/runtime/blob/v10.0.0/src/installer/managed/Microsoft.NET.HostModel/Bundle/Bundler.cs)
 
 ## Goals
 
@@ -82,7 +82,11 @@ The outputs must use separate `--artifacts-path` and publish directories so apph
 
 The final production publish uses the compressed configuration only after this comparison passes. The test reports both byte counts and the percentage reduction.
 
-The comparison is pinned to the repository's .NET SDK 10.0.100 and its .NET 10.0.0 self-contained runtime pack. An SDK or runtime-pack update must establish a new same-commit baseline rather than reusing an older byte count.
+The comparison is pinned operationally to .NET SDK 10.0.100 and its .NET 10.0.0 self-contained runtime packs. The repository `global.json` allows `latestFeature` roll-forward for ordinary development, so the package scripts cannot rely on repository-root SDK selection.
+
+Each package script creates a temporary SDK-selection directory containing a minimal `global.json` with version `10.0.100`, `rollForward: "disable"`, and `allowPrerelease: false`. It changes to that directory before invoking the absolute project path, requires `dotnet --version` to equal `10.0.100`, and logs `dotnet --info`. Baseline, candidate, production publish, and their restore steps all run through this exact selector.
+
+After restore, the script reads each isolated `project.assets.json` and requires the resolved `Microsoft.NETCore.App.Runtime.win-x64` and `Microsoft.WindowsDesktop.App.Runtime.win-x64` packages to be exactly `10.0.0`, with no conflicting `Microsoft.*.App.Runtime.win-x64` version. It also requires baseline and candidate runtime-pack sets to be identical. A missing, additional, or different runtime pack fails before size comparison. An SDK or runtime-pack update requires an explicit design/test update and a new same-commit baseline.
 
 ### Publish configuration
 
@@ -99,6 +103,8 @@ These properties remain unchanged:
 - `UseAppHost=true`
 
 No production C# behavior changes are part of this work.
+
+One behavior-neutral refactor is permitted for safe test isolation: move the existing `Environment.GetFolderPath(LocalApplicationData)` plus `ScreenFix/config.json` computation into an internal `ScreenFixPaths.ConfigFile` member. `ScreenFixApplicationContext` and the Windows startup harness both use that exact member. The existing `InternalsVisibleTo("ScreenFix.Windows.Tests")` access remains sufficient; no environment override or user-facing configuration option is added.
 
 ### Compressed-bundle verification
 
@@ -163,21 +169,33 @@ Expected application behavior is therefore identical. Missing icons, new loose p
 
 ### Startup measurement
 
-The Windows package regression measures the exact baseline and candidate executables on the same runner. Each process receives an isolated `LOCALAPPDATA` and `DOTNET_BUNDLE_EXTRACT_BASE_DIR`, so it cannot read user configuration or reuse the other variant's extraction cache.
+The Windows package regression measures the exact baseline and candidate executables on the same runner. Each process receives an isolated `DOTNET_BUNDLE_EXTRACT_BASE_DIR`, so it cannot reuse the other variant's extraction cache.
+
+Changing the `LOCALAPPDATA` environment variable is not sufficient because .NET resolves `SpecialFolder.LocalApplicationData` through the Windows known-folder API. The startup harness instead calls the same internal `ScreenFixPaths.ConfigFile` member used by production, derives the exact ScreenFix directory, and protects that real path for the complete measurement transaction:
+
+1. require an absolute non-root path beneath the Windows Local AppData known folder;
+2. reject a ScreenFix directory or parent represented by a reparse point;
+3. choose a unique nonexistent sibling backup path;
+4. atomically move an existing ScreenFix directory to that backup before any launch;
+5. require the real ScreenFix directory to be absent before each measured process, then remove only test-created contents after that process exits;
+6. in an outer `finally`, remove any remaining test-created ScreenFix directory and atomically restore the original backup;
+7. fail the regression on backup, per-launch cleanup, or restoration errors after making every safe restoration attempt.
+
+A focused test requires `ScreenFixApplicationContext` to consume `ScreenFixPaths.ConfigFile`, so the harness cannot silently protect a different path than production uses. Baseline and candidate launches alternate while the protected real directory remains empty; no persistent user configuration is read or written.
 
 The endpoint is `Process.WaitForInputIdle`: ScreenFix creates and shows its `NotifyIcon` before entering the WinForms message loop, so the first idle state occurs after tray initialization. Each launch has a 10-second timeout, must remain alive through the endpoint, and is terminated by the measurement harness afterward.
 
 Measurements alternate baseline and candidate to reduce runner drift:
 
-- **First start:** five measured launches per variant, each with a fresh extraction and app-data directory.
-- **Warm start:** one unmeasured seed plus five measured launches per variant, reusing only that variant's extraction and app-data directories.
+- **First start:** five measured launches per variant, each with a fresh extraction directory and an empty protected ScreenFix configuration directory.
+- **Warm start:** one unmeasured seed plus five measured launches per variant, reusing only that variant's extraction directory while resetting the protected ScreenFix configuration directory before every launch.
 
 The script records every duration and each median. The candidate passes only when:
 
 - first-start median is at most the baseline median plus the greater of 750 ms or 75 percent of the baseline, and is below 5 seconds; and
 - warm-start median is at most the baseline median plus the greater of 250 ms or 50 percent of the baseline, and is below 2 seconds.
 
-Timeouts, early process exits, failure to reach input-idle, or cleanup failures fail the regression. Interactive functional checks must launch the exact accepted candidate executable, not a later rebuild.
+Timeouts, early process exits, failure to reach input-idle, configuration backup/restoration failures, extraction cleanup failures, or process-termination failures fail the regression. Interactive functional checks must launch the exact accepted candidate executable, not a later rebuild.
 
 ## Testing
 
@@ -188,10 +206,12 @@ Testing remains incremental and preserves the existing RED/GREEN evidence standa
 3. Add focused managed-resource tests for: invalid or missing CLR/resource directory; RVA mapping and overflow; missing/duplicate resource name; non-nil implementation; resource offset overflow; truncated length prefix; payload outside the directory; wrong length; and mutated bytes.
 4. Prove the one shared C# verifier accepts the real compressed package and rejects a real candidate whose managed ICO is mutated before bundling.
 5. Keep the native PE icon negative control and exact payload comparison unchanged.
-6. Run the isolated same-commit size comparison and the first/warm startup measurements with their stated limits.
-7. Run all Windows-native and portable Windows tests.
-8. Run the existing macOS and Lua suites to prove the packaging-only change has no cross-platform regression.
-9. Run the final Windows workflow twice at the exact commit: push and pull-request events.
+6. Prove the package scripts reject an SDK other than 10.0.100 or runtime packs other than 10.0.0, and log the resolved SDK/runtime-pack set.
+7. Add configuration-isolation tests for path identity, invalid/reparse paths, existing-directory backup, clean launch state, per-launch cleanup, restoration after success, and restoration after measurement failure.
+8. Run the isolated same-commit size comparison and the first/warm startup measurements with their stated limits.
+9. Run all Windows-native and portable Windows tests.
+10. Run the existing macOS and Lua suites to prove the packaging-only change has no cross-platform regression.
+11. Run the final Windows workflow twice at the exact commit: push and pull-request events.
 
 ## Acceptance criteria
 
@@ -199,11 +219,13 @@ The change is ready only when all of the following are true:
 
 - the compressed executable is at most 80 percent of the same-commit uncompressed baseline;
 - the published package remains one self-contained `ScreenFix.exe` with no runtime prerequisite;
+- package logs prove SDK 10.0.100 and the exact .NET 10.0.0 win-x64 runtime-pack set;
 - the managed tray ICO in the final compressed bundle exactly matches the committed ICO;
 - the native executable icon still contains the exact nine canonical frames;
 - all existing Windows behavior tests pass unchanged;
 - package mutation and iconless negative controls fail for the intended reason;
 - first-start and warm-start medians satisfy the documented relative and absolute limits;
+- the pre-measurement ScreenFix configuration directory is restored byte-for-byte and no test directory remains;
 - Windows, macOS, and Lua regression suites pass;
 - interactive Windows checks use the exact accepted candidate and confirm the tray icon, Explorer icon, calibration, settings, snap, ordinary maximize, and full-screen exclusion behavior;
 - release notes report the measured size instead of estimating it.
