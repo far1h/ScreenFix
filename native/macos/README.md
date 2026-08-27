@@ -11,7 +11,12 @@ From the repository root:
 native/macos/scripts/run-tests.sh
 native/macos/scripts/build-release.sh
 native/macos/scripts/package-arm64.sh
+native/macos/scripts/test-package-arm64.sh
 ```
+
+`Resources/ScreenFixAppIcon.svg` is the editable icon source. During packaging,
+`scripts/build-app-icon.sh` uses macOS system tools to generate the ICNS, so generated
+icons are not committed and full Xcode is unnecessary.
 
 The package command creates ignored local artifacts at:
 
