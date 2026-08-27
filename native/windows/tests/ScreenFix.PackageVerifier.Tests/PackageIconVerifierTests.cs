@@ -151,7 +151,7 @@ public sealed class PackageIconVerifierTests : IDisposable
     [Theory]
     [InlineData("compressed", BundleCompressionMode.Compressed)]
     [InlineData("uncompressed", BundleCompressionMode.Uncompressed)]
-    public void ValidArguments_ConstructRequestAndReturnPlaceholder(
+    public void ValidArguments_VerifyPackageAndReturnSuccess(
         string modeArgument,
         BundleCompressionMode expectedMode)
     {
@@ -172,11 +172,114 @@ public sealed class PackageIconVerifierTests : IDisposable
 
         var result = Invoke(arguments);
 
+        var executableBytes = new FileInfo(executable).Length;
+        var assemblyBytes = new ManagedPeFixtureBuilder().Build().LongLength;
+        var storedBytes = ReadStoredAssemblyBytes(executable, expectedMode);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(
+            $"verified mode={modeArgument} executable-bytes={executableBytes} "
+                + $"managed-declared-bytes={assemblyBytes} "
+                + $"managed-stored-bytes={storedBytes} "
+                + $"icon-bytes={ManagedPeFixtureBuilder.IconBytes.Length}"
+                + Environment.NewLine,
+            result.Output);
+        Assert.Empty(result.Error);
+    }
+
+    [Fact]
+    public void Verify_RejectsManagedIconWithWrongLength()
+    {
+        var shorterIcon = ManagedPeFixtureBuilder.IconBytes[..^1];
+        var builder = new ManagedPeFixtureBuilder
+        {
+            ManagedResourceDirectoryBytes = CreateResourceBlob(shorterIcon),
+        };
+        var executable = CreateBundle(
+            "uncompressed",
+            builder.Build());
+        var canonicalIcon = CreateFile(
+            "canonical-wrong-length.ico",
+            ManagedPeFixtureBuilder.IconBytes);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            PackageIconVerifier.Verify(new PackageVerificationRequest(
+                executable,
+                canonicalIcon,
+                BundleCompressionMode.Uncompressed)));
+
+        Assert.Contains(
+            "managed icon length does not match canonical icon",
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Verify_RejectsOneByteMutatedManagedIcon()
+    {
+        var mutatedIcon = (byte[])ManagedPeFixtureBuilder.IconBytes.Clone();
+        mutatedIcon[^1] ^= 0xff;
+        var builder = new ManagedPeFixtureBuilder
+        {
+            ManagedResourceDirectoryBytes = CreateResourceBlob(mutatedIcon),
+        };
+        var executable = CreateBundle(
+            "uncompressed",
+            builder.Build());
+        var canonicalIcon = CreateFile(
+            "canonical-mutated.ico",
+            ManagedPeFixtureBuilder.IconBytes);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            PackageIconVerifier.Verify(new PackageVerificationRequest(
+                executable,
+                canonicalIcon,
+                BundleCompressionMode.Uncompressed)));
+
+        Assert.Contains(
+            "managed icon does not match canonical icon",
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Run_VerificationFailureReturnsExitOneWithoutSuccessOutput()
+    {
+        var arguments = CreateValidArguments("uncompressed");
+        File.WriteAllBytes(arguments[3], [0x01]);
+
+        var result = Invoke(arguments);
+
         Assert.Equal(1, result.ExitCode);
         Assert.Empty(result.Output);
         Assert.Equal(
-            $"package verification is not implemented{Environment.NewLine}",
+            $"managed icon length does not match canonical icon{Environment.NewLine}",
             result.Error);
+    }
+
+    [Fact]
+    public void Run_ZeroMetadataDirectoryReturnsControlledInvalidPeFailure()
+    {
+        var assembly = new ManagedPeFixtureBuilder().Build();
+        ManagedPeFixtureBuilder.RemoveMetadataDirectory(assembly);
+        var arguments = new List<string>
+        {
+            "--executable",
+            CreateBundle("uncompressed", assembly),
+            "--canonical-icon",
+            CreateFile("metadata-missing.ico", ManagedPeFixtureBuilder.IconBytes),
+            "--compression",
+            "uncompressed",
+        };
+
+        var result = Invoke(arguments);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(result.Output);
+        Assert.Equal(
+            $"managed assembly is not a valid PE image{Environment.NewLine}",
+            result.Error);
+        Assert.DoesNotContain("System.", result.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain(" at ", result.Error, StringComparison.Ordinal);
     }
 
     public void Dispose()
@@ -200,34 +303,54 @@ public sealed class PackageIconVerifierTests : IDisposable
             "--executable",
             CreateBundle(compressionMode),
             "--canonical-icon",
-            CreateFile("ScreenFix.ico"),
+            CreateFile("ScreenFix.ico", ManagedPeFixtureBuilder.IconBytes),
             "--compression",
             compressionMode,
         ];
     }
 
-    private string CreateFile(string fileName)
+    private string CreateFile(string fileName, byte[]? bytes = null)
     {
         var path = Path.Combine(_temporaryDirectory, fileName);
-        File.WriteAllBytes(path, [1]);
+        File.WriteAllBytes(path, bytes ?? [1]);
         return path;
     }
 
-    private string CreateBundle(string compressionMode)
+    private string CreateBundle(string compressionMode, byte[]? assemblyBytes = null)
     {
+        assemblyBytes ??= new ManagedPeFixtureBuilder().Build();
         var builder = new BundleFixtureBuilder();
+        builder.Entries[0].Payload = assemblyBytes;
+        builder.Entries[0].Size = assemblyBytes.LongLength;
         if (compressionMode == "compressed")
         {
             var compressed = BundleFixtureBuilder.CreateStoredDeflate(
-                BundleFixtureBuilder.AssemblyBytes);
+                assemblyBytes);
             builder.Entries[0].Payload = compressed;
-            builder.Entries[0].Size = BundleFixtureBuilder.AssemblyBytes.Length;
             builder.Entries[0].CompressedSize = compressed.LongLength;
         }
 
         var path = Path.Combine(_temporaryDirectory, "ScreenFix.exe");
         File.WriteAllBytes(path, builder.Build());
         return path;
+    }
+
+    private static long ReadStoredAssemblyBytes(
+        string executable,
+        BundleCompressionMode mode)
+    {
+        return SingleFileBundleReader.ExtractScreenFixAssembly(executable, mode)
+            .StoredSize;
+    }
+
+    private static byte[] CreateResourceBlob(byte[] payload)
+    {
+        var blob = new byte[sizeof(int) + payload.Length];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(
+            blob,
+            payload.Length);
+        payload.CopyTo(blob.AsSpan(sizeof(int)));
+        return blob;
     }
 
     private static InvocationResult Invoke(IReadOnlyList<string> arguments)

@@ -40,7 +40,6 @@ internal static class Program
         TextWriter output,
         TextWriter error)
     {
-        _ = output;
         if (!TryCreateRequest(args, out var request, out var diagnostic))
         {
             error.WriteLine(diagnostic);
@@ -49,9 +48,21 @@ internal static class Program
 
         try
         {
-            _ = SingleFileBundleReader.ExtractScreenFixAssembly(
-                request!.Executable,
-                request.CompressionMode);
+            var result = PackageIconVerifier.Verify(request!);
+            var mode = result.CompressionMode switch
+            {
+                BundleCompressionMode.Compressed => "compressed",
+                BundleCompressionMode.Uncompressed => "uncompressed",
+                _ => throw new InvalidDataException(
+                    "package verification compression mode is unknown"),
+            };
+            output.WriteLine(
+                $"verified mode={mode} "
+                    + $"executable-bytes={result.ExecutableBytes} "
+                    + $"managed-declared-bytes={result.ManagedAssemblyDeclaredBytes} "
+                    + $"managed-stored-bytes={result.ManagedAssemblyStoredBytes} "
+                    + $"icon-bytes={result.IconBytes}");
+            return 0;
         }
         catch (Exception exception) when (
             exception is InvalidDataException
@@ -61,9 +72,6 @@ internal static class Program
             error.WriteLine(exception.Message);
             return 1;
         }
-
-        error.WriteLine("package verification is not implemented");
-        return 1;
     }
 
     internal static bool TryCreateRequest(

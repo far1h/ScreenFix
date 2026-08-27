@@ -841,16 +841,21 @@ public sealed class SingleFileBundleReaderTests : IDisposable
     [Fact]
     public async Task FreshProcess_EnablesStrictValidationForValidCompressedBundle()
     {
-        var path = WriteCompressedBundle(
-            BundleFixtureBuilder.CreateStoredDeflate(
-                BundleFixtureBuilder.AssemblyBytes));
+        var assembly = new ManagedPeFixtureBuilder().Build();
+        var compressed = BundleFixtureBuilder.CreateStoredDeflate(assembly);
+        var path = WriteCompressedBundle(compressed, assembly.LongLength);
 
         var result = await RunVerifierProcess(path, "compressed");
 
-        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(0, result.ExitCode);
         Assert.Equal(
-            $"package verification is not implemented{Environment.NewLine}",
-            result.Error);
+            $"verified mode=compressed executable-bytes={new FileInfo(path).Length} "
+                + $"managed-declared-bytes={assembly.LongLength} "
+                + $"managed-stored-bytes={compressed.LongLength} "
+                + $"icon-bytes={ManagedPeFixtureBuilder.IconBytes.Length}"
+                + Environment.NewLine,
+            result.Output);
+        Assert.Empty(result.Error);
     }
 
     [Fact]
@@ -967,7 +972,9 @@ public sealed class SingleFileBundleReaderTests : IDisposable
         string compressionMode)
     {
         var canonicalIcon = Path.Combine(_temporaryDirectory, "ScreenFix.ico");
-        await File.WriteAllBytesAsync(canonicalIcon, [0x01]);
+        await File.WriteAllBytesAsync(
+            canonicalIcon,
+            ManagedPeFixtureBuilder.IconBytes);
         var fileName = OperatingSystem.IsWindows()
             ? "ScreenFix.PackageVerifier.exe"
             : "ScreenFix.PackageVerifier";
