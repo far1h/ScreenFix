@@ -118,8 +118,7 @@ public sealed class WindowCorrectorTests
             ShowCommand: 3,
             new NativeWindowPoint(-1, -2),
             new NativeWindowPoint(3, 4),
-            new NativeWindowRectangle(10, 20, 410, 320),
-            new NativeWindowRectangle(0, 0, 1920, 1080));
+            new NativeWindowRectangle(10, 20, 410, 320));
         var inspector = new FakeInspector(Inspection(
             new RectD(450, 100, 100, 100),
             new RectD(440, 90, 120, 120),

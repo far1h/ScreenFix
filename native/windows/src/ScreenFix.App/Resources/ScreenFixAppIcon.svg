@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 220">
+  <defs>
+    <linearGradient id="background" gradientUnits="userSpaceOnUse" x1="28" y1="18" x2="192" y2="207">
+      <stop offset="0" stop-color="#FFB23E"/>
+      <stop offset="0.54" stop-color="#F46744"/>
+      <stop offset="1" stop-color="#A92C4D"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="200" height="200" rx="45" fill="url(#background)"/>
+  <rect x="38" y="54" width="144" height="103" rx="18" fill="#FFF7E8"/>
+  <rect x="50" y="67" width="120" height="77" rx="9" fill="#FFD8A0"/>
+  <path d="M57 77 L91 134" fill="none" stroke="#FF9F61" stroke-width="8" stroke-linecap="round" opacity="0.8"/>
+  <path d="M133 77 L163 126" fill="none" stroke="#FF9F61" stroke-width="8" stroke-linecap="round" opacity="0.8"/>
+  <rect x="96" y="54" width="28" height="103" rx="8" fill="#27212B"/>
+  <path d="M88 172 H132" fill="none" stroke="#FFF5E5" stroke-width="10" stroke-linecap="round"/>
+  <path d="M110 158 V172" fill="none" stroke="#FFF5E5" stroke-width="10" stroke-linecap="round"/>
+  <g fill="none" stroke="#F7C46C" stroke-width="4" stroke-linecap="round">
+    <path d="M103 75 H117"/><path d="M103 94 H117"/>
+    <path d="M103 113 H117"/><path d="M103 132 H117"/>
+  </g>
+</svg>

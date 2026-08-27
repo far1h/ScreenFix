@@ -168,6 +168,20 @@ Removing the link does not delete the project directory.
 
 ## Collaborating
 
+On Windows, run the native tests and publish the asserted single-file x64 app:
+
+```powershell
+native\windows\scripts\test-windows-native.ps1
+native\windows\scripts\publish-win-x64.ps1
+```
+
+On macOS, regenerate and verify the committed Windows icon after editing its SVG:
+
+```bash
+native/windows/scripts/build-app-icon.sh
+native/windows/scripts/test-build-app-icon.sh
+```
+
 Build the native Apple Silicon app and zip from the project root:
 
 ```bash

@@ -233,12 +233,7 @@ internal sealed partial class WindowNative :
             placement.NormalPosition.Left,
             placement.NormalPosition.Top,
             placement.NormalPosition.Right,
-            placement.NormalPosition.Bottom),
-        new NativeWindowRectangle(
-            placement.DeviceRectangle.Left,
-            placement.DeviceRectangle.Top,
-            placement.DeviceRectangle.Right,
-            placement.DeviceRectangle.Bottom));
+            placement.NormalPosition.Bottom));
 
     private static NativeWindowPlacement ToNativePlacement(
         WindowPlacementData placement) => new()
@@ -258,13 +253,6 @@ internal sealed partial class WindowNative :
                 Top = placement.NormalPosition.Top,
                 Right = placement.NormalPosition.Right,
                 Bottom = placement.NormalPosition.Bottom,
-            },
-            DeviceRectangle = new NativeRect
-            {
-                Left = placement.DeviceRectangle.Left,
-                Top = placement.DeviceRectangle.Top,
-                Right = placement.DeviceRectangle.Right,
-                Bottom = placement.DeviceRectangle.Bottom,
             },
         };
 

@@ -62,17 +62,27 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
     private void InitializeTrayAndRuntime()
     {
         var uiBridge = new WinFormsUiBridge();
-        var icon = new NotifyIcon
+        Icon? ownedIcon = null;
+        NotifyIcon? icon = null;
+        try
         {
-            Icon = SystemIcons.Application,
-            Text = "ScreenFix",
-        };
-        lifetime.OwnTrayIcon(() =>
+            ownedIcon = TrayIconLoader.Load();
+            icon = new NotifyIcon();
+            icon.Icon = ownedIcon;
+            icon.Text = "ScreenFix";
+
+            var registeredIcon = icon;
+            var registeredOwnedIcon = ownedIcon;
+            lifetime.OwnTrayIcon(() => DisposeTrayResources(
+                registeredIcon,
+                registeredOwnedIcon,
+                uiBridge));
+        }
+        catch
         {
-            icon.Visible = false;
-            icon.Dispose();
-            uiBridge.Dispose();
-        });
+            DisposeTrayResources(icon, ownedIcon, uiBridge);
+            throw;
+        }
 
         notices = new NotifyIconNoticeSink(icon);
         var menu = new TrayMenuHost(icon, ExecuteCommand);
@@ -94,6 +104,38 @@ internal sealed class ScreenFixApplicationContext : ApplicationContext
         catch (Exception error)
         {
             TryShowNotice(error.Message);
+        }
+    }
+
+    private static void DisposeTrayResources(
+        NotifyIcon? trayIcon,
+        Icon? ownedIcon,
+        WinFormsUiBridge uiBridge)
+    {
+        try
+        {
+            if (trayIcon is not null)
+            {
+                try
+                {
+                    trayIcon.Visible = false;
+                }
+                finally
+                {
+                    trayIcon.Dispose();
+                }
+            }
+        }
+        finally
+        {
+            try
+            {
+                ownedIcon?.Dispose();
+            }
+            finally
+            {
+                uiBridge.Dispose();
+            }
         }
     }
 
