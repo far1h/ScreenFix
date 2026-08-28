@@ -544,6 +544,9 @@ ALLOWED_CSS_PROPERTIES = frozenset(
         "border-top",
         "box-sizing",
         "color",
+        "content",
+        "counter-increment",
+        "counter-reset",
         "cursor",
         "display",
         "flex",
@@ -606,15 +609,17 @@ base || img || max-width height display
 base || h1, h2, h3, p || margin-top
 base || figure || margin
 base || a || color
-base || a:not(.download-primary) || text-decoration text-underline-offset
+base || a:not(.download-primary):not(.brand) || text-decoration text-underline-offset
 base || a:hover || text-decoration-thickness
 base || figcaption || margin-top color font-size line-height
-base || .site-header, main > *, .site-footer || width max-width margin-inline padding-inline
-base || .site-header || min-height display flex-wrap align-items justify-content gap padding-block border-bottom
+base || main > *, .site-footer || width max-width margin-inline padding-inline
+base || .site-header || width border-bottom
+base || .site-header-inner || width max-width margin-inline padding-inline min-height display flex-wrap align-items justify-content gap padding-block
 base || .brand || min-height display align-items gap color font-size font-weight text-decoration
+base || .brand:hover || text-decoration
 base || .brand img || width height flex
 base || .site-header nav || display flex-wrap align-items gap
-base || .download-primary || min-height display align-items justify-content padding border-radius color font-weight line-height text-align text-decoration transition
+base || .download-primary || min-height display flex-direction align-items justify-content padding border-radius color font-weight line-height text-align text-decoration transition
 base || .download-windows || background
 base || .download-windows:hover || background
 base || .download-macos || background
@@ -641,6 +646,9 @@ base || main > section || padding-block border-bottom
 base || .how-step || display grid-template-columns gap padding-block border-top
 base || .how-step:last-child || border-bottom
 base || .step-number || grid-row color font-size font-weight
+base || .how-step > img, #privacy > img, #requirements > img || width aspect-ratio object-fit border-radius
+base || .how-step > img || grid-column
+base || .how-step-copy || grid-column
 base || .how-step h3, .how-step p || margin-bottom
 base || .how-step p || color
 base || #results || display grid-template-columns gap
@@ -651,29 +659,39 @@ base || .download-option || padding
 base || .download-option p || max-width
 base || .download-option .download-primary || margin-block
 base || .download-fallback || min-height display align-items margin-block vertical-align
+base || .download-note || font-size line-height color
+base || .is-recommended span || display margin-top font-size font-weight line-height
+base || #privacy, #requirements || display grid-template-columns gap
+base || #privacy h2, #requirements h2 || margin-bottom
 base || #privacy p || max-width
-base || #requirements ul || max-width margin padding-inline-start border-top
-base || #requirements li || padding border-bottom
-base || #requirements li::marker || color
+base || #requirements dl || margin counter-reset
+base || .requirement-row || display grid-template-columns gap padding-block border-top counter-increment
+base || .requirement-row:last-child || border-bottom
+base || .requirement-row::before || content grid-row color font-size font-weight
+base || .requirement-row dt || font-size font-weight line-height
+base || .requirement-row dd || margin
 base || #faq details || border-top
 base || #faq details:last-child || border-bottom
 base || #faq summary || min-height padding-block cursor font-weight
 base || #faq details p || max-width padding color
 base || .site-footer || display flex-wrap align-items gap padding-block font-size
 base || .site-footer p || flex margin-bottom color
-max700 || .site-header || align-items
-max700 || .site-header nav || width
+base || .footer-credit || flex margin-top
+max700 || .brand || width justify-content
+max700 || .site-header nav || width justify-content
 max700 || .site-header nav a || flex justify-content
 max700 || .download-option + .download-option || border-top
 min701 || .download-pair || grid-template-columns
 min701 || .download-option + .download-option || border-left
 min900 || .hero || grid-template-columns
 min900 || .how-step || grid-template-columns gap
-min900 || .how-step p || grid-column
+min900 || .how-step-copy || grid-column
+min900 || #privacy, #requirements || grid-template-columns gap align-items
+min900 || #privacy h2, #requirements h2 || grid-column
 min900 || #results || grid-template-columns align-items
 min900 || #results h2 || grid-column
 min900 || #results figure:last-of-type || margin-top
-min1024 || .site-header, main > *, .site-footer || padding-inline
+min1024 || .site-header-inner, main > *, .site-footer || padding-inline
 reduced || html || scroll-behavior
 reduced || *, *::before, *::after || transition
 """.strip()
@@ -1976,7 +1994,8 @@ def _validate_text_contrast_contract(styles: str) -> None:
         _normalized_selector_group(".hero-explanation"): ("--muted", ("--surface",)),
         _normalized_selector_group(".step-number"): ("--button-hover", ("--surface",)),
         _normalized_selector_group(".how-step p"): ("--muted", ("--surface",)),
-        _normalized_selector_group("#requirements li::marker"): (
+        _normalized_selector_group(".download-note"): ("--muted", ("--surface",)),
+        _normalized_selector_group(".requirement-row::before"): (
             "--button-hover",
             ("--surface",),
         ),
@@ -2090,19 +2109,25 @@ def _validate_figure_margin_contract(styles: str) -> None:
         raise ContractError("figure captions must keep 12px spacing")
 
 
-def _validate_requirements_list_contract(styles: str) -> None:
-    """Keep native requirements-list semantics and an approved visible marker."""
-    requirements = CssNode("section", identifier="requirements")
-    list_styles = effective_declarations(styles, CssNode("ul", parent=requirements), 1024)
-    if any(list_styles.get(name, "").strip().lower() == "none" for name in ("list-style", "list-style-type")):
-        raise ContractError("requirements must keep native list markers")
-    marker_colors = [
-        rule.declarations["color"]
-        for rule in parse_css_rules(styles)
-        if "#requirements li::marker" in rule.selectors and "color" in rule.declarations
-    ]
-    if marker_colors != ["var(--button-hover)"]:
-        raise ContractError("requirements markers must use the legible dark accent")
+def _validate_requirements_rows_contract(styles: str) -> None:
+    """Keep the requirements as ruled documentation rows, never cards."""
+    row = _css_block(styles, ".requirement-row")
+    if (
+        "border-top: 1px solid var(--rule);" not in row
+        or "counter-increment: requirement;" not in row
+    ):
+        raise ContractError("requirements must use numbered ruled rows")
+    if re.search(r"\b(?:background|border-radius|box-shadow)\s*:", row):
+        raise ContractError("requirements rows must not become cards")
+    last_row = _css_block(styles, ".requirement-row:last-child")
+    if "border-bottom: 1px solid var(--rule);" not in last_row:
+        raise ContractError("requirements must end with a ruled row")
+    number = _css_block(styles, ".requirement-row::before")
+    if (
+        "content: counter(requirement);" not in number
+        or "color: var(--button-hover);" not in number
+    ):
+        raise ContractError("requirements numbers must use the legible coral accent")
 
 
 def _validate_interaction_contract(styles: str) -> None:
@@ -2133,7 +2158,7 @@ def _validate_interaction_contract(styles: str) -> None:
     nav_links = _css_block(styles, ".site-header nav a,\n.site-footer a")
     if "display: inline-flex;" not in nav_links or _css_pixels(nav_links, "min-height") < 44:
         raise ContractError("navigation link target must be at least 44px")
-    linked_copy = _css_block(styles, "a:not(.download-primary)")
+    linked_copy = _css_block(styles, "a:not(.download-primary):not(.brand)")
     if "text-decoration: underline;" not in linked_copy or "text-underline-offset:" not in linked_copy:
         raise ContractError("text links need a non-color underline cue")
 
@@ -2238,7 +2263,11 @@ def _validate_supported_cascade_contract(styles: str) -> None:
         if required_properties.isdisjoint(rule.declarations):
             continue
         for selector in rule.selectors:
-            if selector == "#requirements li::marker" and set(rule.declarations) == {"color"}:
+            if (
+                selector == ".requirement-row::before"
+                and set(rule.declarations)
+                == {"content", "grid-row", "color", "font-size", "font-weight"}
+            ):
                 continue
             functions = re.findall(r":([\w-]+)\(", selector)
             unsupported_syntax = any(character in selector for character in "+~[]&\\")
@@ -2330,9 +2359,287 @@ def _validate_global_style_invariants(styles: str) -> None:
         raise ContractError("only the exact reviewed download and reduced-motion transitions are allowed")
 
 
+def _validate_mobile_brand_contract(styles: str) -> None:
+    """Keep the mobile brand centered and free of link underlines."""
+    body = CssNode("body")
+    header = CssNode("header", frozenset({"site-header"}), parent=body)
+    inner = CssNode("div", frozenset({"site-header-inner"}), parent=header)
+    brand = CssNode("a", frozenset({"brand"}), parent=inner)
+    brand_hover = CssNode(
+        "a",
+        frozenset({"brand"}),
+        states=frozenset({"hover"}),
+        parent=inner,
+    )
+    declarations = effective_declarations(styles, brand, 375)
+    hover_declarations = effective_declarations(styles, brand_hover, 375)
+    if declarations.get("text-decoration") != "none":
+        raise ContractError("mobile brand must not be underlined")
+    if hover_declarations.get("text-decoration") != "none":
+        raise ContractError("mobile brand hover must not be underlined")
+    if declarations.get("width") != "100%" or declarations.get("justify-content") != "center":
+        raise ContractError("mobile brand must occupy one centered full row")
+
+
+def _validate_header_shell_contract(styles: str) -> None:
+    """Keep the divider full width while constraining only header content."""
+    body = CssNode("body")
+    header = CssNode("header", frozenset({"site-header"}), parent=body)
+    inner = CssNode("div", frozenset({"site-header-inner"}), parent=header)
+    navigation = CssNode("nav", parent=inner)
+    for viewport, gutter in ((375, "24px"), (768, "24px"), (1024, "48px"), (1440, "48px")):
+        header_styles = effective_declarations(styles, header, viewport)
+        inner_styles = effective_declarations(styles, inner, viewport)
+        if (
+            header_styles.get("width") != "100%"
+            or "max-width" in header_styles
+            or "margin-inline" in header_styles
+            or "padding-inline" in header_styles
+            or header_styles.get("border-bottom") != "1px solid var(--rule)"
+        ):
+            raise ContractError("divider must belong to an unconstrained full-width header")
+        expected_inner = {
+            "width": "100%",
+            "max-width": "1200px",
+            "margin-inline": "auto",
+            "padding-inline": gutter,
+            "display": "flex",
+            "flex-wrap": "wrap",
+            "align-items": "center",
+            "justify-content": "space-between",
+        }
+        if any(inner_styles.get(name) != value for name, value in expected_inner.items()):
+            raise ContractError("header content must use the constrained responsive inner shell")
+        if viewport == 375:
+            navigation_styles = effective_declarations(styles, navigation, viewport)
+            if (
+                navigation_styles.get("width") != "100%"
+                or navigation_styles.get("justify-content") != "center"
+            ):
+                raise ContractError("mobile navigation must be centered below the brand")
+
+
+def _validate_tablet_editorial_layout_values(styles: str) -> None:
+    """Keep the 768px editorial layout stacked and overflow-safe."""
+    viewport = 768
+    body = CssNode("body")
+    main = CssNode("main", parent=body)
+    how = CssNode("section", identifier="how", parent=main)
+    how_step = CssNode("article", frozenset({"how-step"}), parent=how)
+    step_number = CssNode("span", frozenset({"step-number"}), parent=how_step)
+    how_image = CssNode("img", parent=how_step)
+    how_copy = CssNode("div", frozenset({"how-step-copy"}), parent=how_step)
+    step_styles = effective_declarations(styles, how_step, viewport)
+    how_image_styles = effective_declarations(styles, how_image, viewport)
+    if step_styles.get("grid-template-columns") != "44px minmax(0, 1fr)":
+        raise ContractError("tablet editorial How rows must keep stacked content")
+    if (
+        effective_declarations(styles, step_number, viewport).get("grid-row") != "span 2"
+        or how_image_styles.get("width") != "100%"
+        or how_image_styles.get("aspect-ratio") != "4 / 3"
+        or how_image_styles.get("grid-column") != "2"
+        or effective_declarations(styles, how_copy, viewport).get("grid-column") != "2"
+    ):
+        raise ContractError("tablet editorial How image and copy must share the content track")
+    if how_image_styles.get("object-fit") != "contain":
+        raise ContractError("tablet editorial How illustration must remain contained")
+
+    how_styles = effective_declarations(styles, how, viewport)
+    outer_width = min(viewport, _css_length_pixels(how_styles.get("max-width", ""), viewport))
+    gutter = _css_length_pixels(how_styles.get("padding-inline", ""), viewport)
+    column_gap = _css_gap_pixels(step_styles.get("gap", ""), viewport)[-1]
+    if outer_width - 2 * gutter - 44 - column_gap <= 0:
+        raise ContractError("tablet editorial How row must fit without overflow")
+
+    for label in ("privacy", "requirements"):
+        section = CssNode("section", identifier=label, parent=main)
+        section_styles = effective_declarations(styles, section, viewport)
+        image_styles = effective_declarations(styles, CssNode("img", parent=section), viewport)
+        if (
+            section_styles.get("display") != "grid"
+            or section_styles.get("grid-template-columns") != "minmax(0, 1fr)"
+            or image_styles.get("width") != "100%"
+            or image_styles.get("aspect-ratio") != "4 / 3"
+            or image_styles.get("object-fit") != "contain"
+        ):
+            raise ContractError("tablet editorial detail sections must remain stacked")
+        gap = _css_gap_pixels(section_styles.get("gap", ""), viewport)
+        available_width = (
+            min(viewport, _css_length_pixels(section_styles.get("max-width", ""), viewport))
+            - 2 * _css_length_pixels(section_styles.get("padding-inline", ""), viewport)
+        )
+        if available_width <= 0 or any(component > available_width for component in gap):
+            raise ContractError("tablet editorial detail sections must fit without overflow")
+
+
+def _validate_editorial_illustration_layout_values(styles: str) -> None:
+    """Require responsive, uncarded 4:3 illustration layouts."""
+    body = CssNode("body")
+    main = CssNode("main", parent=body)
+    how = CssNode("section", identifier="how", parent=main)
+    how_step = CssNode("article", frozenset({"how-step"}), parent=how)
+    step_number = CssNode("span", frozenset({"step-number"}), parent=how_step)
+    how_image = CssNode("img", parent=how_step)
+    how_copy = CssNode("div", frozenset({"how-step-copy"}), parent=how_step)
+    privacy = CssNode("section", identifier="privacy", parent=main)
+    requirements = CssNode("section", identifier="requirements", parent=main)
+    section_headings = (
+        CssNode("h2", parent=privacy),
+        CssNode("h2", parent=requirements),
+    )
+    illustration_nodes = (
+        how_image,
+        CssNode("img", parent=privacy),
+        CssNode("img", parent=requirements),
+    )
+
+    _validate_tablet_editorial_layout_values(styles)
+
+    mobile_step = effective_declarations(styles, how_step, 375)
+    if mobile_step.get("grid-template-columns") != "44px minmax(0, 1fr)":
+        raise ContractError("mobile How rows require number and illustration tracks")
+    if effective_declarations(styles, step_number, 375).get("grid-row") != "span 2":
+        raise ContractError("mobile How number must span the illustration and copy rows")
+    if effective_declarations(styles, how_image, 375).get("grid-column") != "2":
+        raise ContractError("mobile How illustration must stay in the content track")
+    if effective_declarations(styles, how_copy, 375).get("grid-column") != "2":
+        raise ContractError("mobile How copy must stay in the content track")
+    section_width = min(375, 1200) - 2 * 24
+    column_gap = _css_gap_pixels(mobile_step.get("gap", ""), 375)[-1]
+    if section_width - 44 - column_gap <= 0:
+        raise ContractError("mobile How row tracks must fit without overflow")
+
+    for viewport in (900, 1024, 1440):
+        desktop_step = effective_declarations(styles, how_step, viewport)
+        if (
+            desktop_step.get("grid-template-columns")
+            != "54px minmax(0, 0.65fr) minmax(0, 1fr)"
+            or effective_declarations(styles, how_image, viewport).get("grid-column") != "2"
+            or effective_declarations(styles, how_copy, viewport).get("grid-column") != "3"
+        ):
+            raise ContractError("desktop How rows require number, illustration, and copy columns")
+
+    for viewport in (375, 900, 1024, 1440):
+        expected_columns = (
+            "minmax(0, 1fr)"
+            if viewport < 900
+            else "repeat(2, minmax(0, 1fr))"
+        )
+        for label, section in (("privacy", privacy), ("requirements", requirements)):
+            declarations = effective_declarations(styles, section, viewport)
+            if declarations.get("display") != "grid":
+                raise ContractError(f"{label} illustration section must use a responsive grid")
+            if declarations.get("grid-template-columns") != expected_columns:
+                raise ContractError(f"{label} illustration section uses the wrong responsive columns")
+            if any(name in declarations for name in ("background-color", "border-radius", "box-shadow")):
+                raise ContractError(f"{label} illustration section must not use card styling")
+        if any(
+            effective_declarations(styles, heading, viewport).get("margin-bottom") != "0"
+            for heading in section_headings
+        ):
+            raise ContractError("illustrated section headings must use the grid spacing rhythm")
+        for image in illustration_nodes:
+            declarations = effective_declarations(styles, image, viewport)
+            if (
+                declarations.get("width") != "100%"
+                or declarations.get("aspect-ratio") != "4 / 3"
+                or declarations.get("object-fit") != "contain"
+                or _css_length_pixels(declarations.get("border-radius", ""), viewport) > 8
+            ):
+                raise ContractError("editorial illustrations must be full-width contained 4:3 images")
+            if any(name in declarations for name in ("box-shadow", "background", "border")):
+                raise ContractError("editorial illustrations must not use card styling")
+
+    illustration_rule = _css_block(
+        styles,
+        ".how-step > img,\n#privacy > img,\n#requirements > img",
+    )
+    section_rule = _css_block(styles, "#privacy,\n#requirements")
+    if re.search(r"\b(?:background|border|box-shadow)\s*:", illustration_rule + section_rule):
+        raise ContractError("editorial illustration layouts must not add cards or backgrounds")
+
+
+def _validate_supporting_revision_style_values(styles: str) -> None:
+    """Require readable notes, recommendations, requirements, and credit."""
+    tokens = parse_style_tokens(styles)
+    body = CssNode("body")
+    main = CssNode("main", parent=body)
+    downloads = CssNode("section", identifier="downloads", parent=main)
+    pair = CssNode("div", frozenset({"download-pair"}), parent=downloads)
+    option = CssNode(
+        "article",
+        frozenset({"download-option", "is-recommended"}),
+        parent=pair,
+    )
+    note = CssNode("p", frozenset({"download-note"}), parent=option)
+    fallback = CssNode("a", frozenset({"download-fallback"}), parent=note)
+    recommendation = CssNode("span", parent=option)
+    requirements = CssNode("section", identifier="requirements", parent=main)
+    row = CssNode("div", frozenset({"requirement-row"}), parent=CssNode("dl", parent=requirements))
+    term = CssNode("dt", parent=row)
+    footer = CssNode("footer", frozenset({"site-footer"}), parent=body)
+    credit = CssNode("p", frozenset({"footer-credit"}), parent=footer)
+    credit_link = CssNode("a", parent=credit)
+
+    for viewport in (375, 768, 1024, 1440):
+        note_styles = effective_declarations(styles, note, viewport)
+        if note_styles.get("font-size") != "15px" or note_styles.get("line-height") != "1.55":
+            raise ContractError("download notes must use exact readable 15px copy")
+        note_color = _resolve_css_color(note_styles.get("color", ""), tokens)
+        if (
+            note_color.upper() != tokens["--muted"]
+            or contrast_ratio(note_color, tokens["--surface"]) < 4.5
+        ):
+            raise ContractError("download notes must use accessible muted text")
+        fallback_styles = effective_declarations(styles, fallback, viewport)
+        if (
+            fallback_styles.get("display") != "inline-flex"
+            or _css_length_pixels(fallback_styles.get("min-height", ""), viewport) < 44
+        ):
+            raise ContractError("download fallback link must retain a 44px target")
+
+        recommendation_styles = effective_declarations(styles, recommendation, viewport)
+        recommendation_weight = re.fullmatch(
+            r"[0-9]+",
+            recommendation_styles.get("font-weight", ""),
+        )
+        if (
+            recommendation_styles.get("display") != "block"
+            or _css_font_size_minimum(recommendation_styles.get("font-size", "")) < 14
+            or recommendation_weight is None
+            or int(recommendation_weight.group()) < 600
+        ):
+            raise ContractError("device recommendation must remain visible without color alone")
+
+        term_styles = effective_declarations(styles, term, viewport)
+        if (
+            _css_font_size_minimum(term_styles.get("font-size", "")) < 20
+            or term_styles.get("font-weight") != "720"
+        ):
+            raise ContractError("requirement terms must be larger readable labels")
+
+        credit_styles = effective_declarations(styles, credit, viewport)
+        credit_link_styles = effective_declarations(styles, credit_link, viewport)
+        if credit_styles.get("flex") != "1 1 100%":
+            raise ContractError("footer credit must occupy its own full row")
+        if (
+            credit_link_styles.get("display") != "inline-flex"
+            or _css_length_pixels(credit_link_styles.get("min-height", ""), viewport) < 44
+        ):
+            raise ContractError("footer credit link must retain a 44px target")
+
+    _validate_requirements_rows_contract(styles)
+    requirement_list = _css_block(styles, "#requirements dl")
+    if "counter-reset: requirement;" not in requirement_list:
+        raise ContractError("requirements numbering must restart within its section")
+    credit_rule = _css_block(styles, ".footer-credit")
+    if "flex: 1 1 100%;" not in credit_rule or "margin-top: 12px;" not in credit_rule:
+        raise ContractError("footer credit requires a dedicated final full row")
+
+
 def _validate_layout_contract(styles: str) -> None:
     """Require the approved editorial layouts at mobile and desktop widths."""
-    container = _css_block(styles, ".site-header,\nmain > *,\n.site-footer")
+    container = _css_block(styles, "main > *,\n.site-footer")
     container_contract = (
         "width: 100%;",
         "max-width: 1200px;",
@@ -2342,7 +2649,7 @@ def _validate_layout_contract(styles: str) -> None:
     if any(declaration not in container for declaration in container_contract):
         raise ContractError("content container must be fluid and no wider than 1200px")
 
-    header = _css_block(styles, ".site-header")
+    header = _css_block(styles, ".site-header-inner")
     if _css_pixels(header, "min-height") < 76:
         raise ContractError("header must keep an approximately 78px minimum height")
     if any(value not in header for value in ("display: flex;", "flex-wrap: wrap;", "align-items: center;")):
@@ -2379,9 +2686,7 @@ def _validate_layout_contract(styles: str) -> None:
         raise ContractError("download pair must stack on narrow screens")
     if "border: 1px solid var(--rule);" not in downloads or "border-radius: 8px;" not in downloads:
         raise ContractError("downloads must share one bordered pair")
-    requirements = _css_block(styles, "#requirements li")
-    if "border-bottom: 1px solid var(--rule);" not in requirements:
-        raise ContractError("requirements must use plain documentation rows")
+    _validate_requirements_rows_contract(styles)
     details = _css_block(styles, "#faq details")
     if "border-top: 1px solid var(--rule);" not in details:
         raise ContractError("FAQ details must be separated by borders")
@@ -2389,8 +2694,11 @@ def _validate_layout_contract(styles: str) -> None:
         raise ContractError("native FAQ summaries must show pointer affordance")
 
     mobile = _css_media_block(styles, "(max-width: 700px)")
-    if "width: 100%;" not in _css_block(mobile, ".site-header nav"):
+    mobile_navigation = _css_block(mobile, ".site-header nav")
+    if "width: 100%;" not in mobile_navigation:
         raise ContractError("mobile navigation must stack without hidden links")
+    if "justify-content: center;" not in mobile_navigation:
+        raise ContractError("mobile navigation must be centered below the brand")
     if "border-top: 1px solid var(--rule);" not in _css_block(mobile, ".download-option + .download-option"):
         raise ContractError("stacked downloads must retain a separating rule")
     tablet = _css_media_block(styles, "(min-width: 701px)")
@@ -2404,15 +2712,20 @@ def _validate_layout_contract(styles: str) -> None:
     if "grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);" not in desktop_results:
         raise ContractError("desktop results must use an asymmetric two-figure grid")
     wide = _css_media_block(styles, "(min-width: 1024px)")
-    if "padding-inline: 48px;" not in _css_block(wide, ".site-header,\nmain > *,\n.site-footer"):
+    if "padding-inline: 48px;" not in _css_block(wide, ".site-header-inner,\nmain > *,\n.site-footer"):
         raise ContractError("desktop container must use fluid wide gutters")
 
 
 def _validate_effective_responsive_contract(styles: str) -> None:
     """Resolve required layout declarations at the four reviewed widths."""
     main = CssNode("main")
+    header = CssNode("header", frozenset({"site-header"}))
     nodes = {
-        "header": CssNode("header", frozenset({"site-header"})),
+        "header inner": CssNode(
+            "div",
+            frozenset({"site-header-inner"}),
+            parent=header,
+        ),
         "hero": CssNode("div", frozenset({"hero"}), parent=main),
         "results": CssNode("section", identifier="results", parent=main),
         "footer": CssNode("footer", frozenset({"site-footer"})),
@@ -2453,7 +2766,7 @@ def _validate_effective_responsive_contract(styles: str) -> None:
             name: effective_declarations(styles, node, viewport)
             for name, node in nodes.items()
         }
-        for name in ("header", "hero", "results", "footer"):
+        for name in ("header inner", "hero", "results", "footer"):
             expected = {
                 "width": "100%",
                 "max-width": "1200px",
@@ -2828,12 +3141,14 @@ def validate_stylesheet(styles: str) -> None:
     _validate_foundation_contract(styles)
     _validate_spacing_typography_contract(styles)
     _validate_figure_margin_contract(styles)
-    _validate_requirements_list_contract(styles)
+    _validate_requirements_rows_contract(styles)
     _validate_interaction_contract(styles)
     _validate_skip_link_visibility_contract(styles)
     _validate_layout_contract(styles)
+    _validate_editorial_illustration_layout_values(styles)
     _validate_effective_responsive_contract(styles)
     _validate_effective_target_contract(styles)
+    _validate_supporting_revision_style_values(styles)
     _validate_effective_interaction_targets(styles)
     _validate_effective_layout_safety_contract(styles)
     _validate_forbidden_style_contract(styles)
@@ -3808,18 +4123,6 @@ class StyleContractTests(unittest.TestCase):
     def test_figures_fill_their_grid_tracks(self) -> None:
         _validate_figure_margin_contract(self.styles)
 
-    def test_requirements_keep_native_list_markers(self) -> None:
-        _validate_requirements_list_contract(self.styles)
-
-    def test_requirements_marker_regressions_are_rejected(self) -> None:
-        mutations = {
-            "removed-marker": "#requirements ul { list-style: none; }",
-            "illegible-marker": "#requirements li::marker { color: #FFF7E8; }",
-        }
-        for name, override in mutations.items():
-            with self.subTest(name=name), self.assertRaisesRegex(ContractError, "requirements"):
-                _validate_requirements_list_contract(f"{self.styles}\n{override}\n")
-
     def test_keyboard_and_pointer_interactions_are_accessible(self) -> None:
         _validate_interaction_contract(self.styles)
 
@@ -3835,6 +4138,129 @@ class StyleContractTests(unittest.TestCase):
     def test_editorial_structure_and_responsive_breakpoints(self) -> None:
         _validate_layout_contract(self.styles)
         _validate_effective_responsive_contract(self.styles)
+
+    def test_mobile_brand_is_centered_and_ununderlined(self) -> None:
+        _validate_mobile_brand_contract(self.styles)
+
+    def test_header_divider_is_full_width_with_constrained_inner_content(self) -> None:
+        _validate_header_shell_contract(self.styles)
+
+    def test_editorial_illustration_layout_values(self) -> None:
+        _validate_editorial_illustration_layout_values(self.styles)
+
+    def test_tablet_editorial_layout_values_at_768px(self) -> None:
+        _validate_tablet_editorial_layout_values(self.styles)
+
+    def test_editorial_illustration_layout_mutations_are_rejected(self) -> None:
+        mutations = {
+            "cropped-image": self.styles.replace(
+                "  object-fit: contain;",
+                "  object-fit: cover;",
+                1,
+            ),
+            "missing-desktop-copy-column": self.styles.replace(
+                "  .how-step-copy {\n    grid-column: 3;",
+                "  .how-step-copy {\n    grid-column: 2;",
+                1,
+            ),
+            "card-background": f"{self.styles}\n#privacy {{ background: var(--paper); }}\n",
+        }
+        for name, mutated in mutations.items():
+            with self.subTest(name=name):
+                self.assertNotEqual(self.styles, mutated)
+                with self.assertRaises(ContractError):
+                    _validate_editorial_illustration_layout_values(mutated)
+
+    def test_701_to_899_editorial_override_mutation_is_rejected(self) -> None:
+        early_tablet_columns = self.styles.replace(
+            "@media (min-width: 701px) {\n",
+            "@media (min-width: 701px) {\n"
+            "  .how-step {\n"
+            "    grid-template-columns: 54px minmax(0, 0.65fr) minmax(0, 1fr);\n"
+            "  }\n\n"
+            "  #privacy,\n"
+            "  #requirements {\n"
+            "    grid-template-columns: repeat(3, minmax(0, 1fr));\n"
+            "  }\n\n",
+            1,
+        )
+        self.assert_style_rejected(
+            early_tablet_columns,
+            _validate_tablet_editorial_layout_values,
+            "tablet editorial",
+        )
+
+    def test_701_to_899_how_image_crop_mutation_is_rejected(self) -> None:
+        tablet_crop = self.styles.replace(
+            "@media (min-width: 701px) {\n",
+            "@media (min-width: 701px) {\n"
+            "  .how-step > img {\n"
+            "    object-fit: cover;\n"
+            "  }\n\n",
+            1,
+        ).replace(
+            "@media (min-width: 900px) {\n",
+            "@media (min-width: 900px) {\n"
+            "  .how-step > img {\n"
+            "    object-fit: contain;\n"
+            "  }\n\n",
+            1,
+        )
+        self.assert_style_rejected(
+            tablet_crop,
+            _validate_tablet_editorial_layout_values,
+            "tablet editorial How illustration must remain contained",
+        )
+
+    def test_supporting_revision_style_values(self) -> None:
+        _validate_supporting_revision_style_values(self.styles)
+
+    def test_supporting_revision_style_mutations_are_rejected(self) -> None:
+        mutations = {
+            "small-note": self.styles.replace("  font-size: 15px;", "  font-size: 14px;", 1),
+            "color-only-recommendation": self.styles.replace(
+                ".is-recommended span {\n  display: block;\n  margin-top: 4px;\n  font-size: 14px;\n  font-weight: 620;",
+                ".is-recommended span {\n  display: block;\n  margin-top: 4px;\n  font-size: 14px;\n  font-weight: 400;",
+                1,
+            ),
+            "requirements-card": self.styles.replace(
+                ".requirement-row {\n  display: grid;",
+                ".requirement-row {\n  border-radius: 8px;\n  display: grid;",
+                1,
+            ),
+            "small-credit-row": self.styles.replace(
+                ".footer-credit {\n  flex: 1 1 100%;",
+                ".footer-credit {\n  flex: 0 0 auto;",
+                1,
+            ),
+        }
+        for name, mutated in mutations.items():
+            with self.subTest(name=name):
+                self.assertNotEqual(self.styles, mutated)
+                with self.assertRaises(ContractError):
+                    _validate_supporting_revision_style_values(mutated)
+
+    def test_reported_header_root_cause_mutations_are_rejected(self) -> None:
+        underlined_brand = self.styles.replace(
+            "a:not(.download-primary):not(.brand)",
+            "a:not(.download-primary)",
+            1,
+        )
+        self.assert_style_rejected(
+            underlined_brand,
+            _validate_mobile_brand_contract,
+            "mobile brand must not be underlined",
+        )
+        constrained_divider = self.styles.replace(
+            "main > *,\n.site-footer {",
+            ".site-header,\nmain > *,\n.site-footer {",
+            1,
+        )
+        self.assert_style_rejected(
+            constrained_divider,
+            _validate_header_shell_contract,
+            "divider must belong to an unconstrained full-width header",
+        )
 
     def test_desktop_hero_heading_keeps_editorial_two_line_measure(self) -> None:
         _validate_effective_heading_contract(self.styles)
@@ -4059,8 +4485,8 @@ class StyleContractTests(unittest.TestCase):
     def test_cross_cutting_value_invariant_mutations_are_rejected(self) -> None:
         mutations = {
             "hero-copy-row": self.styles.replace(
-                "  flex-direction: column;",
-                "  flex-direction: row;",
+                ".hero-copy {\n  display: flex;\n  flex-direction: column;",
+                ".hero-copy {\n  display: flex;\n  flex-direction: row;",
                 1,
             ),
             "how-step-gap": self.styles.replace(

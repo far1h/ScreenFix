@@ -62,7 +62,7 @@ a {
   color: var(--button-hover);
 }
 
-a:not(.download-primary) {
+a:not(.download-primary):not(.brand) {
   text-decoration: underline;
   text-underline-offset: 0.18em;
 }
@@ -78,7 +78,6 @@ figcaption {
   line-height: 1.55;
 }
 
-.site-header,
 main > *,
 .site-footer {
   width: 100%;
@@ -88,6 +87,15 @@ main > *,
 }
 
 .site-header {
+  width: 100%;
+  border-bottom: 1px solid var(--rule);
+}
+
+.site-header-inner {
+  width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+  padding-inline: 24px;
   min-height: 78px;
   display: flex;
   flex-wrap: wrap;
@@ -95,7 +103,6 @@ main > *,
   justify-content: space-between;
   gap: 12px 28px;
   padding-block: 12px;
-  border-bottom: 1px solid var(--rule);
 }
 
 .brand {
@@ -106,6 +113,10 @@ main > *,
   color: var(--ink);
   font-size: 20px;
   font-weight: 720;
+  text-decoration: none;
+}
+
+.brand:hover {
   text-decoration: none;
 }
 
@@ -125,6 +136,7 @@ main > *,
 .download-primary {
   min-height: 44px;
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 11px 18px;
@@ -293,6 +305,23 @@ main > section {
   font-weight: 720;
 }
 
+.how-step > img,
+#privacy > img,
+#requirements > img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.how-step > img {
+  grid-column: 2;
+}
+
+.how-step-copy {
+  grid-column: 2;
+}
+
 .how-step h3,
 .how-step p {
   margin-bottom: 0;
@@ -344,24 +373,70 @@ main > section {
   vertical-align: middle;
 }
 
+.download-note {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.is-recommended span {
+  display: block;
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 620;
+  line-height: 1.5;
+}
+
+#privacy,
+#requirements {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+
+#privacy h2,
+#requirements h2 {
+  margin-bottom: 0;
+}
+
 #privacy p {
   max-width: 76ch;
 }
 
-#requirements ul {
-  max-width: 86ch;
+#requirements dl {
   margin: 0;
-  padding-inline-start: 24px;
-  border-top: 1px solid var(--rule);
+  counter-reset: requirement;
 }
 
-#requirements li {
-  padding: 18px 0 18px 8px;
+.requirement-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 2px 16px;
+  padding-block: 20px;
+  border-top: 1px solid var(--rule);
+  counter-increment: requirement;
+}
+
+.requirement-row:last-child {
   border-bottom: 1px solid var(--rule);
 }
 
-#requirements li::marker {
+.requirement-row::before {
+  content: counter(requirement);
+  grid-row: span 2;
   color: var(--button-hover);
+  font-size: 18px;
+  font-weight: 720;
+}
+
+.requirement-row dt {
+  font-size: 20px;
+  font-weight: 720;
+  line-height: 1.3;
+}
+
+.requirement-row dd {
+  margin: 6px 0 0;
 }
 
 #faq details {
@@ -400,13 +475,20 @@ main > section {
   color: var(--muted);
 }
 
+.footer-credit {
+  flex: 1 1 100%;
+  margin-top: 12px;
+}
+
 @media (max-width: 700px) {
-  .site-header {
-    align-items: flex-start;
+  .brand {
+    width: 100%;
+    justify-content: center;
   }
 
   .site-header nav {
     width: 100%;
+    justify-content: center;
   }
 
   .site-header nav a {
@@ -439,8 +521,20 @@ main > section {
     gap: 28px;
   }
 
-  .how-step p {
+  .how-step-copy {
     grid-column: 3;
+  }
+
+  #privacy,
+  #requirements {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 48px;
+    align-items: start;
+  }
+
+  #privacy h2,
+  #requirements h2 {
+    grid-column: 1 / -1;
   }
 
   #results {
@@ -458,7 +552,7 @@ main > section {
 }
 
 @media (min-width: 1024px) {
-  .site-header,
+  .site-header-inner,
   main > *,
   .site-footer {
     padding-inline: 48px;
