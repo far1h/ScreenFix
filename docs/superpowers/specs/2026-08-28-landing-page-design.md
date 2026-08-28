@@ -46,7 +46,7 @@ site/
 ├── assets/
 │   ├── screenfix-icon.svg
 │   ├── damaged-display.jpg
-│   ├── result-window.jpg
+│   ├── result-calibration.jpg
 │   └── result-mask.jpg
 tests/
 └── site/
@@ -83,9 +83,9 @@ The page uses this fixed information order:
 3. `Give the damage its own space.` followed by three numbered rows: mark the damaged
    strip, keep it dark, and use the remaining space. These are normal rows separated by
    rules, not three feature cards.
-4. `What it looks like in use.` followed by two sanitized real result photographs and
-   factual captions. The page identifies them as real ScreenFix results rather than
-   product renders.
+4. `What it looks like in use.` followed by two sanitized real project photographs: the
+   three-band calibration and the saved mask. Factual captions identify the distinct
+   states rather than presenting either as an ordinary fitted window or a product render.
 5. `Download ScreenFix.` followed by one bordered Windows/macOS pair with requirements,
    installation notes, and platform-specific warnings placed beside the relevant action.
 6. A `#privacy` section headed `ScreenFix stays on your computer.` It explains the app's
@@ -175,16 +175,16 @@ new, flattened JPEG derivatives:
 
 - `damaged-display.jpg` comes from `assets/screenfix-damaged-display.png` and shows the
   damaged display without unnecessary surrounding browser or sheet details.
-- `result-window.jpg` comes from `assets/results/screenfix-result-1.jpg` and shows an
-  ordinary window fitted beside the mask without readable private content or surrounding
+- `result-calibration.jpg` comes from `assets/results/screenfix-result-1.jpg` and shows
+  the three-band calibration guides without readable private content or surrounding
   location clues.
 - `result-mask.jpg` comes from `assets/results/screenfix-result-2.jpg` and shows the saved
   mask result under the same privacy constraints.
 
 Every crop is visually inspected at full size before commit. Pixel orientation is baked
 in before metadata is removed. `damaged-display.jpg` is exactly 1200 by 900 pixels;
-`result-window.jpg` and `result-mask.jpg` are each exactly 1200 by 675 pixels. Each file is
-at most 400,000 bytes, and all three together are at most 1,000,000 bytes.
+`result-calibration.jpg` and `result-mask.jpg` are each exactly 1200 by 675 pixels. Each
+file is at most 400,000 bytes, and all three together are at most 1,000,000 bytes.
 
 The derivatives contain no EXIF, GPS, XMP, IPTC, comment, thumbnail, text, or color-profile
 payloads. The validator accepts only SOI, EOI, DQT, baseline or progressive SOF, DHT, DRI,
@@ -236,8 +236,8 @@ No analytics data changes content, gates downloads, or becomes part of automated
 The document uses a skip link, one `h1`, ordered heading levels, `header`, `nav`, `main`,
 labelled sections, figures, articles, definition lists, and `footer` where appropriate.
 The brand icon is decorative beside visible text. Product photographs have concise alt
-text describing the relevant damaged strip, mask, or fitted window; captions carry the
-extra explanation.
+text describing the relevant damaged strip, calibration guides, or saved mask; captions
+carry the extra explanation.
 
 Every action is a real anchor with a descriptive accessible name. Keyboard focus uses a
 visible warm outline. Tap targets are at least 44 CSS pixels high. Links are identifiable
@@ -257,6 +257,12 @@ The validation job runs on `ubuntu-latest` with only `contents: read` and execut
 ```bash
 python3 -m unittest discover -s tests/site -p 'test_*.py'
 ```
+
+The validation job then creates an unuploaded temporary tar from `site/` with the same
+hidden-file and symlink-dereference behavior used for Pages publication. Its normalized
+regular-file manifest must exactly match the validated site tree, including `.nojekyll`.
+This proves the deploy-tree logic on pull requests without granting artifact or Pages
+permissions.
 
 Pull requests stop after validation. They never configure Pages, upload a Pages artifact,
 request an OIDC token, or receive Pages write permission.
@@ -292,7 +298,8 @@ current repository because `site/index.html` and the Pages workflow do not exist
 implemented suite then verifies:
 
 - the exact site tree contains only expected regular files and no symlinks;
-- `.nojekyll`, HTML, CSS, icon, and all three JPEGs are present and non-empty;
+- `.nojekyll` is present as an empty regular file; HTML, CSS, icon, and all three JPEGs
+  are present as non-empty regular files;
 - the site icon is byte-identical to the canonical application-icon SVG and contains no
   script or external reference;
 - HTML parses cleanly, declares English, includes one exact hero heading, uses semantic
@@ -322,10 +329,11 @@ implemented suite then verifies:
   contains the four required questions as keyboard-operable native `details`/`summary`
   pairs with non-empty answers, and the header's Help link resolves to `#faq`; and
 - the Pages workflow has the required triggers, exact stable action majors, read-only PR
-  validation, main-only publish condition, `site/` artifact path, hidden-file input and
-  artifact inspection, scoped publish/deploy permissions, environment, and dependency
-  ordering. Mutation controls prove that PR path filters, non-main publication, missing
-  `needs`, missing hidden-file inclusion, and broadened job permissions are rejected.
+  validation with local archive inspection, main-only publish condition, `site/` artifact
+  path, hidden-file input and actual artifact inspection, scoped publish/deploy
+  permissions, environment, and dependency ordering. Mutation controls prove that PR path
+  filters, missing PR archive inspection, non-main publication, missing `needs`, missing
+  hidden-file inclusion, and broadened job permissions are rejected.
 
 After automated validation, manual acceptance opens the served page at desktop and mobile
 widths, navigates it entirely by keyboard, verifies that the photographs expose no private
