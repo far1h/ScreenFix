@@ -34,7 +34,7 @@ class FakeOption {
     this.hidden = false;
     this.label = new FakeLabel(
       platform === "macos"
-        ? "macOS detected — Apple Silicon required"
+        ? "Apple Silicon required"
         : "Recommended for this device",
     );
   }
@@ -204,7 +204,7 @@ test("only matched existing recommendation labels are revealed", () => {
   const windows = group.children.find((option) => option.platform === "windows");
   assert.equal(macos.label.hidden, false);
   assert.equal(windows.label.hidden, true);
-  assert.equal(macos.label.textContent, "macOS detected — Apple Silicon required");
+  assert.equal(macos.label.textContent, "Apple Silicon required");
   assert.equal(windows.label.textContent, "Recommended for this device");
 });
 
@@ -220,8 +220,8 @@ test("MacIntel reveals architecture-safe macOS advice in every group", () => {
   assert.deepEqual(
     labels.map((label) => label.textContent),
     [
-      "macOS detected — Apple Silicon required",
-      "macOS detected — Apple Silicon required",
+      "Apple Silicon required",
+      "Apple Silicon required",
     ],
   );
 });

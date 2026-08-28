@@ -1166,7 +1166,7 @@ def _validate_platform_groups(page: LandingPageParser) -> None:
     }
     expected_labels = {
         "windows": "Recommended for this device",
-        "macos": "macOS detected — Apple Silicon required",
+        "macos": "Apple Silicon required",
     }
     for group in groups:
         options = [child for child in group.children if "data-platform-option" in child.attrs]
@@ -5111,11 +5111,11 @@ class LandingPageContractTests(unittest.TestCase):
             ),
             "wrong Windows recommendation": (
                 "<span data-device-recommendation hidden>Recommended for this device</span>",
-                "<span data-device-recommendation hidden>macOS detected — Apple Silicon required</span>",
+                "<span data-device-recommendation hidden>Apple Silicon required</span>",
                 "approved per-platform text",
             ),
             "generic macOS recommendation": (
-                "<span data-device-recommendation hidden>macOS detected — Apple Silicon required</span>",
+                "<span data-device-recommendation hidden>Apple Silicon required</span>",
                 "<span data-device-recommendation hidden>Recommended for this device</span>",
                 "approved per-platform text",
             ),
