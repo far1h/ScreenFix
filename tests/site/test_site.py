@@ -27,6 +27,11 @@ EXPECTED_SITE_FILES = {
     "assets/result-mask.jpg",
 }
 PAGES_WORKFLOW = ROOT / ".github" / "workflows" / "pages.yml"
+PAGES_CONCURRENCY_GROUP = (
+    "${{ github.event_name == 'pull_request' && "
+    "format('screenfix-pages-pr-{0}', github.event.pull_request.number) "
+    "|| 'screenfix-pages-deploy' }}"
+)
 README = ROOT / "README.md"
 README_SITE_URL = "https://far1h.github.io/ScreenFix/"
 README_RELEASES_URL = "https://github.com/far1h/ScreenFix/releases"
@@ -343,7 +348,10 @@ def validate_pages_workflow(source: str) -> None:
     _validate_permissions(top["permissions"], {"contents": "read"}, "top-level permissions")
     concurrency = _workflow_mapping(top["concurrency"].children, "concurrency")
     _require_keys(concurrency, {"group", "cancel-in-progress"}, "concurrency")
-    _require_workflow(concurrency["group"].value == "screenfix-pages", "concurrency group must be screenfix-pages")
+    _require_workflow(
+        concurrency["group"].value == PAGES_CONCURRENCY_GROUP,
+        "concurrency must isolate each PR from the shared deployment group",
+    )
     _require_workflow(concurrency["cancel-in-progress"].value == "false", "concurrency cancellation must be false")
 
     jobs = _workflow_mapping(top["jobs"].children, "jobs")
@@ -4618,6 +4626,57 @@ class PagesWorkflowContractTests(unittest.TestCase):
     def test_pages_workflow_satisfies_contract(self) -> None:
         """Require the checked-in workflow to satisfy the delivery contract."""
         validate_pages_workflow(self._source())
+
+    def test_concurrency_groups_partition_prs_from_deployments(self) -> None:
+        """Keep each PR queue isolated from the shared deployment queue."""
+        approved = PAGES_CONCURRENCY_GROUP
+        source = self._source()
+        top = _workflow_mapping(_workflow_lines(source), "top-level")
+        concurrency = _workflow_mapping(top["concurrency"].children, "concurrency")
+        group = concurrency["group"].value
+
+        def resolve(event_name: str, pull_request_number: int | None = None) -> str:
+            """Evaluate only the approved concurrency partition expression."""
+            if group != approved:
+                return group
+            if event_name == "pull_request":
+                return f"screenfix-pages-pr-{pull_request_number}"
+            return "screenfix-pages-deploy"
+
+        pr_12 = resolve("pull_request", 12)
+        pr_13 = resolve("pull_request", 13)
+        push = resolve("push")
+        manual = resolve("workflow_dispatch")
+        self.assertEqual("screenfix-pages-pr-12", pr_12)
+        self.assertEqual("screenfix-pages-pr-13", pr_13)
+        self.assertNotEqual(pr_12, pr_13)
+        self.assertEqual("screenfix-pages-deploy", push)
+        self.assertEqual(push, manual)
+        self.assertNotIn(push, {pr_12, pr_13})
+        self.assertEqual("false", concurrency["cancel-in-progress"].value)
+
+        approved_source = source.replace(f"  group: {group}", f"  group: {approved}", 1)
+        validate_pages_workflow(approved_source)
+        self._assert_mutations_rejected(
+            {
+                "constant group": approved_source.replace(
+                    f"  group: {approved}",
+                    "  group: screenfix-pages",
+                    1,
+                ),
+                "broadened PR group": approved_source.replace(
+                    f"  group: {approved}",
+                    "  group: ${{ github.event_name == 'pull_request' && "
+                    "'screenfix-pages-pr' || 'screenfix-pages-deploy' }}",
+                    1,
+                ),
+                "ref-only group": approved_source.replace(
+                    f"  group: {approved}",
+                    "  group: ${{ format('screenfix-pages-{0}', github.ref) }}",
+                    1,
+                ),
+            }
+        )
 
     def test_trigger_mutations_are_rejected(self) -> None:
         """Reject filtered or broadened workflow triggers."""
