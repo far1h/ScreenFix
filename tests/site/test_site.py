@@ -23,6 +23,11 @@ EXPECTED_SITE_FILES = {
     "styles.css",
     "assets/screenfix-icon.svg",
     "assets/damaged-display.jpg",
+    "assets/how-mark-strip.jpg",
+    "assets/how-mask-strip.jpg",
+    "assets/how-use-space.jpg",
+    "assets/privacy-local.jpg",
+    "assets/requirements-platforms.jpg",
     "assets/result-calibration.jpg",
     "assets/result-mask.jpg",
 }
@@ -472,8 +477,18 @@ EXPECTED_IMAGES = {
     "result-calibration.jpg": (1200, 675),
     "result-mask.jpg": (1200, 675),
 }
+EXPECTED_ILLUSTRATIONS = {
+    "how-mark-strip.jpg": (1200, 900),
+    "how-mask-strip.jpg": (1200, 900),
+    "how-use-space.jpg": (1200, 900),
+    "privacy-local.jpg": (1200, 900),
+    "requirements-platforms.jpg": (1200, 900),
+}
 MAX_IMAGE_BYTES = 400_000
 MAX_TOTAL_IMAGE_BYTES = 1_000_000
+MAX_ILLUSTRATION_BYTES = 250_000
+MAX_ILLUSTRATION_TOTAL_BYTES = 1_100_000
+MAX_ALL_JPEG_BYTES = 1_500_000
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
 ALLOWED_SVG_TAGS = frozenset({"svg", "defs", "linearGradient", "stop", "rect", "path"})
 LOCAL_CSS_URL = re.compile(r"#[A-Za-z][A-Za-z0-9_-]*")
@@ -4598,6 +4613,22 @@ class ImageContractTests(unittest.TestCase):
             size = path.stat().st_size
             total += size
         self.assertLessEqual(total, MAX_TOTAL_IMAGE_BYTES)
+
+    def test_sanitized_illustrations_have_exact_dimensions_and_budgets(self) -> None:
+        total = 0
+        for name, dimensions in EXPECTED_ILLUSTRATIONS.items():
+            path = ASSETS / name
+            path_status = path.lstat()
+            self.assertTrue(stat.S_ISREG(path_status.st_mode), name)
+            self.assertEqual(dimensions, parse_jpeg(path))
+            self.assertLessEqual(path_status.st_size, MAX_ILLUSTRATION_BYTES, name)
+            total += path_status.st_size
+        self.assertLessEqual(total, MAX_ILLUSTRATION_TOTAL_BYTES)
+
+    def test_all_jpegs_stay_within_the_combined_budget(self) -> None:
+        names = EXPECTED_IMAGES.keys() | EXPECTED_ILLUSTRATIONS.keys()
+        total = sum((ASSETS / name).lstat().st_size for name in names)
+        self.assertLessEqual(total, MAX_ALL_JPEG_BYTES)
 
 
 class PagesWorkflowContractTests(unittest.TestCase):
