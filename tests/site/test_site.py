@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import math
 import re
 import shutil
 import stat
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
@@ -36,6 +38,164 @@ SVG_NAMESPACE = "http://www.w3.org/2000/svg"
 ALLOWED_SVG_TAGS = frozenset({"svg", "defs", "linearGradient", "stop", "rect", "path"})
 LOCAL_CSS_URL = re.compile(r"#[A-Za-z][A-Za-z0-9_-]*")
 CSS_URL = re.compile(r"url\((.*?)\)", re.IGNORECASE)
+CSS_CUSTOM_PROPERTY = re.compile(r"(--[a-z][a-z0-9-]*)\s*:\s*(#[0-9A-Fa-f]{6})\s*;")
+EXPECTED_STYLE_TOKENS = {
+    "--paper": "#F5F0E8",
+    "--surface": "#FCFAF6",
+    "--ink": "#27212B",
+    "--muted": "#655D61",
+    "--rule": "#CFC5BA",
+    "--button": "#B83D31",
+    "--button-hover": "#A92C4D",
+    "--button-text": "#FFF7E8",
+    "--focus": "#D9513B",
+}
+ALLOWED_CSS_PROPERTIES = frozenset(
+    {
+        "align-items",
+        "aspect-ratio",
+        "background",
+        "background-color",
+        "border",
+        "border-bottom",
+        "border-left",
+        "border-radius",
+        "border-top",
+        "box-sizing",
+        "color",
+        "cursor",
+        "display",
+        "flex",
+        "flex-direction",
+        "flex-wrap",
+        "font-family",
+        "font-size",
+        "font-weight",
+        "gap",
+        "grid-column",
+        "grid-row",
+        "grid-template-columns",
+        "height",
+        "justify-content",
+        "left",
+        "letter-spacing",
+        "line-height",
+        "margin",
+        "margin-block",
+        "margin-bottom",
+        "margin-inline",
+        "margin-top",
+        "max-width",
+        "min-height",
+        "min-width",
+        "object-fit",
+        "outline",
+        "outline-color",
+        "outline-offset",
+        "overflow",
+        "overflow-wrap",
+        "padding",
+        "padding-block",
+        "padding-inline",
+        "padding-inline-start",
+        "position",
+        "scroll-behavior",
+        "scroll-padding-top",
+        "text-align",
+        "text-decoration",
+        "text-decoration-color",
+        "text-decoration-thickness",
+        "text-underline-offset",
+        "top",
+        "transform",
+        "transition",
+        "vertical-align",
+        "width",
+        "z-index",
+    }
+)
+APPROVED_CSS_RULE_VOCABULARY = """
+base || :root || --paper --surface --ink --muted --rule --button --button-hover --button-text --focus
+base || *, *::before, *::after || box-sizing
+base || html || scroll-padding-top
+base || body || margin color background font-family font-size line-height overflow-wrap
+base || main || background
+base || main, section, figure, .download-option || min-width
+base || img || max-width height display
+base || h1, h2, h3, p || margin-top
+base || figure || margin
+base || a || color
+base || a:not(.download-primary) || text-decoration text-underline-offset
+base || a:hover || text-decoration-thickness
+base || figcaption || margin-top color font-size line-height
+base || .site-header, main > *, .site-footer || width max-width margin-inline padding-inline
+base || .site-header || min-height display flex-wrap align-items justify-content gap padding-block border-bottom
+base || .brand || min-height display align-items gap color font-size font-weight text-decoration
+base || .brand img || width height flex
+base || .site-header nav || display flex-wrap align-items gap
+base || .download-primary || min-height display align-items justify-content padding border-radius color font-weight line-height text-align text-decoration transition
+base || .download-windows || background
+base || .download-windows:hover || background
+base || .download-macos || background
+base || .download-primary:hover || transform
+base || .download-primary:active || transform
+base || .site-header nav a, .site-footer a || display min-height align-items
+base || .site-header nav a || color font-weight text-decoration text-decoration-color text-underline-offset
+base || .skip-link || position top left z-index min-height padding color background transform
+base || .skip-link:focus || transform
+base || :focus-visible || outline outline-offset
+base || summary:focus-visible || outline-color
+base || .hero || display grid-template-columns gap align-items padding-block border-bottom
+base || .hero-copy || display flex-direction align-items
+base || h1 || max-width margin-bottom font-size line-height letter-spacing
+base || h2 || margin-bottom font-size line-height letter-spacing
+base || h3 || margin-bottom font-size line-height
+base || .hero-explanation || max-width margin-bottom color font-size line-height
+base || .hero-copy .download-primary || width max-width margin-bottom
+base || .secondary-link || min-height display align-items margin-top
+base || .hero-figure || margin-bottom
+base || .hero-image, #results img || width border-radius
+base || .hero-image || aspect-ratio object-fit
+base || main > section || padding-block border-bottom
+base || .how-step || display grid-template-columns gap padding-block border-top
+base || .how-step:last-child || border-bottom
+base || .step-number || grid-row color font-size font-weight
+base || .how-step h3, .how-step p || margin-bottom
+base || .how-step p || color
+base || #results || display grid-template-columns gap
+base || #results h2 || margin-bottom
+base || #results figure || margin-bottom
+base || .download-pair || display grid-template-columns border border-radius overflow
+base || .download-option || padding
+base || .download-option p || max-width
+base || .download-option .download-primary || margin-block
+base || .download-fallback || min-height display align-items margin-block vertical-align
+base || #privacy p || max-width
+base || #requirements ul || max-width margin padding-inline-start border-top
+base || #requirements li || padding border-bottom
+base || #requirements li::marker || color
+base || #faq details || border-top
+base || #faq details:last-child || border-bottom
+base || #faq summary || min-height padding-block cursor font-weight
+base || #faq details p || max-width padding color
+base || .site-footer || display flex-wrap align-items gap padding-block font-size
+base || .site-footer p || flex margin-bottom color
+max700 || .site-header || align-items
+max700 || .site-header nav || width
+max700 || .site-header nav a || flex justify-content
+max700 || .download-option + .download-option || border-top
+min701 || .download-pair || grid-template-columns
+min701 || .download-option + .download-option || border-left
+min900 || .hero || grid-template-columns
+min900 || .how-step || grid-template-columns gap
+min900 || .how-step p || grid-column
+min900 || #results || grid-template-columns align-items
+min900 || #results h2 || grid-column
+min900 || #results figure:last-of-type || margin-top
+min1024 || .site-header, main > *, .site-footer || padding-inline
+reduced || html || scroll-behavior
+reduced || *, *::before, *::after || transition
+""".strip()
 PUBLIC_VISIT_NUMBER = re.compile(
     r"^(?:(?:visits?|visitors?|views?)\s*:?\s*\d[\d,. ]*|\d[\d,. ]*\s+(?:visits?|visitors?|views?))$",
     re.IGNORECASE,
@@ -496,6 +656,1409 @@ class ContractError(AssertionError):
     """Reports a stable landing-page contract failure."""
 
 
+@dataclass(frozen=True)
+class CssNode:
+    """Describe the small element context needed by the CSS contract."""
+
+    tag: str
+    classes: frozenset[str] = frozenset()
+    identifier: str = ""
+    states: frozenset[str] = frozenset()
+    parent: CssNode | None = None
+
+
+@dataclass(frozen=True)
+class CssRule:
+    """Represent one parsed rule with width applicability and source order."""
+
+    selectors: tuple[str, ...]
+    declarations: dict[str, str]
+    minimum_width: float
+    maximum_width: float
+    source_order: int
+    reduced_motion: bool
+
+
+def _parse_css_declarations(body: str) -> dict[str, str]:
+    """Consume every byte in one declaration list or fail closed."""
+    declarations: dict[str, str] = {}
+    cursor = 0
+    while cursor < len(body):
+        while cursor < len(body) and body[cursor].isspace():
+            cursor += 1
+        if cursor == len(body):
+            break
+        name_match = re.match(r"(?:--)?[A-Za-z][A-Za-z0-9-]*", body[cursor:])
+        if name_match is None:
+            raise ContractError("CSS declaration contains unparsed residue")
+        property_name = name_match.group().lower()
+        cursor += len(name_match.group())
+        while cursor < len(body) and body[cursor].isspace():
+            cursor += 1
+        if cursor == len(body) or body[cursor] != ":":
+            raise ContractError("CSS declaration requires a property and value")
+        cursor += 1
+        value_start = cursor
+        quote = ""
+        parentheses = 0
+        while cursor < len(body):
+            character = body[cursor]
+            if quote:
+                if character == "\\":
+                    cursor += 2
+                    continue
+                if character == quote:
+                    quote = ""
+            elif character in {'"', "'"}:
+                quote = character
+            elif character == "(":
+                parentheses += 1
+            elif character == ")":
+                if parentheses == 0:
+                    raise ContractError("CSS declaration has unbalanced parentheses")
+                parentheses -= 1
+            elif character in "{}":
+                raise ContractError("CSS declaration contains an unexpected block")
+            elif character == ";" and parentheses == 0:
+                break
+            cursor += 1
+        if quote or parentheses:
+            raise ContractError("CSS declaration has an unbalanced value")
+        value = body[value_start:cursor].strip()
+        if not value:
+            raise ContractError("CSS declaration requires a non-empty value")
+        if property_name in declarations:
+            raise ContractError(f"CSS declaration repeats property: {property_name}")
+        declarations[property_name] = value
+        if cursor < len(body):
+            cursor += 1
+    return declarations
+
+
+def parse_css_rules(styles: str) -> list[CssRule]:
+    """Parse the fixed stylesheet, rejecting unconsumed declaration syntax."""
+    source = re.sub(r"/\*.*?\*/", "", styles, flags=re.DOTALL)
+    rules: list[CssRule] = []
+    source_order = 0
+
+    def walk(
+        fragment: str,
+        minimum_width: float,
+        maximum_width: float,
+        reduced_motion: bool,
+        media_context: str,
+    ) -> None:
+        nonlocal source_order
+        cursor = 0
+        while True:
+            opening = fragment.find("{", cursor)
+            if opening < 0:
+                if fragment[cursor:].strip():
+                    raise ContractError("CSS rule contains unparsed residue")
+                return
+            prelude = fragment[cursor:opening].strip()
+            depth = 1
+            closing = opening + 1
+            while closing < len(fragment) and depth:
+                if fragment[closing] == "{":
+                    depth += 1
+                elif fragment[closing] == "}":
+                    depth -= 1
+                closing += 1
+            if depth:
+                raise ContractError("CSS rule is unbalanced")
+            body = fragment[opening + 1 : closing - 1]
+            if prelude.startswith("@media"):
+                if media_context != "base":
+                    raise ContractError("nested CSS media context is unreviewed")
+                condition = prelude.removeprefix("@media").strip()
+                if "prefers-reduced-motion" in condition:
+                    walk(body, minimum_width, maximum_width, True, condition)
+                else:
+                    minimum = re.search(r"min-width\s*:\s*([0-9.]+)px", condition)
+                    maximum = re.search(r"max-width\s*:\s*([0-9.]+)px", condition)
+                    nested_minimum = max(minimum_width, float(minimum.group(1)) if minimum else 0)
+                    nested_maximum = min(maximum_width, float(maximum.group(1)) if maximum else float("inf"))
+                    walk(body, nested_minimum, nested_maximum, reduced_motion, condition)
+            elif prelude.startswith("@"):
+                raise ContractError("unsupported CSS at-rule")
+            else:
+                declarations = _parse_css_declarations(body)
+                selectors = tuple(selector.strip() for selector in prelude.split(",") if selector.strip())
+                if not selectors or not declarations:
+                    raise ContractError("CSS rule requires selectors and declarations")
+                rules.append(
+                    CssRule(
+                        selectors,
+                        declarations,
+                        minimum_width,
+                        maximum_width,
+                        source_order,
+                        reduced_motion,
+                    )
+                )
+                source_order += 1
+            cursor = closing
+
+    walk(source, 0, float("inf"), False, "base")
+    return rules
+
+
+def _normalized_selector_group(selectors: tuple[str, ...] | str) -> tuple[str, ...]:
+    """Return one order-independent selector-group key with stable spacing."""
+    raw_selectors = selectors.split(",") if isinstance(selectors, str) else selectors
+    normalized = []
+    for selector in raw_selectors:
+        spaced = re.sub(r"\s*([>+~])\s*", r" \1 ", selector.strip())
+        normalized.append(re.sub(r"\s+", " ", spaced))
+    return tuple(sorted(normalized))
+
+
+def _rule_media_context(rule: CssRule) -> str:
+    """Map one parsed rule to the exact reviewed media context."""
+    if rule.reduced_motion:
+        return "reduced"
+    bounds = rule.minimum_width, rule.maximum_width
+    contexts = {
+        (0, float("inf")): "base",
+        (0, 700): "max700",
+        (701, float("inf")): "min701",
+        (900, float("inf")): "min900",
+        (1024, float("inf")): "min1024",
+    }
+    if bounds not in contexts:
+        raise ContractError("CSS rule uses an unreviewed media context")
+    return contexts[bounds]
+
+
+def _approved_rule_vocabulary() -> dict[tuple[str, tuple[str, ...]], frozenset[str]]:
+    """Parse the explicit selector, media, and property vocabulary fixture."""
+    approved: dict[tuple[str, tuple[str, ...]], frozenset[str]] = {}
+    for line in APPROVED_CSS_RULE_VOCABULARY.splitlines():
+        context, selector_source, property_source = (part.strip() for part in line.split("||"))
+        key = context, _normalized_selector_group(selector_source)
+        if key in approved:
+            raise ContractError("approved CSS vocabulary contains a duplicate selector")
+        approved[key] = frozenset(property_source.split())
+    return approved
+
+
+def _validate_rule_vocabulary_contract(styles: str) -> None:
+    """Fail closed on unreviewed, duplicate, or repurposed selector blocks."""
+    approved = _approved_rule_vocabulary()
+    observed: set[tuple[str, tuple[str, ...]]] = set()
+    for rule in parse_css_rules(styles):
+        key = _rule_media_context(rule), _normalized_selector_group(rule.selectors)
+        if key in observed:
+            raise ContractError("CSS rule repeats a reviewed selector in one media context")
+        observed.add(key)
+        if key not in approved:
+            raise ContractError("CSS rule uses an unreviewed selector or media context")
+        if frozenset(rule.declarations) != approved[key]:
+            raise ContractError("CSS rule uses unreviewed properties for its selector")
+    if observed != set(approved):
+        raise ContractError("CSS rule vocabulary is incomplete")
+
+
+def _selector_parts(selector: str) -> tuple[list[str], list[str]]:
+    """Split the supported descendant and child selectors into compounds."""
+    if "+" in selector or "~" in selector:
+        return [], []
+    segments = re.sub(r"\s*>\s*", ">", selector.strip()).split(">")
+    compounds: list[str] = []
+    combinators: list[str] = []
+    for segment_index, segment in enumerate(segments):
+        descendants = segment.split()
+        for descendant_index, compound in enumerate(descendants):
+            if compounds:
+                is_child = segment_index > 0 and descendant_index == 0
+                combinators.append(">" if is_child else " ")
+            compounds.append(compound)
+    return compounds, combinators
+
+
+def _compound_matches(compound: str, node: CssNode) -> bool:
+    """Match one limited type, ID, class, state, and :not compound."""
+    for excluded in re.findall(r":not\(([^)]+)\)", compound):
+        if _compound_matches(excluded, node):
+            return False
+    normalized = re.sub(r":not\([^)]+\)", "", compound)
+    if "::" in normalized:
+        return False
+    identifiers = re.findall(r"#([\w-]+)", normalized)
+    if identifiers and any(identifier != node.identifier for identifier in identifiers):
+        return False
+    if any(name not in node.classes for name in re.findall(r"\.([\w-]+)", normalized)):
+        return False
+    states = re.findall(r"(?<!:):([\w-]+)", normalized)
+    if any(state not in node.states for state in states):
+        return False
+    type_name = re.match(r"^[A-Za-z][\w-]*|^\*", normalized)
+    return type_name is None or type_name.group() == "*" or type_name.group().lower() == node.tag.lower()
+
+
+def selector_matches(selector: str, node: CssNode) -> bool:
+    """Return whether a supported selector matches a described element tree."""
+    compounds, combinators = _selector_parts(selector)
+    if not compounds or not _compound_matches(compounds[-1], node):
+        return False
+    current = node
+    for index in range(len(compounds) - 2, -1, -1):
+        combinator = combinators[index]
+        candidate = current.parent
+        if combinator == ">":
+            if candidate is None or not _compound_matches(compounds[index], candidate):
+                return False
+        else:
+            while candidate is not None and not _compound_matches(compounds[index], candidate):
+                candidate = candidate.parent
+            if candidate is None:
+                return False
+        current = candidate
+    return True
+
+
+def selector_specificity(selector: str) -> tuple[int, int, int]:
+    """Return CSS ID, class/state, and type specificity for supported selectors."""
+    identifiers = len(re.findall(r"#[\w-]+", selector))
+    classes = len(re.findall(r"\.[\w-]+", selector))
+    states = len(
+        [
+            state
+            for state in re.findall(r"(?<!:):([\w-]+)", selector)
+            if state != "not"
+        ]
+    )
+    types = sum(
+        1
+        for compound in re.split(r"\s+|>", re.sub(r":not\([^)]+\)", "", selector))
+        if re.match(r"^[A-Za-z][\w-]*", compound)
+    )
+    return identifiers, classes + states, types
+
+
+def _cascade_property_name(property_name: str) -> str:
+    """Normalize the color shorthands modeled by this fixed stylesheet."""
+    if property_name in {"background", "background-color"}:
+        return "background-color"
+    if property_name in {"outline", "outline-color"}:
+        return "outline-color"
+    return property_name
+
+
+def effective_declarations(styles: str, node: CssNode, viewport: float) -> dict[str, str]:
+    """Resolve supported declarations by applicability, specificity, and order."""
+    winners: dict[str, tuple[tuple[int, int, int], int, str]] = {}
+    for rule in parse_css_rules(styles):
+        if rule.reduced_motion or not rule.minimum_width <= viewport <= rule.maximum_width:
+            continue
+        matching = [selector for selector in rule.selectors if selector_matches(selector, node)]
+        if not matching:
+            continue
+        specificity = max(selector_specificity(selector) for selector in matching)
+        for property_name, value in rule.declarations.items():
+            cascade_name = _cascade_property_name(property_name)
+            previous = winners.get(cascade_name)
+            if previous is None or (specificity, rule.source_order) >= previous[:2]:
+                winners[cascade_name] = specificity, rule.source_order, value
+    return {property_name: winner[2] for property_name, winner in winners.items()}
+
+
+def parse_style_tokens(styles: str) -> dict[str, str]:
+    """Return unique literal hexadecimal custom properties from CSS source."""
+    declarations = CSS_CUSTOM_PROPERTY.findall(styles)
+    names = [name for name, _ in declarations]
+    if len(names) != len(set(names)):
+        raise ContractError("style color tokens must be declared once")
+    return dict(declarations)
+
+
+def _validate_custom_property_contract(styles: str) -> None:
+    """Allow exactly the reviewed literal tokens in one global :root rule."""
+    rules = parse_css_rules(styles)
+    root_rules = [rule for rule in rules if rule.selectors == (":root",)]
+    custom_rules = [
+        rule
+        for rule in rules
+        if any(name.startswith("--") for name in rule.declarations)
+    ]
+    if len(root_rules) != 1 or custom_rules != root_rules:
+        raise ContractError("custom properties must be declared only in one :root rule")
+    root_tokens = {
+        name: value
+        for name, value in root_rules[0].declarations.items()
+        if name.startswith("--")
+    }
+    source = re.sub(r"/\*.*?\*/", "", styles, flags=re.DOTALL)
+    declarations = re.findall(r"(--[\w-]+)\s*:\s*([^;{}]+);", source)
+    if len(declarations) != len(EXPECTED_STYLE_TOKENS) or root_tokens != EXPECTED_STYLE_TOKENS:
+        raise ContractError("style color tokens must match the reviewed palette")
+
+
+def relative_luminance(color: str) -> float:
+    """Return WCAG relative luminance for a six-digit hexadecimal color."""
+    channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+    linear = [
+        channel / 12.92
+        if channel <= 0.04045
+        else ((channel + 0.055) / 1.055) ** 2.4
+        for channel in channels
+    ]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast_ratio(first: str, second: str) -> float:
+    """Return the WCAG contrast ratio between two hexadecimal colors."""
+    lighter, darker = sorted(
+        (relative_luminance(first), relative_luminance(second)),
+        reverse=True,
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _validate_color_contract(styles: str) -> None:
+    """Require the reviewed palette, its uses, and measured contrast floors."""
+    _validate_custom_property_contract(styles)
+    tokens = parse_style_tokens(styles)
+    if any(tokens.get(name) != value for name, value in EXPECTED_STYLE_TOKENS.items()):
+        raise ContractError("style color tokens must match the reviewed palette")
+    if any(f"var({name})" not in styles for name in EXPECTED_STYLE_TOKENS):
+        raise ContractError("style color tokens must be used")
+    _validate_contrast_contract(tokens)
+
+
+def _validate_contrast_contract(tokens: dict[str, str]) -> None:
+    """Require measured WCAG floors for every approved color pairing."""
+    pairs = {
+        "Windows button": ("--button", "--button-text", 5.25),
+        "Windows hover": ("--button-hover", "--button-text", 6.25),
+        "macOS button": ("--ink", "--button-text", 14.7),
+    }
+    for foreground in ("--ink", "--muted", "--button-hover"):
+        for background in ("--paper", "--surface"):
+            pairs[f"{foreground} on {background}"] = (foreground, background, 4.5)
+    for background in ("--paper", "--surface"):
+        pairs[f"focus on {background}"] = ("--focus", background, 3.0)
+    for label, (foreground, background, minimum) in pairs.items():
+        measured = contrast_ratio(tokens[foreground], tokens[background])
+        if measured < minimum:
+            raise ContractError(f"{label} contrast must be at least {minimum}:1")
+
+
+def _resolve_css_color(value: str, tokens: dict[str, str]) -> str:
+    """Resolve one color component from a supported longhand or shorthand."""
+    variables = re.findall(r"var\((--[\w-]+)\)", value)
+    literals = re.findall(r"#[0-9A-Fa-f]{6}", value)
+    if len(variables) + len(literals) != 1:
+        raise ContractError("effective color must resolve to one literal reviewed color")
+    if variables:
+        if variables[0] not in tokens:
+            raise ContractError("effective color references an unknown token")
+        return tokens[variables[0]]
+    return literals[0]
+
+
+def _validate_effective_color_contract(styles: str) -> None:
+    """Resolve the reviewed page colors after the supported cascade."""
+    tokens = parse_style_tokens(styles)
+    body = CssNode("body")
+    main = CssNode("main", parent=body)
+    hero = CssNode("div", frozenset({"hero"}), parent=main)
+    hero_copy = CssNode("div", frozenset({"hero-copy"}), parent=hero)
+    downloads = CssNode("section", identifier="downloads", parent=main)
+    pair = CssNode("div", frozenset({"download-pair"}), parent=downloads)
+    windows_option = CssNode(
+        "article",
+        frozenset({"download-option", "download-option-windows"}),
+        parent=pair,
+    )
+    macos_option = CssNode(
+        "article",
+        frozenset({"download-option", "download-option-macos"}),
+        parent=pair,
+    )
+    windows = frozenset({"download-primary", "download-windows"})
+    macos = frozenset({"download-primary", "download-macos"})
+    cases = [("body", body, "--ink", "--paper", 4.5)]
+    for context, windows_parent, macos_parent in (
+        ("hero", hero_copy, hero_copy),
+        ("downloads", windows_option, macos_option),
+    ):
+        cases.extend(
+            [
+                (
+                    f"{context} Windows default",
+                    CssNode("a", windows, parent=windows_parent),
+                    "--button-text",
+                    "--button",
+                    5.25,
+                ),
+                (
+                    f"{context} Windows hover",
+                    CssNode("a", windows, states=frozenset({"hover"}), parent=windows_parent),
+                    "--button-text",
+                    "--button-hover",
+                    6.25,
+                ),
+                (
+                    f"{context} macOS default",
+                    CssNode("a", macos, parent=macos_parent),
+                    "--button-text",
+                    "--ink",
+                    14.7,
+                ),
+                (
+                    f"{context} macOS hover",
+                    CssNode("a", macos, states=frozenset({"hover"}), parent=macos_parent),
+                    "--button-text",
+                    "--ink",
+                    14.7,
+                ),
+            ]
+        )
+    fallback_parent = CssNode("p", parent=windows_option)
+    links = {
+        "paper link": (CssNode("a", parent=CssNode("footer", frozenset({"site-footer"}), parent=body)), "--paper"),
+        "surface hero link": (CssNode("a", frozenset({"secondary-link"}), parent=hero_copy), "--surface"),
+        "surface fallback link": (CssNode("a", frozenset({"download-fallback"}), parent=fallback_parent), "--surface"),
+    }
+    focus_nodes = (
+        CssNode("a", frozenset({"secondary-link"}), states=frozenset({"focus-visible"}), parent=hero_copy),
+        CssNode("a", frozenset({"download-fallback"}), states=frozenset({"focus-visible"}), parent=fallback_parent),
+        CssNode("a", windows, states=frozenset({"focus-visible"}), parent=windows_option),
+        CssNode(
+            "summary",
+            states=frozenset({"focus-visible"}),
+            parent=CssNode("details", parent=CssNode("section", identifier="faq", parent=main)),
+        ),
+    )
+    for viewport in (375, 768, 1024, 1440):
+        main_styles = effective_declarations(styles, main, viewport)
+        main_background = _resolve_css_color(main_styles.get("background-color", ""), tokens)
+        if main_background.upper() != tokens["--surface"]:
+            raise ContractError("effective color contract for main background requires --surface")
+        for label, node, foreground_token, background_token, minimum in cases:
+            declarations = effective_declarations(styles, node, viewport)
+            foreground = _resolve_css_color(declarations.get("color", ""), tokens)
+            background = _resolve_css_color(declarations.get("background-color", ""), tokens)
+            expected = tokens[foreground_token], tokens[background_token]
+            if (foreground.upper(), background.upper()) != expected:
+                raise ContractError(f"effective color contract for {label} contrast requires reviewed tokens")
+            if contrast_ratio(foreground, background) < minimum:
+                raise ContractError(f"effective color contract for {label} contrast requires {minimum}:1")
+        for label, (node, background_token) in links.items():
+            declarations = effective_declarations(styles, node, viewport)
+            foreground = _resolve_css_color(declarations.get("color", ""), tokens)
+            background = tokens[background_token]
+            if foreground.upper() != tokens["--button-hover"] or contrast_ratio(foreground, background) < 4.5:
+                raise ContractError(f"effective color contract for {label} contrast requires --button-hover")
+        for focus in focus_nodes:
+            focus_styles = effective_declarations(styles, focus, viewport)
+            focus_color = _resolve_css_color(focus_styles.get("outline-color", ""), tokens)
+            if focus_color.upper() != tokens["--focus"]:
+                raise ContractError("effective color contract for focus color requires --focus")
+            for background_token in ("--paper", "--surface"):
+                if contrast_ratio(focus_color, tokens[background_token]) < 3:
+                    raise ContractError("effective color contract for focus contrast requires 3:1")
+
+
+def _inherited_effective_value(
+    styles: str,
+    node: CssNode,
+    viewport: float,
+    property_name: str,
+) -> str:
+    """Resolve one inherited property through the modeled ancestor chain."""
+    current: CssNode | None = node
+    while current is not None:
+        declarations = effective_declarations(styles, current, viewport)
+        if property_name in declarations:
+            return declarations[property_name]
+        current = current.parent
+    raise ContractError(f"effective inherited {property_name} is missing")
+
+
+def _validate_text_contrast_contract(styles: str) -> None:
+    """Validate every explicit text color in its reviewed page context."""
+    tokens = parse_style_tokens(styles)
+    contexts = {
+        _normalized_selector_group("body"): ("--ink", ("--paper", "--surface")),
+        _normalized_selector_group("a"): ("--button-hover", ("--paper", "--surface")),
+        _normalized_selector_group("figcaption"): ("--muted", ("--surface",)),
+        _normalized_selector_group(".brand"): ("--ink", ("--paper",)),
+        _normalized_selector_group(".download-primary"): (
+            "--button-text",
+            ("--button", "--button-hover", "--ink"),
+        ),
+        _normalized_selector_group(".site-header nav a"): ("--ink", ("--paper",)),
+        _normalized_selector_group(".skip-link"): ("--button-text", ("--ink",)),
+        _normalized_selector_group(".hero-explanation"): ("--muted", ("--surface",)),
+        _normalized_selector_group(".step-number"): ("--button-hover", ("--surface",)),
+        _normalized_selector_group(".how-step p"): ("--muted", ("--surface",)),
+        _normalized_selector_group("#requirements li::marker"): (
+            "--button-hover",
+            ("--surface",),
+        ),
+        _normalized_selector_group("#faq details p"): ("--muted", ("--surface",)),
+        _normalized_selector_group(".site-footer p"): ("--muted", ("--paper",)),
+    }
+    color_rules = [rule for rule in parse_css_rules(styles) if "color" in rule.declarations]
+    if len(color_rules) != len(contexts):
+        raise ContractError("every explicit text color must have one reviewed context")
+    for rule in color_rules:
+        selector_key = _normalized_selector_group(rule.selectors)
+        if selector_key not in contexts:
+            raise ContractError("explicit text color uses an unknown page context")
+        foreground_token, background_tokens = contexts[selector_key]
+        foreground = _resolve_css_color(rule.declarations["color"], tokens)
+        if foreground.upper() != tokens[foreground_token]:
+            raise ContractError("explicit text color must use its reviewed foreground token")
+        for background_token in background_tokens:
+            if contrast_ratio(foreground, tokens[background_token]) < 4.5:
+                raise ContractError("explicit text color must retain 4.5:1 contrast")
+
+    body = CssNode("body")
+    main = CssNode("main", parent=body)
+    hero = CssNode("div", frozenset({"hero"}), parent=main)
+    hero_copy = CssNode("div", frozenset({"hero-copy"}), parent=hero)
+    headings = (
+        CssNode("h1", parent=hero_copy),
+        CssNode("h2", parent=CssNode("section", identifier="results", parent=main)),
+        CssNode("h3", parent=CssNode("div", frozenset({"how-step"}), parent=main)),
+    )
+    skip_link = CssNode("a", frozenset({"skip-link"}), parent=body)
+    for viewport in (375, 768, 1024, 1440):
+        for heading in headings:
+            color = _resolve_css_color(
+                _inherited_effective_value(styles, heading, viewport, "color"),
+                tokens,
+            )
+            if color.upper() != tokens["--ink"] or contrast_ratio(color, tokens["--surface"]) < 4.5:
+                raise ContractError("headings must inherit reviewed ink on the page surface")
+        skip_styles = effective_declarations(styles, skip_link, viewport)
+        skip_foreground = _resolve_css_color(skip_styles.get("color", ""), tokens)
+        skip_background = _resolve_css_color(skip_styles.get("background-color", ""), tokens)
+        if (
+            skip_foreground.upper() != tokens["--button-text"]
+            or skip_background.upper() != tokens["--ink"]
+            or contrast_ratio(skip_foreground, skip_background) < 4.5
+        ):
+            raise ContractError("skip link must keep button text on the ink background")
+
+
+def _css_block(styles: str, selector: str) -> str:
+    """Return declarations for one literal selector block."""
+    pieces = re.split(r"\s+", selector.strip())
+    selector_pattern = r"\s*".join(re.escape(piece) for piece in pieces)
+    match = re.search(rf"(?:^|\}})\s*{selector_pattern}\s*\{{([^{{}}]*)\}}", styles, re.MULTILINE)
+    if match is None:
+        raise ContractError(f"required CSS selector is missing: {selector}")
+    return match.group(1)
+
+
+def _css_pixels(block: str, property_name: str) -> float:
+    """Return one pixel-valued declaration from a CSS block."""
+    match = re.search(rf"\b{re.escape(property_name)}\s*:\s*([0-9]+(?:\.[0-9]+)?)px\s*;", block)
+    if match is None:
+        raise ContractError(f"{property_name} must use an explicit pixel floor")
+    return float(match.group(1))
+
+
+def _validate_foundation_contract(styles: str) -> None:
+    """Require native typography, resilient sizing, and readable copy."""
+    lowered = styles.lower()
+    if "@font-face" in lowered or re.search(r"url\([^)]*\.(?:woff2?|ttf|otf)", lowered):
+        raise ContractError("remote and embedded font requests are forbidden")
+    box_sizing = _css_block(styles, "*,\n*::before,\n*::after")
+    if re.search(r"\bbox-sizing\s*:\s*border-box\s*;", box_sizing) is None:
+        raise ContractError("global border-box sizing is required")
+
+    body = _css_block(styles, "body")
+    required_stack = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif'
+    if required_stack not in body:
+        raise ContractError("body must use the native system font stack")
+    if re.search(r"\bmargin\s*:\s*0\s*;", body) is None:
+        raise ContractError("body margin must be zero")
+    if _css_pixels(body, "font-size") < 16:
+        raise ContractError("normal body copy must be at least 16px")
+    line_height = re.search(r"\bline-height\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*;", body)
+    if line_height is None or float(line_height.group(1)) < 1.5:
+        raise ContractError("body line height must remain readable")
+    if "overflow-wrap: anywhere;" not in body:
+        raise ContractError("body copy must wrap overflow safely")
+    for size in re.findall(r"\bfont-size\s*:\s*([0-9]+(?:\.[0-9]+)?)px\s*;", styles):
+        if float(size) < 14:
+            raise ContractError("small notes must not fall below 14px")
+
+    image = _css_block(styles, "img")
+    image_contract = ("max-width: 100%;", "height: auto;", "display: block;")
+    if any(declaration not in image for declaration in image_contract):
+        raise ContractError("images must scale without horizontal overflow")
+    resilient = _css_block(styles, "main,\nsection,\nfigure,\n.download-option")
+    if "min-width: 0;" not in resilient:
+        raise ContractError("layout children must allow overflow-safe sizing")
+
+
+def _validate_figure_margin_contract(styles: str) -> None:
+    """Require figures to fill their grid track without browser margins."""
+    figure = effective_declarations(styles, CssNode("figure"), 1024)
+    if figure.get("margin") != "0":
+        raise ContractError("figures must reset the full browser margin")
+    caption = effective_declarations(styles, CssNode("figcaption"), 1024)
+    if caption.get("margin-top") != "12px":
+        raise ContractError("figure captions must keep 12px spacing")
+
+
+def _validate_requirements_list_contract(styles: str) -> None:
+    """Keep native requirements-list semantics and an approved visible marker."""
+    requirements = CssNode("section", identifier="requirements")
+    list_styles = effective_declarations(styles, CssNode("ul", parent=requirements), 1024)
+    if any(list_styles.get(name, "").strip().lower() == "none" for name in ("list-style", "list-style-type")):
+        raise ContractError("requirements must keep native list markers")
+    marker_colors = [
+        rule.declarations["color"]
+        for rule in parse_css_rules(styles)
+        if "#requirements li::marker" in rule.selectors and "color" in rule.declarations
+    ]
+    if marker_colors != ["var(--button-hover)"]:
+        raise ContractError("requirements markers must use the legible dark accent")
+
+
+def _validate_interaction_contract(styles: str) -> None:
+    """Require visible keyboard focus, link cues, and usable action targets."""
+    lowered = styles.lower()
+    if re.search(r"\boutline\s*:\s*(?:0|none)\b", lowered):
+        raise ContractError("focus outlines must not be removed")
+
+    skip = _css_block(styles, ".skip-link")
+    skip_focus = _css_block(styles, ".skip-link:focus")
+    if "position: fixed;" not in skip or "transform: translateY(-150%);" not in skip:
+        raise ContractError("skip link must be visually hidden without being removed")
+    if "transform: translateY(0);" not in skip_focus:
+        raise ContractError("skip link must become visible on focus")
+
+    focus = _css_block(styles, ":focus-visible")
+    outline = re.search(r"\boutline\s*:\s*([0-9]+(?:\.[0-9]+)?)px\s+solid\s+var\(--focus\)\s*;", focus)
+    offset = re.search(r"\boutline-offset\s*:\s*([0-9]+(?:\.[0-9]+)?)px\s*;", focus)
+    if outline is None or float(outline.group(1)) < 3 or offset is None or float(offset.group(1)) < 2:
+        raise ContractError("focus-visible must use a visible focus outline")
+    summary_focus = _css_block(styles, "summary:focus-visible")
+    if "outline-color: var(--focus);" not in summary_focus:
+        raise ContractError("summary focus must remain visible")
+
+    primary = _css_block(styles, ".download-primary")
+    if "display: inline-flex;" not in primary or _css_pixels(primary, "min-height") < 44:
+        raise ContractError("download action target must be at least 44px")
+    nav_links = _css_block(styles, ".site-header nav a,\n.site-footer a")
+    if "display: inline-flex;" not in nav_links or _css_pixels(nav_links, "min-height") < 44:
+        raise ContractError("navigation link target must be at least 44px")
+    linked_copy = _css_block(styles, "a:not(.download-primary)")
+    if "text-decoration: underline;" not in linked_copy or "text-underline-offset:" not in linked_copy:
+        raise ContractError("text links need a non-color underline cue")
+
+
+def _css_signed_pixels(value: str) -> float:
+    """Resolve the fixed stylesheet's signed pixel position or unitless zero."""
+    if value.strip() == "0":
+        return 0
+    pixels = re.fullmatch(r"(-?[0-9]+(?:\.[0-9]+)?)px", value.strip())
+    if pixels is None:
+        raise ContractError("skip link position must use a reviewed pixel value")
+    return float(pixels.group(1))
+
+
+def _validate_skip_link_visibility_contract(styles: str) -> None:
+    """Keep the focused skip link on-screen and above page content."""
+    body = CssNode("body")
+    skip = CssNode("a", frozenset({"skip-link"}), parent=body)
+    focused_skip = CssNode(
+        "a",
+        frozenset({"skip-link"}),
+        states=frozenset({"focus"}),
+        parent=body,
+    )
+    for viewport in (375, 768, 1024, 1440):
+        base = effective_declarations(styles, skip, viewport)
+        focused = effective_declarations(styles, focused_skip, viewport)
+        top = _css_signed_pixels(base.get("top", ""))
+        left = _css_signed_pixels(base.get("left", ""))
+        if not 0 <= top <= 64 or not 0 <= left <= 64:
+            raise ContractError("skip link position must remain reasonably on-screen")
+        z_index = re.fullmatch(r"[0-9]+", base.get("z-index", ""))
+        if z_index is None or int(z_index.group()) < 10:
+            raise ContractError("skip link z-index must remain above page content")
+        if base.get("position") != "fixed" or base.get("transform") != "translateY(-150%)":
+            raise ContractError("skip link base hiding must remain vertical")
+        if focused.get("transform") != "translateY(0)":
+            raise ContractError("skip link focus must restore its on-screen position")
+
+
+def _css_media_block(styles: str, condition: str) -> str:
+    """Return the balanced body of one literal media query."""
+    match = re.search(rf"@media\s*{re.escape(condition)}\s*\{{", styles)
+    if match is None:
+        raise ContractError(f"required media query is missing: {condition}")
+    start = match.end()
+    depth = 1
+    for index in range(start, len(styles)):
+        if styles[index] == "{":
+            depth += 1
+        elif styles[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return styles[start:index]
+    raise ContractError(f"media query is unbalanced: {condition}")
+
+
+def _validate_supported_cascade_contract(styles: str) -> None:
+    """Reject cascade features outside this fixed stylesheet evaluator's scope."""
+    source = re.sub(r"/\*.*?\*/", "", styles, flags=re.DOTALL)
+    allowed_media = {
+        "(max-width: 700px)",
+        "(min-width: 701px)",
+        "(min-width: 900px)",
+        "(min-width: 1024px)",
+        "(prefers-reduced-motion: reduce)",
+    }
+    at_rules = re.findall(r"@([A-Za-z-]+)\b", source)
+    if any(at_rule.lower() != "media" for at_rule in at_rules):
+        raise ContractError("unsupported cascade at-rule is forbidden")
+    conditions = [condition.strip() for condition in re.findall(r"@media\s*([^{}]+?)\s*\{", source)]
+    if any(condition not in allowed_media for condition in conditions):
+        raise ContractError("unsupported cascade media condition is forbidden")
+    if re.search(r"(?:^|[;{])\s*all\s*:", source, re.MULTILINE):
+        raise ContractError("unsupported cascade all shorthand is forbidden")
+
+    rules = parse_css_rules(source)
+    for rule in rules:
+        for property_name in rule.declarations:
+            if property_name.startswith("--"):
+                continue
+            if property_name not in ALLOWED_CSS_PROPERTIES:
+                raise ContractError(f"unsupported CSS property: {property_name}")
+
+    required_properties = {
+        "align-items",
+        "background",
+        "background-color",
+        "color",
+        "display",
+        "font-size",
+        "gap",
+        "grid-template-columns",
+        "max-width",
+        "min-height",
+        "outline",
+        "outline-color",
+        "padding-inline",
+        "width",
+    }
+    for rule in rules:
+        if required_properties.isdisjoint(rule.declarations):
+            continue
+        for selector in rule.selectors:
+            if selector == "#requirements li::marker" and set(rule.declarations) == {"color"}:
+                continue
+            functions = re.findall(r":([\w-]+)\(", selector)
+            unsupported_syntax = any(character in selector for character in "+~[]&\\")
+            if unsupported_syntax or "::" in selector or any(name != "not" for name in functions):
+                raise ContractError("unsupported cascade selector is forbidden for required properties")
+
+    reduced = _css_media_block(source, "(prefers-reduced-motion: reduce)")
+    outside_reduced = source.replace(reduced, "", 1)
+    if re.search(r"!\s*important\b", outside_reduced, re.IGNORECASE):
+        raise ContractError("unsupported cascade important declaration is forbidden")
+    important_declarations = re.findall(
+        r"([\w-]+)\s*:\s*([^;]*!\s*important[^;]*);",
+        reduced,
+        re.IGNORECASE,
+    )
+    if len(important_declarations) != len(re.findall(r"!\s*important\b", reduced, re.IGNORECASE)):
+        raise ContractError("unsupported cascade important declaration is malformed")
+    for property_name, value in important_declarations:
+        normalized = re.sub(r"\s+", " ", value.strip().lower()).replace("! important", "!important")
+        if property_name.lower() != "transition" or normalized != "none !important":
+            raise ContractError("unsupported cascade important declaration is forbidden")
+
+
+def _validate_global_style_invariants(styles: str) -> None:
+    """Enforce safety boundaries for this fixed, dependency-free stylesheet."""
+    rules = parse_css_rules(styles)
+    body = CssNode("body")
+    main = CssNode("main", parent=body)
+    hero = CssNode("div", frozenset({"hero"}), parent=main)
+    hero_copy = CssNode("div", frozenset({"hero-copy"}), parent=hero)
+    results = CssNode("section", identifier="results", parent=main)
+    downloads = CssNode("section", identifier="downloads", parent=main)
+    pair = CssNode("div", frozenset({"download-pair"}), parent=downloads)
+    option = CssNode("article", frozenset({"download-option"}), parent=pair)
+    protected_nodes = (
+        hero,
+        hero_copy,
+        CssNode("h1", parent=hero_copy),
+        results,
+        CssNode("h2", parent=results),
+        downloads,
+        pair,
+        option,
+        CssNode("h3", parent=option),
+    )
+    normal_transitions: list[tuple[tuple[str, ...], str]] = []
+    reduced_transitions: list[tuple[tuple[str, ...], str]] = []
+    for rule in rules:
+        for property_name, value in rule.declarations.items():
+            normalized = re.sub(r"\s+", " ", value.strip().lower())
+            if property_name == "display" and normalized == "none":
+                raise ContractError("production selectors must not hide content")
+            if property_name == "min-width":
+                reviewed_group = ("main", "section", "figure", ".download-option")
+                if (
+                    rule.selectors != reviewed_group
+                    or normalized != "0"
+                    or rule.minimum_width != 0
+                    or rule.maximum_width != float("inf")
+                    or rule.reduced_motion
+                ):
+                    raise ContractError("only the reviewed min-width: 0 layout group is allowed")
+            cascade_name = _cascade_property_name(property_name)
+            if cascade_name in {"color", "background-color"}:
+                matches_protected = any(
+                    selector_matches(selector, node)
+                    for selector in rule.selectors
+                    for node in protected_nodes
+                )
+                approved_main_background = (
+                    rule.selectors == ("main",)
+                    and cascade_name == "background-color"
+                )
+                if matches_protected and not approved_main_background:
+                    raise ContractError("heading and layout ancestors must not override reviewed colors")
+            if property_name == "transition":
+                target = reduced_transitions if rule.reduced_motion else normal_transitions
+                target.append((rule.selectors, normalized))
+
+    expected_primary = (
+        (".download-primary",),
+        "background-color 160ms ease, transform 160ms ease",
+    )
+    expected_reduced = (
+        ("*", "*::before", "*::after"),
+        "none !important",
+    )
+    if normal_transitions != [expected_primary] or reduced_transitions != [expected_reduced]:
+        raise ContractError("only the exact reviewed download and reduced-motion transitions are allowed")
+
+
+def _validate_layout_contract(styles: str) -> None:
+    """Require the approved editorial layouts at mobile and desktop widths."""
+    container = _css_block(styles, ".site-header,\nmain > *,\n.site-footer")
+    container_contract = (
+        "width: 100%;",
+        "max-width: 1200px;",
+        "margin-inline: auto;",
+        "padding-inline: 24px;",
+    )
+    if any(declaration not in container for declaration in container_contract):
+        raise ContractError("content container must be fluid and no wider than 1200px")
+
+    header = _css_block(styles, ".site-header")
+    if _css_pixels(header, "min-height") < 76:
+        raise ContractError("header must keep an approximately 78px minimum height")
+    if any(value not in header for value in ("display: flex;", "flex-wrap: wrap;", "align-items: center;")):
+        raise ContractError("header must wrap without hiding navigation")
+    navigation = _css_block(styles, ".site-header nav")
+    if "display: flex;" not in navigation or "flex-wrap: wrap;" not in navigation:
+        raise ContractError("navigation must remain visible and wrap")
+    logo = _css_block(styles, ".brand img")
+    if _css_pixels(logo, "width") < 36 or _css_pixels(logo, "height") < 36:
+        raise ContractError("brand must use the real icon at a readable size")
+
+    hero = _css_block(styles, ".hero")
+    if "display: grid;" not in hero or "grid-template-columns: minmax(0, 1fr);" not in hero:
+        raise ContractError("hero must preserve one-column source order on mobile")
+    hero_actions = _css_block(styles, ".hero-copy .download-primary")
+    if "width: 100%;" not in hero_actions or "max-width: 360px;" not in hero_actions:
+        raise ContractError("hero platform actions must receive equal placement")
+    heading = _css_block(styles, "h1")
+    if "font-size: clamp(" not in heading or "max-width: 16ch;" not in heading:
+        raise ContractError("hero heading must scale to about two desktop lines")
+    if "font-size: clamp(" not in _css_block(styles, "h2"):
+        raise ContractError("section headings must use fluid type")
+
+    steps = _css_block(styles, ".how-step")
+    if "display: grid;" not in steps or "border-top: 1px solid var(--rule);" not in steps:
+        raise ContractError("how steps must be numbered rows separated by rules")
+    if re.search(r"\b(?:background|box-shadow|border-radius)\s*:", steps):
+        raise ContractError("how steps must not become cards")
+    results = _css_block(styles, "#results")
+    if "grid-template-columns: minmax(0, 1fr);" not in results:
+        raise ContractError("results must remain one column on mobile")
+    downloads = _css_block(styles, ".download-pair")
+    if "grid-template-columns: minmax(0, 1fr);" not in downloads:
+        raise ContractError("download pair must stack on narrow screens")
+    if "border: 1px solid var(--rule);" not in downloads or "border-radius: 8px;" not in downloads:
+        raise ContractError("downloads must share one bordered pair")
+    requirements = _css_block(styles, "#requirements li")
+    if "border-bottom: 1px solid var(--rule);" not in requirements:
+        raise ContractError("requirements must use plain documentation rows")
+    details = _css_block(styles, "#faq details")
+    if "border-top: 1px solid var(--rule);" not in details:
+        raise ContractError("FAQ details must be separated by borders")
+    if "cursor: pointer;" not in _css_block(styles, "#faq summary"):
+        raise ContractError("native FAQ summaries must show pointer affordance")
+
+    mobile = _css_media_block(styles, "(max-width: 700px)")
+    if "width: 100%;" not in _css_block(mobile, ".site-header nav"):
+        raise ContractError("mobile navigation must stack without hidden links")
+    if "border-top: 1px solid var(--rule);" not in _css_block(mobile, ".download-option + .download-option"):
+        raise ContractError("stacked downloads must retain a separating rule")
+    tablet = _css_media_block(styles, "(min-width: 701px)")
+    if "grid-template-columns: repeat(2, minmax(0, 1fr));" not in _css_block(tablet, ".download-pair"):
+        raise ContractError("download pair must become two columns above 700px")
+    desktop = _css_media_block(styles, "(min-width: 900px)")
+    desktop_hero = _css_block(desktop, ".hero")
+    if "grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);" not in desktop_hero:
+        raise ContractError("desktop hero must use asymmetric columns")
+    desktop_results = _css_block(desktop, "#results")
+    if "grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);" not in desktop_results:
+        raise ContractError("desktop results must use an asymmetric two-figure grid")
+    wide = _css_media_block(styles, "(min-width: 1024px)")
+    if "padding-inline: 48px;" not in _css_block(wide, ".site-header,\nmain > *,\n.site-footer"):
+        raise ContractError("desktop container must use fluid wide gutters")
+
+
+def _validate_effective_responsive_contract(styles: str) -> None:
+    """Resolve required layout declarations at the four reviewed widths."""
+    main = CssNode("main")
+    nodes = {
+        "header": CssNode("header", frozenset({"site-header"})),
+        "hero": CssNode("div", frozenset({"hero"}), parent=main),
+        "results": CssNode("section", identifier="results", parent=main),
+        "footer": CssNode("footer", frozenset({"site-footer"})),
+        "downloads": CssNode(
+            "div",
+            frozenset({"download-pair"}),
+            parent=CssNode("section", identifier="downloads", parent=main),
+        ),
+    }
+    profiles = {
+        375: (
+            "minmax(0, 1fr)",
+            "minmax(0, 1fr)",
+            "minmax(0, 1fr)",
+            "24px",
+        ),
+        768: (
+            "minmax(0, 1fr)",
+            "minmax(0, 1fr)",
+            "repeat(2, minmax(0, 1fr))",
+            "24px",
+        ),
+        1024: (
+            "minmax(0, 1.2fr) minmax(0, 0.8fr)",
+            "minmax(0, 1.08fr) minmax(0, 0.92fr)",
+            "repeat(2, minmax(0, 1fr))",
+            "48px",
+        ),
+        1440: (
+            "minmax(0, 1.2fr) minmax(0, 0.8fr)",
+            "minmax(0, 1.08fr) minmax(0, 0.92fr)",
+            "repeat(2, minmax(0, 1fr))",
+            "48px",
+        ),
+    }
+    for viewport, (hero_columns, result_columns, download_columns, gutter) in profiles.items():
+        computed = {
+            name: effective_declarations(styles, node, viewport)
+            for name, node in nodes.items()
+        }
+        for name in ("header", "hero", "results", "footer"):
+            expected = {
+                "width": "100%",
+                "max-width": "1200px",
+                "padding-inline": gutter,
+            }
+            for property_name, value in expected.items():
+                if computed[name].get(property_name) != value:
+                    raise ContractError(
+                        f"effective responsive {name} {property_name} at {viewport}px "
+                        f"must be {value}"
+                    )
+        expected_layout = {
+            "hero": ("grid", hero_columns),
+            "results": ("grid", result_columns),
+            "downloads": ("grid", download_columns),
+        }
+        for name, (display, columns) in expected_layout.items():
+            if computed[name].get("display") != display:
+                raise ContractError(f"effective responsive {name} display at {viewport}px must be grid")
+            if computed[name].get("grid-template-columns") != columns:
+                raise ContractError(
+                    f"effective responsive {name} columns at {viewport}px must be {columns}"
+                )
+
+
+def _css_length_pixels(value: str, viewport: float) -> float:
+    """Resolve the fixed stylesheet's pixel and px/vw clamp lengths."""
+    if value.strip() == "0":
+        return 0
+    pixels = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)px", value.strip())
+    if pixels:
+        return float(pixels.group(1))
+    clamp = re.fullmatch(
+        r"clamp\(\s*([0-9.]+)px\s*,\s*([0-9.]+)vw\s*,\s*([0-9.]+)px\s*\)",
+        value.strip(),
+    )
+    if clamp:
+        minimum, fluid, maximum = (float(component) for component in clamp.groups())
+        return min(maximum, max(minimum, viewport * fluid / 100))
+    raise ContractError("effective target contract uses an unsupported length")
+
+
+def _css_gap_pixels(value: str, viewport: float) -> tuple[float, ...]:
+    """Resolve one or two fixed-stylesheet gap components to pixels."""
+    normalized = re.sub(r"\s+", " ", value.strip())
+    components = re.findall(r"clamp\([^()]*\)|[^\s]+", normalized)
+    if not 1 <= len(components) <= 2 or " ".join(components) != normalized:
+        raise ContractError("CSS gap must use one or two reviewed length values")
+    return tuple(_css_length_pixels(component, viewport) for component in components)
+
+
+def _css_length_maximum_pixels(value: str) -> float:
+    """Return the explicit maximum of one reviewed gap length."""
+    if value.strip() == "0":
+        return 0
+    pixels = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)px", value.strip())
+    if pixels:
+        return float(pixels.group(1))
+    clamp = re.fullmatch(
+        r"clamp\(\s*([0-9.]+)px\s*,\s*([0-9.]+)vw\s*,\s*([0-9.]+)px\s*\)",
+        value.strip(),
+    )
+    if clamp is None:
+        raise ContractError("CSS gaps use an unsupported length")
+    minimum, fluid, maximum = (float(component) for component in clamp.groups())
+    if not 0 <= minimum <= maximum or fluid < 0:
+        raise ContractError("CSS gaps require a finite ordered clamp")
+    return maximum
+
+
+def _css_font_size_minimum(value: str) -> float:
+    """Return the minimum size from a reviewed px or px/vw clamp value."""
+    pixels = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)px", value.strip())
+    if pixels:
+        return float(pixels.group(1))
+    clamp = re.fullmatch(
+        r"clamp\(\s*([0-9.]+)px\s*,\s*([0-9.]+)vw\s*,\s*([0-9.]+)px\s*\)",
+        value.strip(),
+    )
+    if clamp is None:
+        raise ContractError("CSS font-size must use px or the reviewed px/vw clamp")
+    minimum, fluid, maximum = (float(component) for component in clamp.groups())
+    if not 0 <= minimum <= maximum or fluid < 0:
+        raise ContractError("CSS font-size clamp must be finite and ordered")
+    return minimum
+
+
+def _validate_spacing_typography_contract(styles: str) -> None:
+    """Bound every gap, font size, and line height in the fixed vocabulary."""
+    copy_line_height_selectors = {
+        _normalized_selector_group(selector)
+        for selector in ("body", "figcaption", ".hero-explanation")
+    }
+    heading_line_height_selectors = {
+        _normalized_selector_group(selector)
+        for selector in ("h1", "h2", "h3")
+    }
+    for rule in parse_css_rules(styles):
+        for property_name, value in rule.declarations.items():
+            if property_name in {"gap", "row-gap", "column-gap"}:
+                components = re.findall(r"clamp\([^()]*\)|[^\s]+", value.strip())
+                if any(_css_length_maximum_pixels(component) > 100 for component in components):
+                    raise ContractError("CSS gaps must have an explicit maximum no larger than 100px")
+                for viewport in (375, 768, 1024, 1440):
+                    gaps = _css_gap_pixels(value, viewport)
+                    if any(not math.isfinite(gap) or not 0 <= gap <= 100 for gap in gaps):
+                        raise ContractError("CSS gaps must remain finite and no larger than 100px")
+            elif property_name == "font-size":
+                if _css_font_size_minimum(value) < 14:
+                    raise ContractError("CSS font sizes must keep a 14px minimum")
+            elif property_name == "line-height":
+                line_height = re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", value.strip())
+                if line_height is None or float(line_height.group()) <= 0:
+                    raise ContractError("CSS line heights must be positive unitless values")
+                selector_key = _normalized_selector_group(rule.selectors)
+                numeric_line_height = float(line_height.group())
+                if selector_key in heading_line_height_selectors and numeric_line_height < 1:
+                    raise ContractError("CSS heading line heights must remain at least 1.0")
+                if selector_key in copy_line_height_selectors and numeric_line_height < 1.5:
+                    raise ContractError("CSS copy line heights must remain readable")
+
+    body = CssNode("body")
+    main = CssNode("main", parent=body)
+    hero = CssNode("div", frozenset({"hero"}), parent=main)
+    hero_copy = CssNode("div", frozenset({"hero-copy"}), parent=hero)
+    how = CssNode("section", identifier="how", parent=main)
+    how_step = CssNode("div", frozenset({"how-step"}), parent=how)
+    results = CssNode("section", identifier="results", parent=main)
+    type_nodes = {
+        "body": (body, 16),
+        "hero heading": (CssNode("h1", parent=hero_copy), 46),
+        "section heading": (CssNode("h2", parent=results), 32),
+        "row heading": (CssNode("h3", parent=how_step), 20),
+        "hero explanation": (CssNode("p", frozenset({"hero-explanation"}), parent=hero_copy), 18),
+    }
+    for viewport in (375, 768, 1024, 1440):
+        if effective_declarations(styles, hero_copy, viewport).get("flex-direction") != "column":
+            raise ContractError("effective hero copy must remain a column at every width")
+        expected_gaps = {
+            hero: "clamp(36px, 6vw, 76px)",
+            how_step: "2px 18px" if viewport < 900 else "28px",
+            results: "36px",
+        }
+        for node, expected in expected_gaps.items():
+            if effective_declarations(styles, node, viewport).get("gap") != expected:
+                raise ContractError("effective grid gaps must match the reviewed editorial layout")
+        for label, (node, minimum) in type_nodes.items():
+            font_size = effective_declarations(styles, node, viewport).get("font-size", "")
+            if _css_length_pixels(font_size, viewport) < minimum:
+                raise ContractError(f"effective {label} font size is below its reviewed floor")
+
+
+def _validate_effective_action_target(styles: str, class_name: str) -> None:
+    """Require one secondary action to retain its effective 44px target."""
+    body = CssNode("body")
+    main = CssNode("main", parent=body)
+    if class_name == "secondary-link":
+        hero = CssNode("div", frozenset({"hero"}), parent=main)
+        parent = CssNode("div", frozenset({"hero-copy"}), parent=hero)
+    else:
+        downloads = CssNode("section", identifier="downloads", parent=main)
+        pair = CssNode("div", frozenset({"download-pair"}), parent=downloads)
+        option = CssNode(
+            "article",
+            frozenset({"download-option", "download-option-windows"}),
+            parent=pair,
+        )
+        parent = CssNode("p", parent=option)
+    node = CssNode("a", frozenset({class_name}), parent=parent)
+    for viewport in (375, 768, 1024, 1440):
+        declarations = effective_declarations(styles, node, viewport)
+        if declarations.get("display") != "inline-flex" or declarations.get("align-items") != "center":
+            raise ContractError(f"effective target contract for .{class_name} requires inline flex")
+        minimum_height = _css_length_pixels(declarations.get("min-height", ""), viewport)
+        if minimum_height < 44:
+            raise ContractError(f"effective target contract for .{class_name} requires 44px")
+
+
+def _validate_effective_interaction_targets(styles: str) -> None:
+    """Require every reviewed interactive element to retain a 44px target."""
+    body = CssNode("body")
+    header = CssNode("header", frozenset({"site-header"}), parent=body)
+    navigation = CssNode("nav", parent=header)
+    footer = CssNode("footer", frozenset({"site-footer"}), parent=body)
+    main = CssNode("main", parent=body)
+    hero = CssNode("div", frozenset({"hero"}), parent=main)
+    hero_copy = CssNode("div", frozenset({"hero-copy"}), parent=hero)
+    downloads = CssNode("section", identifier="downloads", parent=main)
+    pair = CssNode("div", frozenset({"download-pair"}), parent=downloads)
+    option = CssNode("article", frozenset({"download-option"}), parent=pair)
+    option_copy = CssNode("p", parent=option)
+    faq = CssNode("section", identifier="faq", parent=main)
+    targets = {
+        "skip link": CssNode("a", frozenset({"skip-link"}), parent=body),
+        "brand": CssNode("a", frozenset({"brand"}), parent=header),
+        "navigation link": CssNode("a", parent=navigation),
+        "footer link": CssNode("a", parent=footer),
+        "hero primary": CssNode(
+            "a",
+            frozenset({"download-primary", "download-windows"}),
+            parent=hero_copy,
+        ),
+        "download primary": CssNode(
+            "a",
+            frozenset({"download-primary", "download-macos"}),
+            parent=option,
+        ),
+        "secondary action": CssNode("a", frozenset({"secondary-link"}), parent=hero_copy),
+        "fallback action": CssNode("a", frozenset({"download-fallback"}), parent=option_copy),
+        "FAQ summary": CssNode("summary", parent=CssNode("details", parent=faq)),
+    }
+    for viewport in (375, 768, 1024, 1440):
+        for label, node in targets.items():
+            minimum_height = effective_declarations(styles, node, viewport).get("min-height")
+            if minimum_height is None or _css_length_pixels(minimum_height, viewport) < 44:
+                raise ContractError(f"effective interaction target for {label} requires 44px")
+
+
+def _validate_effective_heading_contract(styles: str) -> None:
+    """Require the effective desktop heading to retain a two-line measure."""
+    main = CssNode("main")
+    hero_node = CssNode("div", frozenset({"hero"}), parent=main)
+    heading_node = CssNode(
+        "h1",
+        identifier="hero-title",
+        parent=CssNode("div", frozenset({"hero-copy"}), parent=hero_node),
+    )
+    for viewport in (1200, 1440):
+        hero = effective_declarations(styles, hero_node, viewport)
+        heading = effective_declarations(styles, heading_node, viewport)
+        font_size = _css_length_pixels(heading.get("font-size", ""), viewport)
+        if not 64 <= font_size <= 74:
+            raise ContractError("effective target contract for h1 requires editorial desktop type")
+        heading_measure = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)ch", heading.get("max-width", ""))
+        if heading_measure is None:
+            raise ContractError("effective target contract for h1 requires a ch measure")
+        columns = re.fullmatch(
+            r"minmax\(0,\s*([0-9.]+)fr\)\s*minmax\(0,\s*([0-9.]+)fr\)",
+            hero.get("grid-template-columns", ""),
+        )
+        if columns is None:
+            raise ContractError("effective target contract for h1 requires two hero tracks")
+        copy_fraction, photo_fraction = (float(component) for component in columns.groups())
+        outer_width = min(viewport, _css_length_pixels(hero.get("max-width", ""), viewport))
+        gutter = _css_length_pixels(hero.get("padding-inline", ""), viewport)
+        gap = _css_length_pixels(hero.get("gap", ""), viewport)
+        track_width = outer_width - 2 * gutter - gap
+        copy_width = track_width * copy_fraction / (copy_fraction + photo_fraction)
+        photo_width = track_width * photo_fraction / (copy_fraction + photo_fraction)
+        maximum_measure = float(heading_measure.group(1)) * font_size * 0.5
+        effective_measure = min(copy_width, maximum_measure)
+        minimum_measure = len("damaged screen.") * font_size * 0.5
+        if effective_measure < minimum_measure or photo_width < 400:
+            raise ContractError("effective target contract for h1 requires a two-line editorial measure")
+
+
+def _validate_effective_layout_safety_contract(styles: str) -> None:
+    """Keep figures, hero copy, heading, and results within reviewed tracks."""
+    body = CssNode("body")
+    main = CssNode("main", parent=body)
+    hero = CssNode("div", frozenset({"hero"}), parent=main)
+    hero_copy = CssNode("div", frozenset({"hero-copy"}), parent=hero)
+    hero_figure = CssNode("figure", frozenset({"hero-figure"}), parent=hero)
+    heading = CssNode("h1", identifier="hero-title", parent=hero_copy)
+    results = CssNode("section", identifier="results", parent=main)
+    results_figure = CssNode("figure", parent=results)
+    for viewport in (375, 768, 1024, 1440):
+        hero_styles = effective_declarations(styles, hero, viewport)
+        copy_styles = effective_declarations(styles, hero_copy, viewport)
+        heading_styles = effective_declarations(styles, heading, viewport)
+        results_styles = effective_declarations(styles, results, viewport)
+        for figure in (hero_figure, results_figure):
+            figure_styles = effective_declarations(styles, figure, viewport)
+            if figure_styles.get("margin") != "0":
+                raise ContractError("effective layout requires figures to fill their grid track")
+        hero_figure_styles = effective_declarations(styles, hero_figure, viewport)
+        if hero_figure_styles.get("margin-bottom") != "0":
+            raise ContractError("effective layout requires the hero figure margin to remain zero")
+        if "height" in heading_styles or heading_styles.get("overflow", "visible") != "visible":
+            raise ContractError("effective layout requires a visible, unclipped hero heading")
+
+        outer_width = min(viewport, _css_length_pixels(hero_styles.get("max-width", ""), viewport))
+        gutter = _css_length_pixels(hero_styles.get("padding-inline", ""), viewport)
+        available_width = outer_width - 2 * gutter
+        columns = re.fullmatch(
+            r"minmax\(0,\s*([0-9.]+)fr\)(?:\s+minmax\(0,\s*([0-9.]+)fr\))?",
+            hero_styles.get("grid-template-columns", ""),
+        )
+        if columns is None:
+            raise ContractError("effective layout requires reviewed hero tracks")
+        first_fraction, second_fraction = columns.groups()
+        copy_track = available_width
+        if second_fraction is not None:
+            gap = _css_length_pixels(hero_styles.get("gap", ""), viewport)
+            copy_track = (available_width - gap) * float(first_fraction) / (
+                float(first_fraction) + float(second_fraction)
+            )
+        declared_copy_width = copy_styles.get("width")
+        copy_width = (
+            copy_track
+            if declared_copy_width is None
+            else _css_length_pixels(declared_copy_width, viewport)
+        )
+        if copy_width > copy_track:
+            raise ContractError("effective layout requires hero copy to fit its grid track")
+        results_gap = _css_length_pixels(results_styles.get("gap", ""), viewport)
+        if not 0 <= results_gap <= 100:
+            raise ContractError("effective layout requires an editorial results gap no larger than 100px")
+
+
+def _validate_effective_target_contract(styles: str) -> None:
+    """Validate the cascade-sensitive secondary actions and hero heading."""
+    _validate_effective_action_target(styles, "secondary-link")
+    _validate_effective_action_target(styles, "download-fallback")
+    _validate_effective_heading_contract(styles)
+
+
+def _validate_forbidden_style_contract(styles: str) -> None:
+    """Reject template aesthetics, unsafe motion, and hidden overflow."""
+    source = re.sub(r"/\*.*?\*/", "", styles, flags=re.DOTALL)
+    lowered = source.lower()
+    forbidden = {
+        "@import": "external CSS imports are forbidden",
+        "@font-face": "remote and embedded font requests are forbidden",
+        "@keyframes": "keyframe animation is forbidden",
+        "backdrop-filter": "backdrop blur and glass effects are forbidden",
+        "blur(": "blur effects are forbidden",
+        "linear-gradient(": "large background gradients are forbidden",
+        "radial-gradient(": "large background gradients are forbidden",
+        "box-shadow": "shadow stacks are forbidden",
+        "text-shadow": "glow and text shadows are forbidden",
+        "text-transform: uppercase": "uppercase label styling is forbidden",
+        "background-attachment: fixed": "fixed decorative backgrounds are forbidden",
+        "overflow-x: hidden": "horizontal overflow must be prevented by sizing",
+        "display: none": "essential links and content must not be hidden",
+        "carousel": "carousel patterns are forbidden",
+        "parallax": "parallax patterns are forbidden",
+        "glass": "glass effects are forbidden",
+        "glow": "glow effects are forbidden",
+    }
+    for pattern, message in forbidden.items():
+        if pattern in lowered:
+            raise ContractError(message)
+    if re.search(r"\banimation(?:-name)?\s*:", lowered):
+        raise ContractError("animation declarations are forbidden")
+    for value in re.findall(r"\bborder-radius\s*:\s*([^;]+);", lowered):
+        pixels = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)px", value.strip())
+        if pixels is None or float(pixels.group(1)) > 8:
+            raise ContractError("giant pill radii are forbidden")
+
+    primary = _css_block(styles, ".download-primary")
+    transition = "transition: background-color 160ms ease, transform 160ms ease;"
+    if transition not in primary:
+        raise ContractError("motion must be short color and position feedback")
+    for duration in re.findall(r"([0-9]+(?:\.[0-9]+)?)ms", primary):
+        if float(duration) > 200:
+            raise ContractError("motion feedback must remain short")
+    reduced = _css_media_block(styles, "(prefers-reduced-motion: reduce)")
+    reduced_html = _css_block(reduced, "html")
+    reduced_all = _css_block(reduced, "*,\n*::before,\n*::after")
+    if "scroll-behavior: auto;" not in reduced_html or "transition: none !important;" not in reduced_all:
+        raise ContractError("reduced motion must remove smooth scroll and transitions")
+
+
+def validate_stylesheet(styles: str) -> None:
+    """Validate the landing-page stylesheet source contract."""
+    _validate_supported_cascade_contract(styles)
+    _validate_global_style_invariants(styles)
+    _validate_color_contract(styles)
+    _validate_effective_color_contract(styles)
+    _validate_text_contrast_contract(styles)
+    _validate_foundation_contract(styles)
+    _validate_spacing_typography_contract(styles)
+    _validate_figure_margin_contract(styles)
+    _validate_requirements_list_contract(styles)
+    _validate_interaction_contract(styles)
+    _validate_skip_link_visibility_contract(styles)
+    _validate_layout_contract(styles)
+    _validate_effective_responsive_contract(styles)
+    _validate_effective_target_contract(styles)
+    _validate_effective_interaction_targets(styles)
+    _validate_effective_layout_safety_contract(styles)
+    _validate_forbidden_style_contract(styles)
+    _validate_rule_vocabulary_contract(styles)
+
+
 class _SvgTreeBuilder(ET.TreeBuilder):
     """Build SVG XML while rejecting every processing instruction."""
 
@@ -883,6 +2446,421 @@ def with_segment(jpeg: bytes, marker: int, payload: bytes) -> bytes:
     return jpeg[:2] + segment + jpeg[2:]
 
 
+class StyleContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        """Load the reviewed stylesheet for each source-contract test."""
+        self.styles = (ROOT / "site" / "styles.css").read_text(encoding="utf-8")
+
+    def assert_style_rejected(
+        self,
+        mutated: str,
+        validator: Callable[[str], None],
+        message: str,
+    ) -> None:
+        """Require one mutated stylesheet copy to fail its focused validator."""
+        self.assertNotEqual(self.styles, mutated)
+        with self.assertRaisesRegex(ContractError, message):
+            validator(mutated)
+
+    def test_reviewed_tokens_are_used_with_required_contrast(self) -> None:
+        _validate_color_contract(self.styles)
+
+    def test_typography_media_and_overflow_foundations(self) -> None:
+        _validate_foundation_contract(self.styles)
+
+    def test_figures_fill_their_grid_tracks(self) -> None:
+        _validate_figure_margin_contract(self.styles)
+
+    def test_requirements_keep_native_list_markers(self) -> None:
+        _validate_requirements_list_contract(self.styles)
+
+    def test_requirements_marker_regressions_are_rejected(self) -> None:
+        mutations = {
+            "removed-marker": "#requirements ul { list-style: none; }",
+            "illegible-marker": "#requirements li::marker { color: #FFF7E8; }",
+        }
+        for name, override in mutations.items():
+            with self.subTest(name=name), self.assertRaisesRegex(ContractError, "requirements"):
+                _validate_requirements_list_contract(f"{self.styles}\n{override}\n")
+
+    def test_keyboard_and_pointer_interactions_are_accessible(self) -> None:
+        _validate_interaction_contract(self.styles)
+
+    def test_all_effective_interaction_targets_are_at_least_44px(self) -> None:
+        _validate_effective_interaction_targets(self.styles)
+
+    def test_secondary_release_link_has_accessible_target(self) -> None:
+        _validate_effective_action_target(self.styles, "secondary-link")
+
+    def test_download_fallback_link_has_accessible_target(self) -> None:
+        _validate_effective_action_target(self.styles, "download-fallback")
+
+    def test_editorial_structure_and_responsive_breakpoints(self) -> None:
+        _validate_layout_contract(self.styles)
+        _validate_effective_responsive_contract(self.styles)
+
+    def test_desktop_hero_heading_keeps_editorial_two_line_measure(self) -> None:
+        _validate_effective_heading_contract(self.styles)
+
+    def test_effective_layout_safety_at_reviewed_widths(self) -> None:
+        _validate_effective_layout_safety_contract(self.styles)
+
+    def test_motion_and_forbidden_style_contract(self) -> None:
+        _validate_forbidden_style_contract(self.styles)
+
+    def test_wrong_color_token_mutation_is_rejected(self) -> None:
+        mutated = self.styles.replace("--paper: #F5F0E8;", "--paper: #FFFFFF;", 1)
+        self.assert_style_rejected(mutated, _validate_color_contract, "reviewed palette")
+
+    def test_contrast_regression_mutation_is_rejected(self) -> None:
+        mutated = self.styles.replace("--button: #B83D31;", "--button: #D9513B;", 1)
+        self.assertNotEqual(self.styles, mutated)
+        with self.assertRaisesRegex(ContractError, "Windows button contrast"):
+            _validate_contrast_contract(parse_style_tokens(mutated))
+
+    def test_effective_download_color_override_mutations_are_rejected(self) -> None:
+        mutations = {
+            "windows-default": ".download-windows { background: #FFFFFF; }",
+            "windows-hover": ".download-windows:hover { background: #FFFFFF; }",
+            "macos-default": ".download-macos { color: #FFFFFF; background: #FFFFFF; }",
+        }
+        for name, override in mutations.items():
+            with self.subTest(name=name), self.assertRaisesRegex(ContractError, "effective .* contrast"):
+                validate_stylesheet(f"{self.styles}\n{override}\n")
+
+    def test_effective_color_cascade_bypass_mutations_are_rejected(self) -> None:
+        mutations = {
+            "background-color": ".download-windows { background-color: #FFFFFF; }",
+            "scoped-token": ".download-windows { --button: var(--paper); }",
+            "body-color": "body { color: #FFFFFF; }",
+            "body-background": "body { background: #FFFFFF; }",
+            "main-background": "main { background-color: #FFFFFF; }",
+            "text-link": "a { color: #FFFFFF; }",
+            "macos-hover": ".download-macos:hover { background: #FFFFFF; }",
+            "focus-color": ":focus-visible { outline-color: #FFFFFF; }",
+            "download-windows-context": (
+                ".download-option .download-windows { background-color: #FFFFFF; }"
+            ),
+            "download-macos-context-hover": (
+                ".download-option .download-macos:hover { background: #FFFFFF; }"
+            ),
+            "text-link-context": ".download-option .download-fallback { color: #FFFFFF; }",
+            "focus-context": ".download-option a:focus-visible { outline-color: #FFFFFF; }",
+        }
+        for name, override in mutations.items():
+            with self.subTest(name=name), self.assertRaisesRegex(
+                ContractError,
+                "effective color contract|custom properties",
+            ):
+                validate_stylesheet(f"{self.styles}\n{override}\n")
+
+    def test_missing_focus_visible_mutation_is_rejected(self) -> None:
+        mutated = self.styles.replace(":focus-visible {", ":focus {", 1)
+        self.assert_style_rejected(mutated, _validate_interaction_contract, "focus-visible")
+
+    def test_small_action_target_mutation_is_rejected(self) -> None:
+        mutated = self.styles.replace(
+            ".download-primary {\n  min-height: 44px;",
+            ".download-primary {\n  min-height: 40px;",
+            1,
+        )
+        self.assert_style_rejected(mutated, _validate_interaction_contract, "at least 44px")
+
+    def test_missing_reduced_motion_mutation_is_rejected(self) -> None:
+        mutated = self.styles.replace(
+            "@media (prefers-reduced-motion: reduce)",
+            "@media (prefers-reduced-motion: no-preference)",
+            1,
+        )
+        self.assert_style_rejected(mutated, _validate_forbidden_style_contract, "required media query")
+
+    def test_removed_mobile_breakpoint_mutation_is_rejected(self) -> None:
+        mutated = self.styles.replace("@media (max-width: 700px)", "@media (max-width: 699px)", 1)
+        self.assert_style_rejected(mutated, _validate_layout_contract, "required media query")
+
+    def test_effective_responsive_override_mutations_are_rejected(self) -> None:
+        mutations = {
+            "display-block": ".hero, #results { display: block; }",
+            "narrow-container": ".site-header, main > *, .site-footer { max-width: 640px; }",
+            "hero-columns": (
+                "@media (min-width: 900px) { "
+                ".hero { grid-template-columns: minmax(0, 1fr); } }"
+            ),
+            "results-columns": (
+                "@media (min-width: 900px) { "
+                "#results { grid-template-columns: minmax(0, 1fr); } }"
+            ),
+            "download-columns": (
+                "@media (min-width: 701px) { "
+                ".download-pair { grid-template-columns: minmax(0, 1fr); } }"
+            ),
+        }
+        for name, override in mutations.items():
+            with self.subTest(name=name), self.assertRaisesRegex(ContractError, "effective responsive"):
+                validate_stylesheet(f"{self.styles}\n{override}\n")
+
+    def test_unsupported_cascade_mutations_are_rejected(self) -> None:
+        mutations = {
+            "important": ".hero-copy { display: block !important; }",
+            "all": ".hero { all: initial; }",
+            "media-union": (
+                "@media (min-width: 900px), (max-width: 700px) { "
+                ".hero { display: block; } }"
+            ),
+            "at-property": (
+                '@property --button { syntax: "<color>"; inherits: false; '
+                "initial-value: #FFFFFF; }"
+            ),
+            "unmodeled-selector": (
+                ".download-option + .download-option .download-macos { background: #FFFFFF; }"
+            ),
+        }
+        for name, override in mutations.items():
+            with self.subTest(name=name), self.assertRaisesRegex(ContractError, "unsupported cascade"):
+                validate_stylesheet(f"{self.styles}\n{override}\n")
+
+    def test_final_declaration_without_semicolon_is_parsed(self) -> None:
+        rules = parse_css_rules("h1 { font-size: 100px }")
+        self.assertEqual("100px", rules[0].declarations["font-size"])
+
+    def test_nested_media_context_is_rejected_by_fixed_parser(self) -> None:
+        nested = (
+            "@media (min-width: 701px) { @media (min-width: 900px) { "
+            ".hero { display: grid; } } }"
+        )
+        with self.assertRaisesRegex(ContractError, "media context"):
+            parse_css_rules(nested)
+
+    def test_malformed_and_duplicate_declarations_are_rejected(self) -> None:
+        mutations = {
+            "unparsed-residue": "h1 { font-size: 74px; malformed }",
+            "duplicate-property": "h1 { font-size: 74px; font-size: 74px; }",
+        }
+        for name, override in mutations.items():
+            with self.subTest(name=name), self.assertRaisesRegex(ContractError, "CSS declaration"):
+                validate_stylesheet(f"{self.styles}\n{override}\n")
+
+    def test_unmodeled_property_mutations_are_rejected(self) -> None:
+        mutations = {
+            "font-shorthand": "h1 { font: inherit; }",
+            "background-image": "body { background-image: none; }",
+            "logical-width": ".hero { inline-size: 2000px; }",
+            "transition-longhand": ".hero { transition-duration: 10s; }",
+        }
+        for name, override in mutations.items():
+            with self.subTest(name=name), self.assertRaisesRegex(ContractError, "unsupported CSS property"):
+                validate_stylesheet(f"{self.styles}\n{override}\n")
+
+    def test_hidden_overflow_and_color_invariant_mutations_are_rejected(self) -> None:
+        mutations = {
+            "final-heading-size": "h1 { font-size: 100px }",
+            "final-visibility": "h1 { visibility: hidden }",
+            "display-none": "h1 { display:none; }",
+            "positive-minimum": ".hero { min-width: 2000px; }",
+            "heading-color": "h1 { color: #FFF7E8; }",
+            "ancestor-background": ".hero { background: #27212B; }",
+        }
+        for name, override in mutations.items():
+            with self.subTest(name=name), self.assertRaises(ContractError):
+                validate_stylesheet(f"{self.styles}\n{override}\n")
+
+    def test_unreviewed_transition_mutations_are_rejected(self) -> None:
+        mutations = {
+            "long-duration": ".hero { transition: color 10s; }",
+            "other-selector": ".secondary-link { transition: color 160ms ease; }",
+        }
+        for name, override in mutations.items():
+            with self.subTest(name=name), self.assertRaisesRegex(ContractError, "transition"):
+                validate_stylesheet(f"{self.styles}\n{override}\n")
+
+    def test_reviewed_properties_cannot_be_replayed_in_duplicate_blocks(self) -> None:
+        mutations = {
+            "figure-margin": ".hero-figure { margin: 40px; }",
+            "footer-background": ".site-footer { background: var(--ink); }",
+            "hidden-heading": "h1 { height: 0; overflow: clip; }",
+            "wide-copy": ".hero-copy { width: 2000px; }",
+            "results-gap": "#results { gap: 2000px; }",
+        }
+        for name, override in mutations.items():
+            with self.subTest(name=name), self.assertRaises(ContractError):
+                validate_stylesheet(f"{self.styles}\n{override}\n")
+
+    def test_in_place_selector_vocabulary_regressions_are_rejected(self) -> None:
+        mutations = {
+            "figure-margin": self.styles.replace(
+                ".hero-figure {\n  margin-bottom: 0;",
+                ".hero-figure {\n  margin: 40px;",
+                1,
+            ),
+            "footer-background": self.styles.replace(
+                ".site-footer {\n  display: flex;",
+                ".site-footer {\n  background: var(--ink);\n  display: flex;",
+                1,
+            ),
+            "hidden-heading": self.styles.replace(
+                "h1 {\n  max-width: 16ch;",
+                "h1 {\n  height: 0;\n  overflow: clip;\n  max-width: 16ch;",
+                1,
+            ),
+            "wide-copy": self.styles.replace(
+                ".hero-copy {\n  display: flex;",
+                ".hero-copy {\n  width: 2000px;\n  display: flex;",
+                1,
+            ),
+            "results-gap": self.styles.replace(
+                "#results {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr);\n  gap: 36px;",
+                "#results {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr);\n  gap: 2000px;",
+                1,
+            ),
+        }
+        for name, mutated in mutations.items():
+            with self.subTest(name=name):
+                self.assertNotEqual(self.styles, mutated)
+                with self.assertRaises(ContractError):
+                    validate_stylesheet(mutated)
+
+    def test_cross_cutting_value_invariant_mutations_are_rejected(self) -> None:
+        mutations = {
+            "hero-copy-row": self.styles.replace(
+                "  flex-direction: column;",
+                "  flex-direction: row;",
+                1,
+            ),
+            "how-step-gap": self.styles.replace(
+                "  gap: 2px 18px;",
+                "  gap: 2000px;",
+                1,
+            ),
+            "explanation-contrast": self.styles.replace(
+                ".hero-explanation {\n  max-width: 48ch;\n  margin-bottom: 30px;\n  color: var(--muted);",
+                ".hero-explanation {\n  max-width: 48ch;\n  margin-bottom: 30px;\n  color: var(--surface);",
+                1,
+            ),
+            "skip-contrast": self.styles.replace(
+                "  background: var(--ink);\n  transform: translateY(-150%);",
+                "  background: var(--surface);\n  transform: translateY(-150%);",
+                1,
+            ),
+            "faq-target": self.styles.replace(
+                "#faq summary {\n  min-height: 56px;\n  padding-block: 14px;",
+                "#faq summary {\n  min-height: 1px;\n  padding-block: 0;",
+                1,
+            ),
+            "caption-size": self.styles.replace(
+                "figcaption {\n  margin-top: 12px;\n  color: var(--muted);\n  font-size: 14px;",
+                "figcaption {\n  margin-top: 12px;\n  color: var(--muted);\n  font-size: 0;",
+                1,
+            ),
+        }
+        for name, mutated in mutations.items():
+            with self.subTest(name=name):
+                self.assertNotEqual(self.styles, mutated)
+                with self.assertRaises(ContractError):
+                    validate_stylesheet(mutated)
+
+    def test_css_value_parser_accepts_reviewed_boundaries(self) -> None:
+        self.assertEqual((0.0, 24.0), _css_gap_pixels("0 24px", 375))
+        self.assertEqual((100.0, 100.0), _css_gap_pixels("100px 100px", 1440))
+        self.assertEqual(14.0, _css_font_size_minimum("14px"))
+        self.assertEqual(14.0, _css_font_size_minimum("clamp(14px, 2vw, 20px)"))
+
+    def test_unreadable_copy_line_height_mutation_is_rejected(self) -> None:
+        mutated = self.styles.replace(
+            "  line-height: 1.55;",
+            "  line-height: 0;",
+            1,
+        )
+        self.assert_style_rejected(mutated, validate_stylesheet, "line heights")
+
+    def test_gap_clamp_with_oversized_maximum_is_rejected(self) -> None:
+        mutated = self.styles.replace(
+            "  gap: 12px 28px;",
+            "  gap: clamp(0px, 1vw, 2000px);",
+            1,
+        )
+        self.assert_style_rejected(mutated, validate_stylesheet, "gaps")
+
+    def test_heading_line_height_floor_mutations_are_rejected(self) -> None:
+        mutations = {
+            "h1": self.styles.replace("  line-height: 1.02;", "  line-height: 0.12;", 1),
+            "h2": self.styles.replace("  line-height: 1.12;", "  line-height: 0.13;", 1),
+            "h3": self.styles.replace(
+                "h3 {\n  margin-bottom: 8px;\n  font-size: clamp(20px, 2vw, 24px);\n  line-height: 1.3;",
+                "h3 {\n  margin-bottom: 8px;\n  font-size: clamp(20px, 2vw, 24px);\n  line-height: 0.13;",
+                1,
+            ),
+        }
+        for name, mutated in mutations.items():
+            with self.subTest(name=name):
+                self.assertNotEqual(self.styles, mutated)
+                with self.assertRaisesRegex(ContractError, "heading line heights"):
+                    validate_stylesheet(mutated)
+
+    def test_skip_link_position_and_focus_mutations_are_rejected(self) -> None:
+        mutations = {
+            "offscreen-left": self.styles.replace("  left: 12px;", "  left: -9999px;", 1),
+            "offscreen-top": self.styles.replace("  top: 12px;", "  top: -1px;", 1),
+            "low-layer": self.styles.replace("  z-index: 10;", "  z-index: 0;", 1),
+            "horizontal-hide": self.styles.replace(
+                "  transform: translateY(-150%);",
+                "  transform: translateX(-150%);",
+                1,
+            ),
+            "focused-hidden": self.styles.replace(
+                ".skip-link:focus {\n  transform: translateY(0);",
+                ".skip-link:focus {\n  transform: translateY(-150%);",
+                1,
+            ),
+        }
+        for name, mutated in mutations.items():
+            with self.subTest(name=name):
+                self.assertNotEqual(self.styles, mutated)
+                with self.assertRaisesRegex(ContractError, "skip link"):
+                    validate_stylesheet(mutated)
+
+    def test_skip_link_zero_position_boundary_stays_on_screen(self) -> None:
+        mutated = self.styles.replace("  left: 12px;", "  left: 0;", 1)
+        self.assertNotEqual(self.styles, mutated)
+        validate_stylesheet(mutated)
+
+    def test_effective_target_override_mutations_are_rejected(self) -> None:
+        mutations = {
+            "secondary-height": ".secondary-link { min-height: 1px; }",
+            "secondary-context-height": ".hero-copy .secondary-link { min-height: 1px; }",
+            "fallback-height": ".download-fallback { min-height: 1px; }",
+            "fallback-context-height": ".download-option .download-fallback { min-height: 1px; }",
+            "heading-size": "h1 { font-size: 100px; }",
+            "heading-measure": "h1 { max-width: 8ch; }",
+        }
+        for name, override in mutations.items():
+            with self.subTest(name=name), self.assertRaisesRegex(ContractError, "effective target contract"):
+                validate_stylesheet(f"{self.styles}\n{override}\n")
+
+    def test_css_import_mutation_is_rejected(self) -> None:
+        mutated = '@import url("https://example.invalid/template.css");\n' + self.styles
+        self.assert_style_rejected(mutated, _validate_forbidden_style_contract, "imports are forbidden")
+
+    def test_backdrop_blur_mutation_is_rejected(self) -> None:
+        mutated = ".hero { backdrop-filter: blur(12px); }\n" + self.styles
+        self.assert_style_rejected(mutated, _validate_forbidden_style_contract, "backdrop blur")
+
+    def test_keyframes_mutation_is_rejected(self) -> None:
+        mutated = "@keyframes enter { from { opacity: 0; } to { opacity: 1; } }\n" + self.styles
+        self.assert_style_rejected(mutated, _validate_forbidden_style_contract, "keyframe animation")
+
+    def test_page_gradient_mutation_is_rejected(self) -> None:
+        mutated = self.styles.replace(
+            "background: var(--paper);",
+            "background: linear-gradient(#F5F0E8, #FCFAF6);",
+            1,
+        )
+        self.assert_style_rejected(mutated, _validate_forbidden_style_contract, "background gradients")
+
+    def test_giant_pill_radius_mutation_is_rejected(self) -> None:
+        mutated = self.styles.replace("border-radius: 8px;", "border-radius: 999px;", 1)
+        self.assert_style_rejected(mutated, _validate_forbidden_style_contract, "pill radii")
+
+
 class LandingPageContractTests(unittest.TestCase):
     def assert_mutation_rejected(self, old: str, new: str, message: str) -> None:
         """Mutate a temporary page copy and require a specific rejection."""
@@ -912,7 +2890,8 @@ class LandingPageContractTests(unittest.TestCase):
             else:
                 self.assertGreater(status.st_size, 0, relative_path)
         styles = (site / "styles.css").read_text(encoding="utf-8")
-        self.assertIsNotNone(re.fullmatch(r"\s*/\*.*\*/\s*", styles, re.DOTALL))
+        self.assertIsNone(re.fullmatch(r"\s*/\*.*\*/\s*", styles, re.DOTALL))
+        validate_stylesheet(styles)
 
     def test_document_metadata_landmarks_and_hero(self) -> None:
         page = parse_landing_page()
