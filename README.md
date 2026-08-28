@@ -179,6 +179,7 @@ Validate the dependency-free landing page from the project root:
 
 ```bash
 python3 -m unittest discover -s tests/site -p 'test_*.py' -v
+node --test tests/site/platform.test.mjs
 ```
 
 The exact Windows test and dual-package release commands, including private SDK

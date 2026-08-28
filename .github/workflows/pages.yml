@@ -26,7 +26,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Run site contract tests
-        run: python3 -m unittest discover -s tests/site -p 'test_*.py' -v
+        run: |
+          python3 -m unittest discover -s tests/site -p 'test_*.py' -v
+          node --test tests/site/platform.test.mjs
       - name: Validate Pages-equivalent archive
         shell: bash
         run: |
@@ -53,7 +55,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Run site contract tests
-        run: python3 -m unittest discover -s tests/site -p 'test_*.py' -v
+        run: |
+          python3 -m unittest discover -s tests/site -p 'test_*.py' -v
+          node --test tests/site/platform.test.mjs
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
       - name: Upload GitHub Pages artifact

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 import shutil
@@ -20,6 +21,7 @@ ASSETS = ROOT / "site" / "assets"
 EXPECTED_SITE_FILES = {
     ".nojekyll",
     "index.html",
+    "platform.mjs",
     "styles.css",
     "assets/screenfix-icon.svg",
     "assets/damaged-display.jpg",
@@ -32,6 +34,17 @@ EXPECTED_SITE_FILES = {
     "assets/result-mask.jpg",
 }
 PAGES_WORKFLOW = ROOT / ".github" / "workflows" / "pages.yml"
+PLATFORM_MODULE = ROOT / "site" / "platform.mjs"
+MAX_PLATFORM_MODULE_BYTES = 4_096
+PLATFORM_APPROVED_TEMPLATE = '`[data-platform-option="${platform}"]`'
+PLATFORM_APPROVED_REGEXES = (
+    "/Android|iPhone|iPad|Mobile/i",
+    "/Windows|Win(?:32|64|CE)/i",
+    "/macOS|MacIntel|Macintosh/i",
+)
+PLATFORM_EXECUTABLE_FINGERPRINT = (
+    "9f9f2966b52346228aaf9afc5c21c89b50c6a76fbea258bc8b4a8be6ae242f30"
+)
 PAGES_CONCURRENCY_GROUP = (
     "${{ github.event_name == 'pull_request' && "
     "format('screenfix-pages-pr-{0}', github.event.pull_request.number) "
@@ -42,6 +55,7 @@ README_SITE_URL = "https://far1h.github.io/ScreenFix/"
 README_RELEASES_URL = "https://github.com/far1h/ScreenFix/releases"
 README_ROOT_SITE_PATTERN = re.compile(r"^[├└]──[ \t]+site/(?:[ \t]+.*)?$", re.MULTILINE)
 README_VALIDATION_COMMAND = "python3 -m unittest discover -s tests/site -p 'test_*.py' -v"
+PLATFORM_TEST_COMMAND = "node --test tests/site/platform.test.mjs"
 README_COPY_BLOCK_MIN_LENGTH = 60
 
 
@@ -106,16 +120,22 @@ def _validate_readme_file_tree(source: str) -> None:
 
 
 def _validate_readme_collaboration(source: str) -> None:
-    """Require the exact site validation command under Collaborating."""
+    """Require the exact Python and Node site commands under Collaborating."""
     _require_readme(
         source.count(README_VALIDATION_COMMAND) == 1,
         "README must contain the exact site validation command exactly once",
     )
+    _require_readme(
+        source.count(PLATFORM_TEST_COMMAND) == 1,
+        "README must contain the exact platform test command exactly once",
+    )
     collaborating = _readme_section(source, "## Collaborating")
-    command_block = f"```bash\n{README_VALIDATION_COMMAND}\n```"
+    command_block = (
+        f"```bash\n{README_VALIDATION_COMMAND}\n{PLATFORM_TEST_COMMAND}\n```"
+    )
     _require_readme(
         collaborating.count(command_block) == 1,
-        "README Collaborating must contain the site command in its own bash block",
+        "README Collaborating must contain both site commands in one bash block",
     )
     context = collaborating[: collaborating.index(command_block)].rstrip().split("\n\n")[-1]
     _require_readme(
@@ -391,8 +411,11 @@ def validate_pages_workflow(source: str) -> None:
     _require_workflow(len(validate_steps) == 3, "validate must have exactly three steps")
     _validate_checkout_step(validate_steps[0], "validate checkout")
     _require_keys(validate_steps[1], {"name", "run"}, "validate test step")
-    test_command = "python3 -m unittest discover -s tests/site -p 'test_*.py' -v"
-    _require_workflow(_run_lines(validate_steps[1], "validate test step") == (test_command,), "validate must run all site tests")
+    test_commands = (README_VALIDATION_COMMAND, PLATFORM_TEST_COMMAND)
+    _require_workflow(
+        _run_lines(validate_steps[1], "validate test step") == test_commands,
+        "validate must run Python then Node site tests",
+    )
     _require_keys(validate_steps[2], {"name", "shell", "run"}, "validate archive step")
     _require_workflow(validate_steps[2]["shell"].value == "bash", "validate archive step must use bash")
     validate_archive_lines = (
@@ -414,7 +437,10 @@ def validate_pages_workflow(source: str) -> None:
     _require_workflow(len(publish_steps) == 5, "publish must have exactly five steps")
     _validate_checkout_step(publish_steps[0], "publish checkout")
     _require_keys(publish_steps[1], {"name", "run"}, "publish test step")
-    _require_workflow(_run_lines(publish_steps[1], "publish test step") == (test_command,), "publish must rerun all site tests")
+    _require_workflow(
+        _run_lines(publish_steps[1], "publish test step") == test_commands,
+        "publish must rerun Python then Node site tests",
+    )
     _require_keys(publish_steps[2], {"name", "uses"}, "configure Pages step")
     _require_workflow(
         publish_steps[2]["uses"].value == "actions/configure-pages@v6",
@@ -2939,6 +2965,562 @@ def with_segment(jpeg: bytes, marker: int, payload: bytes) -> bytes:
     return jpeg[:2] + segment + jpeg[2:]
 
 
+def _without_javascript_comments(source: str) -> str:
+    """Replace JavaScript comments while preserving quoted source text."""
+    output: list[str] = []
+    index = 0
+    quote: str | None = None
+    while index < len(source):
+        character = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if quote is not None:
+            output.append(character)
+            if character == "\\" and following:
+                output.append(following)
+                index += 2
+                continue
+            if character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in {'"', "'", "`"}:
+            quote = character
+            output.append(character)
+            index += 1
+            continue
+        if character == "/" and following == "/":
+            newline = source.find("\n", index + 2)
+            if newline == -1:
+                break
+            output.append("\n")
+            index = newline + 1
+            continue
+        if character == "/" and following == "*":
+            end = source.find("*/", index + 2)
+            if end == -1:
+                raise ContractError("platform module contains an unterminated comment")
+            output.extend("\n" for token in source[index : end + 2] if token == "\n")
+            index = end + 2
+            continue
+        output.append(character)
+        index += 1
+    if quote is not None:
+        raise ContractError("platform module contains an unterminated string")
+    return "".join(output)
+
+
+def _contains_javascript_template(source: str) -> bool:
+    """Return whether source has a backtick outside plain string literals."""
+    quote: str | None = None
+    index = 0
+    while index < len(source):
+        character = source[index]
+        if quote is not None:
+            if character == "\\" and index + 1 < len(source):
+                index += 2
+                continue
+            if character == quote:
+                quote = None
+        elif character in {'"', "'"}:
+            quote = character
+        elif character == "`":
+            return True
+        index += 1
+    if quote is not None:
+        raise ContractError("platform module contains an unterminated string")
+    return False
+
+
+def _without_javascript_literals(source: str) -> str:
+    """Replace JavaScript string and template literal contents."""
+    output: list[str] = []
+    index = 0
+    quote: str | None = None
+    while index < len(source):
+        character = source[index]
+        if quote is None and character in {'"', "'", "`"}:
+            quote = character
+            output.append(" ")
+        elif quote is not None:
+            if character == "\\" and index + 1 < len(source):
+                output.extend("  ")
+                index += 1
+            elif character == quote:
+                quote = None
+                output.append(" ")
+            else:
+                output.append("\n" if character == "\n" else " ")
+        else:
+            output.append(character)
+        index += 1
+    if quote is not None:
+        raise ContractError("platform module contains an unterminated string")
+    return "".join(output)
+
+
+def _javascript_executable_tokens(source: str) -> tuple[str, ...]:
+    """Tokenize executable JavaScript while ignoring plain string contents."""
+    tokens: list[str] = []
+    regex_counts = {literal: 0 for literal in PLATFORM_APPROVED_REGEXES}
+    operators = (
+        "===",
+        "!==",
+        ">>>",
+        "**=",
+        "&&=",
+        "||=",
+        "??=",
+        "=>",
+        "==",
+        "!=",
+        "<=",
+        ">=",
+        "++",
+        "--",
+        "&&",
+        "||",
+        "??",
+        "?.",
+        "**",
+        "<<",
+        ">>",
+        "+=",
+        "-=",
+        "*=",
+        "/=",
+        "%=",
+        "&=",
+        "|=",
+        "^=",
+        "...",
+    )
+    punctuation = set("{}()[];,.?:~+-*/%<>=!&|^")
+    identifier = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
+    number = re.compile(
+        r"(?:0[xX][0-9A-Fa-f]+|0[bB][01]+|0[oO][0-7]+|"
+        r"(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?)"
+    )
+    index = 0
+    while index < len(source):
+        character = source[index]
+        if character.isspace():
+            index += 1
+            continue
+        if character in {'"', "'"}:
+            quote = character
+            index += 1
+            while index < len(source):
+                character = source[index]
+                if character == "\\":
+                    index += 2
+                    continue
+                if character == quote:
+                    index += 1
+                    tokens.append("STRING")
+                    break
+                if character in "\r\n":
+                    raise ContractError("platform module contains an unterminated string")
+                index += 1
+            else:
+                raise ContractError("platform module contains an unterminated string")
+            continue
+        if character == "`":
+            raise ContractError("platform module violates its structural JavaScript contract")
+        if character == "/":
+            regex_literal = next(
+                (
+                    literal
+                    for literal in PLATFORM_APPROVED_REGEXES
+                    if source.startswith(literal, index)
+                ),
+                None,
+            )
+            if regex_literal is not None:
+                regex_counts[regex_literal] += 1
+                tokens.append("REGEX")
+                index += len(regex_literal)
+                continue
+        match = identifier.match(source, index)
+        if match is not None:
+            tokens.append(match.group(0))
+            index = match.end()
+            continue
+        match = number.match(source, index)
+        if match is not None:
+            tokens.append(match.group(0))
+            index = match.end()
+            continue
+        operator = next(
+            (candidate for candidate in operators if source.startswith(candidate, index)),
+            None,
+        )
+        if operator is not None:
+            tokens.append(operator)
+            index += len(operator)
+            continue
+        if character in punctuation:
+            tokens.append(character)
+            index += 1
+            continue
+        raise ContractError("platform module violates its structural JavaScript contract")
+    if any(count != 1 for count in regex_counts.values()):
+        raise ContractError("platform module violates its structural JavaScript contract")
+    return tuple(tokens)
+
+
+def validate_platform_module(path: Path) -> None:
+    """Require one bounded, regular UTF-8 platform module."""
+    status = path.lstat()
+    if not stat.S_ISREG(status.st_mode):
+        raise ContractError("platform module must be a regular non-symlink file")
+    if status.st_size > MAX_PLATFORM_MODULE_BYTES:
+        raise ContractError("platform module exceeds its size limit")
+    try:
+        source = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ContractError("platform module must be UTF-8") from error
+    if re.search(r"\bsourceMappingURL\s*=", source):
+        raise ContractError("platform module must not include a source map annotation")
+    selectors = (
+        '"[data-platform-group]"',
+        PLATFORM_APPROVED_TEMPLATE,
+        '"[data-device-recommendation]"',
+    )
+    if any(source.count(selector) != 1 for selector in selectors):
+        raise ContractError("platform module must use each exact recommendation selector once")
+    code = _without_javascript_comments(source)
+    code_without_template = code.replace(PLATFORM_APPROVED_TEMPLATE, '""', 1)
+    if _contains_javascript_template(code_without_template):
+        raise ContractError("platform module violates its structural JavaScript contract")
+    tokens = _without_javascript_literals(code_without_template)
+    if re.search(r"\b(?:fetch|XMLHttpRequest|sendBeacon|WebSocket|EventSource)\b", tokens):
+        raise ContractError("platform module must not use a network API")
+    if re.search(
+        r"\bdocument\s*\.\s*cookie\b|\b(?:localStorage|sessionStorage|indexedDB|serviceWorker)\b",
+        tokens,
+    ):
+        raise ContractError("platform module must not use a storage API")
+    if re.search(r"\b(?:import|eval|Function)\s*\(", tokens):
+        raise ContractError("platform module must not use dynamic code")
+    if re.search(r"\bimport\b", tokens):
+        raise ContractError("platform module violates its structural JavaScript contract")
+    if re.search(r"\b(?:setTimeout|setInterval|requestAnimationFrame)\s*\(", tokens):
+        raise ContractError("platform module must not use a timer")
+    if re.search(r"\b(?:innerHTML|outerHTML|insertAdjacentHTML|createElement)\b", tokens):
+        raise ContractError("platform module must not use HTML injection")
+    if re.search(
+        r"\b(?:location|history|click|download|href|setAttribute|open|URL|URLSearchParams)\b",
+        tokens,
+    ):
+        raise ContractError("platform module must not trigger navigation or download")
+    required_properties = {
+        "client.userAgentData": 1,
+        "client.userAgent": 1,
+        "userAgentData?.mobile": 1,
+        "userAgentData?.platform": 1,
+        "client.platform": 2,
+        "client.maxTouchPoints": 1,
+        "window.navigator": 1,
+    }
+    allowed_reads = {
+        "client": {"userAgentData", "userAgent", "platform", "maxTouchPoints"},
+        "userAgentData": {"mobile", "platform"},
+    }
+    expected_identifiers = {"client": 7, "userAgentData": 4, "navigator": 1}
+    if any(
+        len(re.findall(rf"\b{identifier}\b", tokens)) != count
+        for identifier, count in expected_identifiers.items()
+    ):
+        raise ContractError("platform module reads an unauthorized Navigator property")
+    member_reads = re.findall(
+        r"\b(client|userAgentData|navigator)\s*(?:\?\.|\.)\s*([A-Za-z_$][\w$]*)",
+        code,
+    )
+    if any(owner not in allowed_reads or name not in allowed_reads[owner] for owner, name in member_reads):
+        raise ContractError("platform module reads an unauthorized Navigator property")
+    if re.search(r"\b(?:client|userAgentData|navigator)\s*\[", code):
+        raise ContractError("platform module reads an unauthorized Navigator property")
+    if any(
+        len(re.findall(rf"{re.escape(access)}(?![\w$])", code)) != count
+        for access, count in required_properties.items()
+    ):
+        raise ContractError("platform module must use only the reviewed Navigator properties")
+    if "[" in tokens:
+        raise ContractError(
+            "unreviewed JavaScript member violates the structural JavaScript contract"
+        )
+    executable_tokens = _javascript_executable_tokens(code_without_template)
+    executable_fingerprint = hashlib.sha256(
+        "\x1f".join(executable_tokens).encode("utf-8")
+    ).hexdigest()
+    if executable_fingerprint != PLATFORM_EXECUTABLE_FINGERPRINT:
+        raise ContractError(
+            "unreviewed JavaScript member violates the structural JavaScript contract"
+        )
+
+
+class PlatformModuleContractTests(unittest.TestCase):
+    """Protect the local-only platform recommendation module."""
+
+    def _assert_source_rejected(self, suffix: str, message: str) -> None:
+        """Append one mutation to a temporary module and require rejection."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "platform.mjs"
+            source = PLATFORM_MODULE.read_text(encoding="utf-8")
+            path.write_text(f"{source}\n{suffix}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ContractError, message):
+                validate_platform_module(path)
+
+    def _assert_replacement_rejected(self, old: str, new: str, message: str) -> None:
+        """Apply one source replacement and require contract rejection."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "platform.mjs"
+            source = PLATFORM_MODULE.read_text(encoding="utf-8")
+            self.assertIn(old, source)
+            path.write_text(source.replace(old, new, 1), encoding="utf-8")
+            with self.assertRaisesRegex(ContractError, message):
+                validate_platform_module(path)
+
+    def test_platform_module_satisfies_contract(self) -> None:
+        """Require the checked-in module to satisfy its source contract."""
+        validate_platform_module(PLATFORM_MODULE)
+
+    def test_non_regular_oversized_and_non_utf8_modules_are_rejected(self) -> None:
+        """Reject unsafe file shapes before source validation."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            directory = temporary / "directory.mjs"
+            directory.mkdir()
+            with self.assertRaisesRegex(ContractError, "regular non-symlink"):
+                validate_platform_module(directory)
+
+            oversized = temporary / "oversized.mjs"
+            oversized.write_bytes(b" " * (MAX_PLATFORM_MODULE_BYTES + 1))
+            with self.assertRaisesRegex(ContractError, "size limit"):
+                validate_platform_module(oversized)
+
+            invalid = temporary / "invalid.mjs"
+            invalid.write_bytes(b"\xff")
+            with self.assertRaisesRegex(ContractError, "UTF-8"):
+                validate_platform_module(invalid)
+
+            symlink = temporary / "symlink.mjs"
+            try:
+                symlink.symlink_to(PLATFORM_MODULE)
+            except (OSError, NotImplementedError) as error:
+                self.skipTest(f"symlink creation is unavailable: {error}")
+            with self.assertRaisesRegex(ContractError, "regular non-symlink"):
+                validate_platform_module(symlink)
+
+    def test_source_map_annotation_is_rejected(self) -> None:
+        """Keep generated source maps out of the dependency-free site."""
+        self._assert_source_rejected("//# sourceMappingURL=platform.mjs.map", "source map")
+
+    def test_required_selector_mutations_are_rejected(self) -> None:
+        """Require the exact existing group, option, and label hooks."""
+        mutations = {
+            "group": ("[data-platform-group]", ".platform-group"),
+            "option": ("[data-platform-option=", "[data-download-option="),
+            "label": ("[data-device-recommendation]", ".device-recommendation"),
+        }
+        for name, (old, new) in mutations.items():
+            with self.subTest(selector=name):
+                self._assert_replacement_rejected(old, new, "selector")
+
+    def test_required_navigator_property_mutations_are_rejected(self) -> None:
+        """Require every reviewed low-entropy platform input."""
+        mutations = {
+            "userAgentData": ("client.userAgentData", "client.uaData"),
+            "mobile": ("userAgentData?.mobile", "userAgentData?.isMobile"),
+            "userAgent": ("client.userAgent ||", "client.ua ||"),
+            "maxTouchPoints": ("client.maxTouchPoints", "client.touchPoints"),
+            "platform": (
+                "userAgentData?.platform || client.platform || userAgent",
+                "userAgentData?.os || client.os || userAgent",
+            ),
+        }
+        for name, (old, new) in mutations.items():
+            with self.subTest(property=name):
+                self._assert_replacement_rejected(old, new, "Navigator propert")
+
+    def test_unreviewed_navigator_property_reads_are_rejected(self) -> None:
+        """Reject additional platform or fingerprinting inputs."""
+        mutations = {
+            "client dot read": "const locale = client.language;",
+            "UA data read": "const brands = userAgentData.brands;",
+            "global Navigator read": "const memory = window.navigator.deviceMemory;",
+            "client bracket read": 'const locale = client["language"];',
+            "client destructuring": "const { language } = client;",
+            "UA data destructuring": "const { brands } = userAgentData;",
+        }
+        for name, source in mutations.items():
+            with self.subTest(read=name):
+                self._assert_source_rejected(source, "unauthorized Navigator property")
+
+    def test_network_api_mutations_are_rejected(self) -> None:
+        """Keep platform recommendation entirely local."""
+        mutations = {
+            "fetch": 'fetch("https://example.invalid");',
+            "XMLHttpRequest": "new XMLHttpRequest();",
+            "sendBeacon": 'navigator.sendBeacon("/platform", "windows");',
+            "WebSocket": 'new WebSocket("wss://example.invalid");',
+            "EventSource": 'new EventSource("https://example.invalid/events");',
+        }
+        for name, source in mutations.items():
+            with self.subTest(api=name):
+                self._assert_source_rejected(source, "network API")
+
+    def test_storage_api_mutations_are_rejected(self) -> None:
+        """Prevent device recommendations from persisting client data."""
+        mutations = {
+            "cookie": 'document.cookie = "platform=windows";',
+            "localStorage": 'localStorage.setItem("platform", "windows");',
+            "sessionStorage": 'sessionStorage.setItem("platform", "windows");',
+            "indexedDB": 'indexedDB.open("screenfix");',
+            "serviceWorker": 'navigator.serviceWorker.register("worker.js");',
+        }
+        for name, source in mutations.items():
+            with self.subTest(api=name):
+                self._assert_source_rejected(source, "storage API")
+
+    def test_dynamic_code_mutations_are_rejected(self) -> None:
+        """Keep the static module free of runtime code loading or evaluation."""
+        mutations = {
+            "dynamic import": 'import("./extra.mjs");',
+            "eval": 'eval("detectPlatform({})");',
+            "Function": 'new Function("return null");',
+        }
+        for name, source in mutations.items():
+            with self.subTest(api=name):
+                self._assert_source_rejected(source, "dynamic code")
+
+    def test_timer_mutations_are_rejected(self) -> None:
+        """Apply the recommendation synchronously without delayed behavior."""
+        mutations = {
+            "timeout": "setTimeout(() => {}, 0);",
+            "interval": "setInterval(() => {}, 1000);",
+            "animation frame": "requestAnimationFrame(() => {});",
+        }
+        for name, source in mutations.items():
+            with self.subTest(timer=name):
+                self._assert_source_rejected(source, "timer")
+
+    def test_markup_injection_mutations_are_rejected(self) -> None:
+        """Require reuse of existing markup instead of parsing new HTML."""
+        mutations = {
+            "innerHTML": 'group.innerHTML = "<p>Recommended</p>";',
+            "outerHTML": 'option.outerHTML = "<a>Download</a>";',
+            "insertAdjacentHTML": 'group.insertAdjacentHTML("afterbegin", "<p></p>");',
+            "createElement": 'document.createElement("span");',
+        }
+        for name, source in mutations.items():
+            with self.subTest(api=name):
+                self._assert_source_rejected(source, "HTML injection")
+
+    def test_navigation_and_download_mutations_are_rejected(self) -> None:
+        """Never navigate, click, download, or rewrite link targets automatically."""
+        mutations = {
+            "location href": 'window.location.href = "https://example.invalid";',
+            "location assign": 'window.location.assign("https://example.invalid");',
+            "history": 'history.pushState({}, "", "/windows");',
+            "click": "option.click();",
+            "download": 'option.download = "ScreenFix.exe";',
+            "href": 'option.href = "https://example.invalid";',
+            "setAttribute": 'option.setAttribute("href", "https://example.invalid");',
+            "window open": 'window.open("https://example.invalid");',
+            "URL": 'new URL("https://example.invalid");',
+        }
+        for name, source in mutations.items():
+            with self.subTest(mutation=name):
+                self._assert_source_rejected(source, "navigation or download")
+
+    def test_computed_and_url_sink_bypasses_are_rejected(self) -> None:
+        """Fail closed on unreviewed computed properties and DOM URL sinks."""
+        mutations = {
+            "image source": (
+                'document.querySelector("img").src = "https://example.invalid/collect";'
+            ),
+            "form action": 'form.action = "https://example.invalid/collect";',
+            "computed fetch": 'globalThis["fetch"]("https://example.invalid/collect");',
+            "computed storage": 'window["localStorage"].setItem("platform", "windows");',
+            "computed click": 'anchor["click"]();',
+        }
+        for name, source in mutations.items():
+            with self.subTest(bypass=name):
+                self._assert_source_rejected(source, "unreviewed JavaScript member")
+
+    def test_fixed_module_structural_bypasses_are_rejected(self) -> None:
+        """Reject hidden template calls, replayed members, calls, and imports."""
+        suffixes = {
+            "template expression": (
+                '`${globalThis.fetch("https://example.invalid/collect")}`;'
+            ),
+            "allowed-member replay": (
+                'document.querySelector("a").hidden = true;'
+            ),
+            "static import": (
+                'import data from "data:text/javascript,export default null";'
+            ),
+        }
+        for name, source in suffixes.items():
+            with self.subTest(bypass=name):
+                self._assert_source_rejected(source, "structural JavaScript contract")
+
+        self._assert_replacement_rejected(
+            "applyPlatformRecommendation(document, detectPlatform(window.navigator));",
+            (
+                "applyPlatformRecommendation(\n"
+                "    document,\n"
+                '    postMessage(detectPlatform(window.navigator), "*"),\n'
+                ");"
+            ),
+            "structural JavaScript contract",
+        )
+
+    def test_optional_and_parenthesized_call_bypasses_are_rejected(self) -> None:
+        """Reject call spellings that bypass a parenthesis-only target scan."""
+        original = "applyPlatformRecommendation(document, detectPlatform(window.navigator));"
+        wrappers = {
+            "optional call": 'postMessage?.(detectPlatform(window.navigator), "*")',
+            "parenthesized call": '(postMessage)(detectPlatform(window.navigator), "*")',
+            "comma-indirect call": '(0, postMessage)(detectPlatform(window.navigator), "*")',
+        }
+        for name, platform_expression in wrappers.items():
+            with self.subTest(bypass=name):
+                self._assert_replacement_rejected(
+                    original,
+                    f"applyPlatformRecommendation(document, {platform_expression});",
+                    "structural JavaScript contract",
+                )
+
+    def test_banned_words_in_comments_strings_and_identifiers_are_accepted(self) -> None:
+        """Avoid false positives outside executable API tokens."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "platform.mjs"
+            source = PLATFORM_MODULE.read_text(encoding="utf-8")
+            source = source.replace(
+                'client.userAgent || ""',
+                (
+                    'client.userAgent || "fetch XMLHttpRequest localStorage click '
+                    'postMessage fetchStatus"'
+                ),
+                1,
+            )
+            source += (
+                "\n// fetch(); client.language; navigator.deviceMemory; setTimeout(); "
+                "postMessage?.(); fetchStatus\n"
+            )
+            path.write_text(source, encoding="utf-8")
+            validate_platform_module(path)
+
+    def test_executable_longer_identifier_is_rejected(self) -> None:
+        """Reject new executable identifiers even when they contain banned words."""
+        self._assert_source_rejected(
+            "const fetchStatus = 1;",
+            "structural JavaScript contract",
+        )
+
+
 class StyleContractTests(unittest.TestCase):
     def setUp(self) -> None:
         """Load the reviewed stylesheet for each source-contract test."""
@@ -3422,6 +4004,10 @@ class ReadmeContractTests(unittest.TestCase):
                 _validate_readme_collaboration,
                 f"{self.source}\n{README_VALIDATION_COMMAND}\n",
             ),
+            "duplicate Node command": (
+                _validate_readme_collaboration,
+                f"{self.source}\n{PLATFORM_TEST_COMMAND}\n",
+            ),
         }
         for name, (validator, mutated) in mutations.items():
             with self.subTest(name=name), self.assertRaises(ReadmeContractError):
@@ -3454,6 +4040,18 @@ class ReadmeContractTests(unittest.TestCase):
             "missing macOS heading": (
                 _validate_readme_native_content,
                 self.source.replace("## Install the native macOS app", "", 1),
+            ),
+            "missing Node command": (
+                _validate_readme_collaboration,
+                self.source.replace(f"{PLATFORM_TEST_COMMAND}\n", "", 1),
+            ),
+            "reversed site command order": (
+                _validate_readme_collaboration,
+                self.source.replace(
+                    f"{README_VALIDATION_COMMAND}\n{PLATFORM_TEST_COMMAND}",
+                    f"{PLATFORM_TEST_COMMAND}\n{README_VALIDATION_COMMAND}",
+                    1,
+                ),
             ),
         }
         for name, (validator, mutated) in mutations.items():
@@ -4781,7 +5379,7 @@ class PagesWorkflowContractTests(unittest.TestCase):
 
     def test_action_and_archive_mutations_are_rejected(self) -> None:
         """Reject wrong actions, incomplete validation, and wrong upload inputs."""
-        validate_test = "        run: python3 -m unittest discover -s tests/site -p 'test_*.py' -v"
+        validate_test = f"          {README_VALIDATION_COMMAND}"
         validate_tar = '          tar --dereference --hard-dereference --directory site -cf "$validation_archive" .'
         validate_inspection = '          tar -tf "$validation_archive" | sed'
         publish_inspection = '          tar -tf "$RUNNER_TEMP/artifact.tar" | sed'
@@ -4789,7 +5387,7 @@ class PagesWorkflowContractTests(unittest.TestCase):
             {
                 "validate missing tests": self._mutation(
                     validate_test,
-                    "        run: python3 -m unittest -v",
+                    "          python3 -m unittest -v",
                 ),
                 "validate missing equivalent tar": self._mutation(
                     validate_tar,
@@ -4820,6 +5418,29 @@ class PagesWorkflowContractTests(unittest.TestCase):
                     "          include-hidden-files: false",
                 ),
                 "wrong upload path": self._mutation("          path: site", "          path: dist"),
+            }
+        )
+
+    def test_node_platform_test_mutations_are_rejected(self) -> None:
+        """Require Node behavior tests immediately after Python in both jobs."""
+        source = self._source()
+        node_line = f"          {PLATFORM_TEST_COMMAND}\n"
+        python_line = f"          {README_VALIDATION_COMMAND}\n"
+        self.assertEqual(2, source.count(node_line))
+        self.assertEqual(2, source.count(python_line + node_line))
+
+        publish_index = source.rfind(node_line)
+        self.assertNotEqual(-1, publish_index)
+        publish_missing = source[:publish_index] + source[publish_index + len(node_line) :]
+        self._assert_mutations_rejected(
+            {
+                "validate missing Node tests": source.replace(node_line, "", 1),
+                "publish missing Node tests": publish_missing,
+                "validate reverses test order": source.replace(
+                    python_line + node_line,
+                    node_line + python_line,
+                    1,
+                ),
             }
         )
 
