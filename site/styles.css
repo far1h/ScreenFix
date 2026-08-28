@@ -7,6 +7,7 @@
   --button: #B83D31;
   --button-hover: #A92C4D;
   --button-text: #FFF7E8;
+  --recommendation: #FFE8C7;
   --focus: #D9513B;
 }
 
@@ -382,9 +383,15 @@ main > section {
 .is-recommended span {
   display: block;
   margin-top: 4px;
+  color: var(--muted);
   font-size: 14px;
+  font-style: italic;
   font-weight: 620;
   line-height: 1.5;
+}
+
+.download-primary.is-recommended span {
+  color: var(--recommendation);
 }
 
 #privacy,
