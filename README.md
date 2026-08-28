@@ -7,6 +7,8 @@ native apps for Apple Silicon macOS and x64 Windows.
 Ready-to-run macOS and Windows downloads are available on the
 [Releases page](https://github.com/far1h/ScreenFix/releases).
 
+The product overview and direct native downloads are also available on the [ScreenFix website](https://far1h.github.io/ScreenFix/).
+
 ![A MacBook display with a damaged vertical band](assets/screenfix-damaged-display.png)
 
 *The very practical reason ScreenFix exists.*
@@ -33,6 +35,7 @@ region; physically black or colored pixels may remain visible.
 ├── assets/results/                  Shows calibration and the saved result.
 ├── native/macos/                    Builds the Hammerspoon-free Apple Silicon app.
 ├── native/windows/                  Builds the self-contained Windows x64 app.
+├── site/                            Contains the dependency-free GitHub Pages landing page.
 ├── screenfix/
 │   ├── calibration.lua             Provides monitor selection and the three-band editor.
 │   ├── controller.lua              Coordinates lifecycle, menu actions, and runtime state.
@@ -171,6 +174,13 @@ To uninstall:
 Removing the link does not delete the project directory.
 
 ## Collaborating
+
+Validate the dependency-free landing page from the project root:
+
+```bash
+python3 -m unittest discover -s tests/site -p 'test_*.py' -v
+node --test tests/site/platform.test.mjs
+```
 
 The exact Windows test and dual-package release commands, including private SDK
 10.0.100 and newer external SDK paths, are in
