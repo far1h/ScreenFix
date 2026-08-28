@@ -34,6 +34,18 @@ EXPECTED_SITE_FILES = {
     "assets/result-mask.jpg",
 }
 PAGES_WORKFLOW = ROOT / ".github" / "workflows" / "pages.yml"
+CHECKOUT_ACTION = (
+    "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7"
+)
+CONFIGURE_PAGES_ACTION = (
+    "actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6"
+)
+UPLOAD_PAGES_ARTIFACT_ACTION = (
+    "actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5"
+)
+DEPLOY_PAGES_ACTION = (
+    "actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5"
+)
 PLATFORM_MODULE = ROOT / "site" / "platform.mjs"
 MAX_PLATFORM_MODULE_BYTES = 4_096
 PLATFORM_APPROVED_TEMPLATE = '`[data-platform-option="${platform}"]`'
@@ -57,6 +69,19 @@ README_ROOT_SITE_PATTERN = re.compile(r"^[├└]──[ \t]+site/(?:[ \t]+.*)?$
 README_VALIDATION_COMMAND = "python3 -m unittest discover -s tests/site -p 'test_*.py' -v"
 PLATFORM_TEST_COMMAND = "node --test tests/site/platform.test.mjs"
 README_COPY_BLOCK_MIN_LENGTH = 60
+CSP_POLICY = (
+    "default-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; "
+    "style-src 'self'; img-src 'self' https://farihmhmd.goatcounter.com; "
+    "script-src 'self' https://gc.zgo.at; "
+    "connect-src https://farihmhmd.goatcounter.com"
+)
+GOATCOUNTER_SCRIPT_ATTRIBUTES = {
+    "data-goatcounter": "https://farihmhmd.goatcounter.com/count",
+    "async": None,
+    "src": "https://gc.zgo.at/count.v5.js",
+    "crossorigin": "anonymous",
+    "integrity": "sha384-atnOLvQb9t+jTSipvd75X2yginT4PjVbqDdlJAmxMm+wYElFmeR6EmLP5bYeoRVQ",
+}
 
 
 class ReadmeContractError(AssertionError):
@@ -327,7 +352,10 @@ def _run_lines(step: dict[str, _WorkflowEntry], label: str) -> tuple[str, ...]:
 def _validate_checkout_step(step: dict[str, _WorkflowEntry], label: str) -> None:
     """Require a pinned, PR-head-safe checkout with credentials disabled."""
     _require_keys(step, {"name", "uses", "with"}, label)
-    _require_workflow(step["uses"].value == "actions/checkout@v7", f"{label} must use checkout@v7")
+    _require_workflow(
+        step["uses"].value == CHECKOUT_ACTION,
+        f"{label} must use the exact immutable upstream checkout commit",
+    )
     checkout_with = _workflow_mapping(step["with"].children, f"{label} with")
     _require_keys(checkout_with, {"ref", "persist-credentials"}, f"{label} with")
     _require_workflow(
@@ -443,13 +471,13 @@ def validate_pages_workflow(source: str) -> None:
     )
     _require_keys(publish_steps[2], {"name", "uses"}, "configure Pages step")
     _require_workflow(
-        publish_steps[2]["uses"].value == "actions/configure-pages@v6",
-        "publish must use configure-pages@v6",
+        publish_steps[2]["uses"].value == CONFIGURE_PAGES_ACTION,
+        "publish must use the exact immutable upstream configure-pages commit",
     )
     _require_keys(publish_steps[3], {"name", "uses", "with"}, "upload Pages artifact step")
     _require_workflow(
-        publish_steps[3]["uses"].value == "actions/upload-pages-artifact@v5",
-        "publish must use upload-pages-artifact@v5",
+        publish_steps[3]["uses"].value == UPLOAD_PAGES_ARTIFACT_ACTION,
+        "publish must use the exact immutable upstream upload-pages-artifact commit",
     )
     upload_with = _workflow_mapping(publish_steps[3]["with"].children, "upload Pages artifact with")
     _require_keys(upload_with, {"path", "include-hidden-files"}, "upload Pages artifact with")
@@ -481,18 +509,21 @@ def validate_pages_workflow(source: str) -> None:
     _require_workflow(len(deploy_steps) == 1, "deploy must have exactly one step")
     _require_keys(deploy_steps[0], {"name", "id", "uses"}, "deploy Pages step")
     _require_workflow(deploy_steps[0]["id"].value == "deployment", "deploy step id must be deployment")
-    _require_workflow(deploy_steps[0]["uses"].value == "actions/deploy-pages@v5", "deploy must use deploy-pages@v5")
+    _require_workflow(
+        deploy_steps[0]["uses"].value == DEPLOY_PAGES_ACTION,
+        "deploy must use the exact immutable upstream deploy-pages commit",
+    )
 
     all_steps = [*validate_steps, *publish_steps, *deploy_steps]
     actions = [step["uses"].value for step in all_steps if "uses" in step]
     _require_workflow(
         actions
         == [
-            "actions/checkout@v7",
-            "actions/checkout@v7",
-            "actions/configure-pages@v6",
-            "actions/upload-pages-artifact@v5",
-            "actions/deploy-pages@v5",
+            CHECKOUT_ACTION,
+            CHECKOUT_ACTION,
+            CONFIGURE_PAGES_ACTION,
+            UPLOAD_PAGES_ARTIFACT_ACTION,
+            DEPLOY_PAGES_ACTION,
         ],
         "workflow actions must be exact and unique",
     )
@@ -897,8 +928,10 @@ def validate_landing_page(path: Path) -> None:
     _validate_label_references(page)
     _validate_nonempty_aria_labels(page)
     _validate_public_counter(page)
+    _validate_visible_analytics_disclosure(page)
     _validate_sections(page)
     _validate_references(page)
+    _validate_content_security_policy(page)
     _validate_script(page)
     _validate_faq(page)
     _validate_downloads(page)
@@ -1194,6 +1227,18 @@ def _validate_marketing_exclusions(page: LandingPageParser) -> None:
         raise ContractError("generic marketing proof regions are forbidden")
 
 
+def _validate_visible_analytics_disclosure(page: LandingPageParser) -> None:
+    """Reject website measurement and visitor details from all visible copy."""
+    visible_copy = " ".join(page.visible_text_nodes)
+    disclosure = re.compile(
+        r"\b(?:goatcounter|analytics?|visits?|visitors?|tracking|cookies?|"
+        r"ip address(?:es)?|user agents?)\b",
+        re.IGNORECASE,
+    )
+    if disclosure.search(visible_copy):
+        raise ContractError("visible analytics disclosure is forbidden")
+
+
 def _validate_required_visibility(page: LandingPageParser) -> None:
     """Keep the reviewed header, content, and footer exposed to assistive technology."""
     scopes = page.nodes("header") + page.nodes("main") + page.nodes("footer")
@@ -1340,16 +1385,30 @@ def _validate_script(page: LandingPageParser) -> None:
     """Require the reviewed external counter and local platform module only."""
     if len(page.scripts) != 2:
         raise ContractError("landing page must contain exactly two reviewed scripts")
-    goatcounter = {
-        "data-goatcounter": "https://farihmhmd.goatcounter.com/count",
-        "async": None,
-        "src": "https://gc.zgo.at/count.js",
-    }
     platform = {"type": "module", "src": "platform.mjs"}
-    if page.scripts[0].attrs != goatcounter or page.scripts[0].text():
-        raise ContractError("GoatCounter script attributes must match the privacy contract")
+    if page.scripts[0].attrs != GOATCOUNTER_SCRIPT_ATTRIBUTES or page.scripts[0].text():
+        raise ContractError("GoatCounter script attributes must match the stable integrity contract")
     if page.scripts[1].attrs != platform or page.scripts[1].text():
         raise ContractError("platform module script attributes must match the local contract")
+
+
+def _validate_content_security_policy(page: LandingPageParser) -> None:
+    """Require one early, exact policy for the page's reviewed resource graph."""
+    policies = [
+        node
+        for node in page.nodes("meta")
+        if (node.attrs.get("http-equiv") or "").lower() == "content-security-policy"
+    ]
+    if len(policies) != 1:
+        raise ContractError("landing page must contain exactly one Content Security Policy")
+    policy = policies[0]
+    if policy.attrs != {
+        "http-equiv": "Content-Security-Policy",
+        "content": CSP_POLICY,
+    }:
+        raise ContractError("Content Security Policy must match the reviewed least-privilege policy")
+    if page.elements.index(policy) > min(page.elements.index(script) for script in page.scripts):
+        raise ContractError("Content Security Policy must appear before every script")
 
 
 def _validate_references(page: LandingPageParser) -> None:
@@ -4918,9 +4977,74 @@ class LandingPageContractTests(unittest.TestCase):
         _validate_editorial_illustrations(page)
 
     def test_scripts_are_the_exact_external_counter_and_local_module(self) -> None:
-        """Allow only the unchanged counter tag and inert local module include."""
+        """Allow only the integrity-pinned counter and inert local module include."""
         page = parse_landing_page()
+        _validate_content_security_policy(page)
         _validate_script(page)
+
+    def test_content_security_policy_mutations_are_rejected(self) -> None:
+        """Reject missing, duplicated, weakened, broadened, or late policies."""
+        policy_markup = (
+            '    <meta http-equiv="Content-Security-Policy" '
+            f'content="{CSP_POLICY}">\n'
+        )
+        mutations = {
+            "missing policy": (policy_markup, "", "exactly one Content Security Policy"),
+            "duplicate policy": (
+                policy_markup,
+                policy_markup + policy_markup,
+                "exactly one Content Security Policy",
+            ),
+            "unsafe inline": (
+                "script-src 'self' https://gc.zgo.at",
+                "script-src 'self' 'unsafe-inline' https://gc.zgo.at",
+                "reviewed least-privilege policy",
+            ),
+            "wildcard": (
+                "connect-src https://farihmhmd.goatcounter.com",
+                "connect-src *",
+                "reviewed least-privilege policy",
+            ),
+            "extra origin": (
+                "style-src 'self'",
+                "style-src 'self' https://example.com",
+                "reviewed least-privilege policy",
+            ),
+        }
+        for name, (old, new, message) in mutations.items():
+            with self.subTest(mutation=name):
+                self.assert_mutation_rejected(old, new, message)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "index.html"
+            source = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+            module_markup = '    <script type="module" src="platform.mjs"></script>\n'
+            self.assertIn(policy_markup, source)
+            self.assertIn(module_markup, source)
+            source = source.replace(policy_markup, "", 1)
+            source = source.replace(module_markup, module_markup + policy_markup, 1)
+            path.write_text(source, encoding="utf-8")
+            with self.assertRaisesRegex(ContractError, "before every script"):
+                validate_landing_page(path)
+
+    def test_goatcounter_supply_chain_mutations_are_rejected(self) -> None:
+        """Reject any counter include outside the reviewed stable SRI contract."""
+        mutations = {
+            "missing integrity": (
+                '      integrity="sha384-atnOLvQb9t+jTSipvd75X2yginT4PjVbqDdlJAmxMm+wYElFmeR6EmLP5bYeoRVQ"></script>',
+                "    ></script>",
+            ),
+            "wrong integrity": (
+                "sha384-atnOLvQb9t+jTSipvd75X2yginT4PjVbqDdlJAmxMm+wYElFmeR6EmLP5bYeoRVQ",
+                "sha384-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            ),
+            "missing crossorigin": ('      crossorigin="anonymous"\n', ""),
+            "wrong crossorigin": ('crossorigin="anonymous"', 'crossorigin="use-credentials"'),
+            "unversioned script": ("count.v5.js", "count.js"),
+        }
+        for name, (old, new) in mutations.items():
+            with self.subTest(mutation=name):
+                self.assert_mutation_rejected(old, new, "stable integrity contract")
 
     def test_privacy_requirements_notes_and_footer_revision(self) -> None:
         """Keep the revised supporting content factual, local, and clearly labelled."""
@@ -4936,6 +5060,25 @@ class LandingPageContractTests(unittest.TestCase):
                     f"to keep ordinary windows in usable space. It counts {word}.</p>",
                     _validate_privacy_requirements_notes_and_footer,
                     "website measurement or visitor language",
+                )
+
+    def test_visible_analytics_disclosure_mutations_are_rejected(self) -> None:
+        """Keep website measurement and visitor details out of all visible copy."""
+        disclosures = (
+            "GoatCounter measures this page.",
+            "Website analytics are enabled.",
+            "This site counts visits.",
+            "This site counts visitors.",
+            "Tracking cookies are disabled.",
+            "An IP address may be processed.",
+            "A user agent may be processed.",
+        )
+        for disclosure in disclosures:
+            with self.subTest(disclosure=disclosure):
+                self.assert_mutation_rejected(
+                    '    <footer class="site-footer">',
+                    f"    <p>{disclosure}</p>\n    <footer class=\"site-footer\">",
+                    "visible analytics disclosure",
                 )
 
     def test_platform_groups_are_static_and_complete(self) -> None:
@@ -5351,11 +5494,7 @@ class LandingPageContractTests(unittest.TestCase):
         self.assertTrue(all(script.parent is not None for script in scripts))
         self.assertTrue(all(script.parent.tag == "head" for script in scripts if script.parent))
         self.assertEqual(
-            {
-                "data-goatcounter": "https://farihmhmd.goatcounter.com/count",
-                "async": None,
-                "src": "https://gc.zgo.at/count.js",
-            },
+            GOATCOUNTER_SCRIPT_ATTRIBUTES,
             scripts[0].attrs,
         )
         self.assertEqual({"type": "module", "src": "platform.mjs"}, scripts[1].attrs)
@@ -5403,15 +5542,15 @@ class LandingPageContractTests(unittest.TestCase):
 
     def test_second_script_mutation_is_rejected(self) -> None:
         self.assert_mutation_rejected(
-            'src="https://gc.zgo.at/count.js"></script>',
-            'src="https://gc.zgo.at/count.js"></script>\n    <script src="https://example.com/second.js"></script>',
+            'integrity="sha384-atnOLvQb9t+jTSipvd75X2yginT4PjVbqDdlJAmxMm+wYElFmeR6EmLP5bYeoRVQ"></script>',
+            'integrity="sha384-atnOLvQb9t+jTSipvd75X2yginT4PjVbqDdlJAmxMm+wYElFmeR6EmLP5bYeoRVQ"></script>\n    <script src="https://example.com/second.js"></script>',
             "exactly two reviewed scripts",
         )
 
     def test_protocol_relative_goatcounter_mutation_is_rejected(self) -> None:
         self.assert_mutation_rejected(
-            'src="https://gc.zgo.at/count.js"',
-            'src="//gc.zgo.at/count.js"',
+            'src="https://gc.zgo.at/count.v5.js"',
+            'src="//gc.zgo.at/count.v5.js"',
             "protocol-relative URL",
         )
 
@@ -5513,8 +5652,8 @@ class LandingPageContractTests(unittest.TestCase):
     def test_duplicate_html_attribute_mutations_are_rejected(self) -> None:
         mutations = {
             "script-src": (
-                'src="https://gc.zgo.at/count.js"',
-                'src="http://unsafe.example/count.js" SRC="https://gc.zgo.at/count.js"',
+                'src="https://gc.zgo.at/count.v5.js"',
+                'src="http://unsafe.example/count.js" SRC="https://gc.zgo.at/count.v5.js"',
                 "src",
             ),
             "anchor-href": (
@@ -5660,8 +5799,8 @@ class LandingPageContractTests(unittest.TestCase):
     def test_non_void_self_closing_tag_mutations_are_rejected(self) -> None:
         mutations = {
             "script": (
-                'src="https://gc.zgo.at/count.js"></script>',
-                'src="https://gc.zgo.at/count.js" />',
+                'integrity="sha384-atnOLvQb9t+jTSipvd75X2yginT4PjVbqDdlJAmxMm+wYElFmeR6EmLP5bYeoRVQ"></script>',
+                'integrity="sha384-atnOLvQb9t+jTSipvd75X2yginT4PjVbqDdlJAmxMm+wYElFmeR6EmLP5bYeoRVQ" />',
             ),
             "div": (
                 '    <footer class="site-footer">',
@@ -6235,8 +6374,48 @@ class PagesWorkflowContractTests(unittest.TestCase):
                     "          persist-credentials: true",
                 ),
                 "wrong checkout major": self._mutation(
-                    "        uses: actions/checkout@v7\n        with:",
+                    f"        uses: {CHECKOUT_ACTION}\n        with:",
                     "        uses: actions/checkout@v6\n        with:",
+                ),
+            }
+        )
+
+    def test_actions_require_exact_immutable_upstream_references(self) -> None:
+        """Reject tags, missing comments, altered SHAs, shortened SHAs, and forks."""
+        source = self._source()
+        tagged_source = source
+        for expected, tag in (
+            (CHECKOUT_ACTION, "actions/checkout@v7"),
+            (CONFIGURE_PAGES_ACTION, "actions/configure-pages@v6"),
+            (UPLOAD_PAGES_ARTIFACT_ACTION, "actions/upload-pages-artifact@v5"),
+            (DEPLOY_PAGES_ACTION, "actions/deploy-pages@v5"),
+        ):
+            tagged_source = tagged_source.replace(expected, tag)
+        self.assertNotEqual(source, tagged_source)
+        with self.assertRaises(WorkflowContractError):
+            validate_pages_workflow(tagged_source)
+
+        self._assert_mutations_rejected(
+            {
+                "missing version comment": self._mutation(
+                    CHECKOUT_ACTION,
+                    "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                ),
+                "wrong version comment": self._mutation(
+                    CONFIGURE_PAGES_ACTION,
+                    "actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v5",
+                ),
+                "short SHA": self._mutation(
+                    UPLOAD_PAGES_ARTIFACT_ACTION,
+                    "actions/upload-pages-artifact@fc324d354710 # v5",
+                ),
+                "wrong SHA": self._mutation(
+                    DEPLOY_PAGES_ACTION,
+                    "actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa129 # v5",
+                ),
+                "fork reference": self._mutation(
+                    CHECKOUT_ACTION,
+                    "far1h/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7",
                 ),
             }
         )
@@ -6298,11 +6477,11 @@ class PagesWorkflowContractTests(unittest.TestCase):
                     '          printf \'not inspected\\n\' | sed',
                 ),
                 "wrong configure major": self._mutation(
-                    "actions/configure-pages@v6",
+                    CONFIGURE_PAGES_ACTION,
                     "actions/configure-pages@v5",
                 ),
                 "wrong upload major": self._mutation(
-                    "actions/upload-pages-artifact@v5",
+                    UPLOAD_PAGES_ARTIFACT_ACTION,
                     "actions/upload-pages-artifact@v4",
                 ),
                 "hidden files omitted": self._mutation(
@@ -6362,7 +6541,7 @@ class PagesWorkflowContractTests(unittest.TestCase):
                     "  deploy:\n    needs: publish\n" + exact_condition,
                     "  deploy:\n    needs: publish\n    if: github.ref == 'refs/heads/main'",
                 ),
-                "wrong deploy major": self._mutation("actions/deploy-pages@v5", "actions/deploy-pages@v4"),
+                "wrong deploy major": self._mutation(DEPLOY_PAGES_ACTION, "actions/deploy-pages@v4"),
             }
         )
 
@@ -6379,8 +6558,8 @@ class PagesWorkflowContractTests(unittest.TestCase):
                     "jobs:\n  validate:\n    runs-on: ubuntu-latest\n  validate:",
                 ),
                 "duplicate action": self._mutation(
-                    "        uses: actions/checkout@v7\n        with:",
-                    "        uses: untrusted/checkout@v1\n        uses: actions/checkout@v7\n        with:",
+                    f"        uses: {CHECKOUT_ACTION}\n        with:",
+                    f"        uses: untrusted/checkout@v1\n        uses: {CHECKOUT_ACTION}\n        with:",
                 ),
                 "secret reference": self._mutation(
                     "          persist-credentials: false",
