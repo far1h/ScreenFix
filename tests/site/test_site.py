@@ -560,6 +560,7 @@ EXPECTED_STYLE_TOKENS = {
     "--button": "#B83D31",
     "--button-hover": "#A92C4D",
     "--button-text": "#FFF7E8",
+    "--recommendation": "#FFE8C7",
     "--focus": "#D9513B",
 }
 ALLOWED_CSS_PROPERTIES = frozenset(
@@ -585,6 +586,7 @@ ALLOWED_CSS_PROPERTIES = frozenset(
         "flex-wrap",
         "font-family",
         "font-size",
+        "font-style",
         "font-weight",
         "gap",
         "grid-column",
@@ -630,7 +632,7 @@ ALLOWED_CSS_PROPERTIES = frozenset(
     }
 )
 APPROVED_CSS_RULE_VOCABULARY = """
-base || :root || --paper --surface --ink --muted --rule --button --button-hover --button-text --focus
+base || :root || --paper --surface --ink --muted --rule --button --button-hover --button-text --recommendation --focus
 base || *, *::before, *::after || box-sizing
 base || html || scroll-padding-top
 base || body || margin color background font-family font-size line-height overflow-wrap
@@ -691,7 +693,8 @@ base || .download-option p || max-width
 base || .download-option .download-primary || margin-block
 base || .download-fallback || min-height display align-items margin-block vertical-align
 base || .download-note || font-size line-height color
-base || .is-recommended span || display margin-top font-size font-weight line-height
+base || .is-recommended span || display margin-top color font-size font-style font-weight line-height
+base || .download-primary.is-recommended span || color
 base || #privacy, #requirements || display grid-template-columns gap
 base || #privacy h2, #requirements h2 || margin-bottom
 base || #privacy p || max-width
@@ -954,10 +957,12 @@ def _validate_header_structure(page: LandingPageParser) -> None:
     if len(inners) != 1:
         raise ContractError("site header must contain exactly one site-header-inner")
     inner = inners[0]
+    brand = inner.children[0] if inner.children else None
     has_direct_brand_and_nav = (
         len(inner.children) == 2
-        and inner.children[0].tag == "a"
-        and "brand" in (inner.children[0].attrs.get("class") or "").split()
+        and brand is not None
+        and brand.tag == "a"
+        and brand.attrs == {"class": "brand", "href": "#"}
         and inner.children[1].tag == "nav"
     )
     if not has_direct_brand_and_nav:
@@ -1897,6 +1902,9 @@ def _validate_contrast_contract(tokens: dict[str, str]) -> None:
         "Windows button": ("--button", "--button-text", 5.25),
         "Windows hover": ("--button-hover", "--button-text", 6.25),
         "macOS button": ("--ink", "--button-text", 14.7),
+        "Windows recommendation": ("--button", "--recommendation", 4.5),
+        "Windows hover recommendation": ("--button-hover", "--recommendation", 4.5),
+        "macOS recommendation": ("--ink", "--recommendation", 4.5),
     }
     for foreground in ("--ink", "--muted", "--button-hover"):
         for background in ("--paper", "--surface"):
@@ -2060,6 +2068,11 @@ def _validate_text_contrast_contract(styles: str) -> None:
         _normalized_selector_group(".step-number"): ("--button-hover", ("--surface",)),
         _normalized_selector_group(".how-step p"): ("--muted", ("--surface",)),
         _normalized_selector_group(".download-note"): ("--muted", ("--surface",)),
+        _normalized_selector_group(".is-recommended span"): ("--muted", ("--surface",)),
+        _normalized_selector_group(".download-primary.is-recommended span"): (
+            "--recommendation",
+            ("--button", "--button-hover", "--ink"),
+        ),
         _normalized_selector_group(".requirement-row::before"): (
             "--button-hover",
             ("--surface",),
@@ -2629,6 +2642,15 @@ def _validate_supporting_revision_style_values(styles: str) -> None:
     tokens = parse_style_tokens(styles)
     body = CssNode("body")
     main = CssNode("main", parent=body)
+    hero = CssNode("div", frozenset({"hero"}), parent=main)
+    hero_copy = CssNode("div", frozenset({"hero-copy"}), parent=hero)
+    hero_downloads = CssNode("div", frozenset({"hero-downloads"}), parent=hero_copy)
+    hero_option = CssNode(
+        "a",
+        frozenset({"download-primary", "download-windows", "is-recommended"}),
+        parent=hero_downloads,
+    )
+    hero_recommendation = CssNode("span", parent=hero_option)
     downloads = CssNode("section", identifier="downloads", parent=main)
     pair = CssNode("div", frozenset({"download-pair"}), parent=downloads)
     option = CssNode(
@@ -2664,6 +2686,11 @@ def _validate_supporting_revision_style_values(styles: str) -> None:
             raise ContractError("download fallback link must retain a 44px target")
 
         recommendation_styles = effective_declarations(styles, recommendation, viewport)
+        hero_recommendation_styles = effective_declarations(
+            styles,
+            hero_recommendation,
+            viewport,
+        )
         recommendation_weight = re.fullmatch(
             r"[0-9]+",
             recommendation_styles.get("font-weight", ""),
@@ -2671,10 +2698,22 @@ def _validate_supporting_revision_style_values(styles: str) -> None:
         if (
             recommendation_styles.get("display") != "block"
             or _css_font_size_minimum(recommendation_styles.get("font-size", "")) < 14
+            or recommendation_styles.get("font-style") != "italic"
             or recommendation_weight is None
             or int(recommendation_weight.group()) < 600
         ):
             raise ContractError("device recommendation must remain visible without color alone")
+        if (
+            _resolve_css_color(recommendation_styles.get("color", ""), tokens).upper()
+            != tokens["--muted"]
+            or _resolve_css_color(
+                hero_recommendation_styles.get("color", ""),
+                tokens,
+            ).upper()
+            != tokens["--recommendation"]
+            or hero_recommendation_styles.get("font-style") != "italic"
+        ):
+            raise ContractError("device recommendation must use italic contextual colors")
 
         term_styles = effective_declarations(styles, term, viewport)
         if (
@@ -4284,8 +4323,18 @@ class StyleContractTests(unittest.TestCase):
         mutations = {
             "small-note": self.styles.replace("  font-size: 15px;", "  font-size: 14px;", 1),
             "color-only-recommendation": self.styles.replace(
-                ".is-recommended span {\n  display: block;\n  margin-top: 4px;\n  font-size: 14px;\n  font-weight: 620;",
-                ".is-recommended span {\n  display: block;\n  margin-top: 4px;\n  font-size: 14px;\n  font-weight: 400;",
+                ".is-recommended span {\n  display: block;\n  margin-top: 4px;\n  color: var(--muted);\n  font-size: 14px;\n  font-style: italic;\n  font-weight: 620;",
+                ".is-recommended span {\n  display: block;\n  margin-top: 4px;\n  color: var(--muted);\n  font-size: 14px;\n  font-style: italic;\n  font-weight: 400;",
+                1,
+            ),
+            "upright-recommendation": self.styles.replace(
+                "  font-style: italic;",
+                "  font-style: normal;",
+                1,
+            ),
+            "same-color-recommendation": self.styles.replace(
+                "  color: var(--recommendation);",
+                "  color: var(--button-text);",
                 1,
             ),
             "requirements-card": self.styles.replace(
@@ -4970,6 +5019,11 @@ class LandingPageContractTests(unittest.TestCase):
         """Keep the full-width header shell separate from its constrained contents."""
         page = parse_landing_page()
         _validate_header_structure(page)
+
+    def test_brand_link_returns_to_page_top(self) -> None:
+        """Keep the clickable brand anchored to the top of the current page."""
+        brand = _nodes_with_class(parse_landing_page().nodes("a"), "brand")
+        self.assertEqual(["#"], [node.attrs.get("href") for node in brand])
 
     def test_editorial_illustrations_match_the_semantic_contract(self) -> None:
         """Pair each approved illustration with the exact content it explains."""
