@@ -32,11 +32,7 @@ class FakeOption {
     this.platform = platform;
     this.classList = new FakeClassList();
     this.hidden = false;
-    this.label = new FakeLabel(
-      platform === "macos"
-        ? "macOS detected — Apple Silicon required"
-        : "Recommended for this device",
-    );
+    this.label = new FakeLabel("Recommended for this device");
   }
 
   querySelector(selector) {
@@ -204,12 +200,12 @@ test("only matched existing recommendation labels are revealed", () => {
   const windows = group.children.find((option) => option.platform === "windows");
   assert.equal(macos.label.hidden, false);
   assert.equal(windows.label.hidden, true);
-  assert.equal(macos.label.textContent, "macOS detected — Apple Silicon required");
+  assert.equal(macos.label.textContent, "Recommended for this device");
   assert.equal(windows.label.textContent, "Recommended for this device");
 });
 
 
-test("MacIntel reveals architecture-safe macOS advice in every group", () => {
+test("MacIntel reveals the generic recommendation in every group", () => {
   const groups = [new FakeGroup("windows", "macos"), new FakeGroup("windows", "macos")];
   const platform = detectPlatform({ platform: "MacIntel", maxTouchPoints: 0 });
 
@@ -220,8 +216,8 @@ test("MacIntel reveals architecture-safe macOS advice in every group", () => {
   assert.deepEqual(
     labels.map((label) => label.textContent),
     [
-      "macOS detected — Apple Silicon required",
-      "macOS detected — Apple Silicon required",
+      "Recommended for this device",
+      "Recommended for this device",
     ],
   );
 });
