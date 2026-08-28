@@ -15,29 +15,42 @@
       data-goatcounter="https://farihmhmd.goatcounter.com/count"
       async
       src="https://gc.zgo.at/count.js"></script>
+    <script type="module" src="platform.mjs"></script>
   </head>
   <body>
     <a class="skip-link" href="#content">Skip to content</a>
     <header class="site-header">
-      <a class="brand" href="#content">
-        <img src="assets/screenfix-icon.svg" alt="">
-        <span>ScreenFix</span>
-      </a>
-      <nav aria-label="Primary navigation">
-        <a href="#how">How it works</a>
-        <a href="#results">Results</a>
-        <a href="#downloads">Downloads</a>
-        <a href="#faq">Help</a>
-        <a href="https://github.com/far1h/ScreenFix">GitHub</a>
-      </nav>
+      <div class="site-header-inner">
+        <a class="brand" href="#content">
+          <img src="assets/screenfix-icon.svg" alt="">
+          <span>ScreenFix</span>
+        </a>
+        <nav aria-label="Primary navigation">
+          <a href="#how">How it works</a>
+          <a href="#results">Results</a>
+          <a href="#downloads">Downloads</a>
+          <a href="#faq">Help</a>
+          <a href="https://github.com/far1h/ScreenFix">GitHub</a>
+        </nav>
+      </div>
     </header>
     <main id="content">
       <div class="hero">
         <div class="hero-copy">
           <h1 id="hero-title">Work around a damaged screen.</h1>
           <p class="hero-explanation">ScreenFix blacks out the broken strip and keeps ordinary windows in the space that still works.</p>
-          <a class="download-primary download-windows" href="https://github.com/far1h/ScreenFix/releases/latest/download/ScreenFix-Windows-x64.exe">Download for Windows x64</a>
-          <a class="download-primary download-macos" href="https://github.com/far1h/ScreenFix/releases/latest/download/ScreenFix-macos-arm64.zip">Download for macOS Apple Silicon</a>
+          <div class="hero-downloads" data-platform-group="hero">
+            <a
+              class="download-primary download-windows"
+              data-platform-option="windows"
+              href="https://github.com/far1h/ScreenFix/releases/latest/download/ScreenFix-Windows-x64.exe"
+            >Download for Windows x64<span data-device-recommendation hidden>Recommended for this device</span></a>
+            <a
+              class="download-primary download-macos"
+              data-platform-option="macos"
+              href="https://github.com/far1h/ScreenFix/releases/latest/download/ScreenFix-macos-arm64.zip"
+            >Download for macOS Apple Silicon<span data-device-recommendation hidden>Recommended for this device</span></a>
+          </div>
           <a class="secondary-link" href="https://github.com/far1h/ScreenFix/releases/latest">Releases and versioned checksums</a>
         </div>
         <figure class="hero-figure">
@@ -57,18 +70,48 @@
         <h2 id="how-title">Give the damage its own space.</h2>
         <article class="how-step">
           <span class="step-number">1</span>
-          <h3>Mark the damaged strip.</h3>
-          <p>Open calibration and drag the guides to mark the damaged strip on the selected display.</p>
+          <img
+            src="assets/how-mark-strip.jpg"
+            alt="Cartoon monitor with three calibration guides marking a damaged vertical strip"
+            width="1200"
+            height="900"
+            loading="lazy"
+            decoding="async"
+          >
+          <div class="how-step-copy">
+            <h3>Mark the damaged strip.</h3>
+            <p>Open calibration and drag the guides to mark the damaged strip on the selected display.</p>
+          </div>
         </article>
         <article class="how-step">
           <span class="step-number">2</span>
-          <h3>Keep it dark.</h3>
-          <p>Save the calibration to place an opaque black mask over the damaged strip.</p>
+          <img
+            src="assets/how-mask-strip.jpg"
+            alt="Cartoon monitor with an opaque black mask covering the damaged vertical strip"
+            width="1200"
+            height="900"
+            loading="lazy"
+            decoding="async"
+          >
+          <div class="how-step-copy">
+            <h3>Keep it dark.</h3>
+            <p>Save the calibration to place an opaque black mask over the damaged strip.</p>
+          </div>
         </article>
         <article class="how-step">
           <span class="step-number">3</span>
-          <h3>Use the remaining space.</h3>
-          <p>ScreenFix keeps ordinary movable windows inside the usable space on either side.</p>
+          <img
+            src="assets/how-use-space.jpg"
+            alt="Cartoon monitor with ordinary windows arranged in the usable space beside the damaged strip"
+            width="1200"
+            height="900"
+            loading="lazy"
+            decoding="async"
+          >
+          <div class="how-step-copy">
+            <h3>Use the remaining space.</h3>
+            <p>ScreenFix keeps ordinary movable windows inside the usable space on either side.</p>
+          </div>
         </article>
       </section>
       <section id="results" aria-labelledby="results-title">
@@ -98,36 +141,64 @@
       </section>
       <section id="downloads" aria-labelledby="downloads-title">
         <h2 id="downloads-title">Download ScreenFix.</h2>
-        <div class="download-pair">
-          <article class="download-option download-option-windows">
+        <div class="download-pair" data-platform-group="detailed">
+          <article class="download-option download-option-windows" data-platform-option="windows">
             <h3>Windows x64</h3>
+            <span data-device-recommendation hidden>Recommended for this device</span>
             <p>The executable targets ordinary Intel or AMD x64 Windows. It is self-contained, needs no separate .NET runtime, and requires no ZIP extraction.</p>
             <a class="download-primary download-windows" href="https://github.com/far1h/ScreenFix/releases/latest/download/ScreenFix-Windows-x64.exe">Download ScreenFix for Windows x64</a>
-            <p>Windows may show SmartScreen because this build is unsigned.</p>
-            <p>If compressed startup or extraction causes trouble, use the behavior-identical <a class="download-fallback" href="https://github.com/far1h/ScreenFix/releases/latest/download/ScreenFix-Windows-x64-uncompressed.exe">Windows x64 uncompressed fallback</a>.</p>
+            <p class="download-note">Windows may show SmartScreen because this build is unsigned.</p>
+            <p class="download-note">If compressed startup or extraction causes trouble, use the behavior-identical <a class="download-fallback" href="https://github.com/far1h/ScreenFix/releases/latest/download/ScreenFix-Windows-x64-uncompressed.exe">Windows x64 uncompressed fallback</a>.</p>
           </article>
-          <article class="download-option download-option-macos">
+          <article class="download-option download-option-macos" data-platform-option="macos">
             <h3>macOS Apple Silicon</h3>
+            <span data-device-recommendation hidden>Recommended for this device</span>
             <p>This build supports macOS 13 or later on Apple Silicon, not Intel Macs. Extract the archive, move ScreenFix to Applications, then Control-click and choose Open for the ad hoc signed build.</p>
             <a class="download-primary download-macos" href="https://github.com/far1h/ScreenFix/releases/latest/download/ScreenFix-macos-arm64.zip">Download ScreenFix for macOS Apple Silicon</a>
-            <p>Accessibility permission enables automatic window placement. Masks and calibration continue to work without that permission.</p>
+            <p class="download-note">Accessibility permission enables automatic window placement. Masks and calibration continue to work without that permission.</p>
           </article>
         </div>
       </section>
       <section id="privacy" aria-labelledby="privacy-title">
         <h2 id="privacy-title">ScreenFix stays on your computer.</h2>
+        <img
+          src="assets/privacy-local.jpg"
+          alt="Cartoon monitor keeping ScreenFix window geometry contained on the computer"
+          width="1200"
+          height="900"
+          loading="lazy"
+          decoding="async"
+        >
         <p>The ScreenFix application does not capture the screen, read window contents, use the network, or send telemetry. It observes only the window geometry needed to keep ordinary windows in usable space.</p>
-        <p>This landing page uses GoatCounter for privacy-friendly aggregate visit measurement: it can count visits and estimate broad country-level traffic. GoatCounter is the only third-party analytics service used by this website, and the page does not display a public visit counter. GoatCounter does not set tracking cookies. It may briefly process an IP address and user agent in memory for unique-visit and country estimates, but the site owner does not receive or retain visitors’ IP addresses.</p>
       </section>
       <section id="requirements" aria-labelledby="requirements-title">
         <h2 id="requirements-title">Requirements and limits.</h2>
-        <ul>
-          <li>The Windows build supports ordinary Intel or AMD x64 Windows. The macOS build supports macOS 13 or later on Apple Silicon, not Intel Macs.</li>
-          <li>The Windows build is unsigned and may trigger SmartScreen. The macOS build is ad hoc signed, not notarized, and may trigger Gatekeeper; Control-click the app and choose Open once.</li>
-          <li>On macOS, Accessibility permission is required for automatic window placement. Masks and calibration remain available without it.</li>
-          <li>ScreenFix works around physical display damage; it does not repair the panel or restore dead pixels.</li>
-          <li>ScreenFix protects ordinary movable windows. It restores ordinary maximized Windows windows into safe space, but administrator windows and protected, custom, fixed-size, non-movable, borderless, exclusive, or full-screen windows may remain unchanged.</li>
-        </ul>
+        <img
+          src="assets/requirements-platforms.jpg"
+          alt="Cartoon Windows and Mac computers working around the same damaged display strip"
+          width="1200"
+          height="900"
+          loading="lazy"
+          decoding="async"
+        >
+        <dl>
+          <div class="requirement-row">
+            <dt>Windows</dt>
+            <dd>The Windows build supports ordinary Intel or AMD x64 Windows. It is unsigned and may trigger SmartScreen.</dd>
+          </div>
+          <div class="requirement-row">
+            <dt>macOS</dt>
+            <dd>The macOS build supports macOS 13 or later on Apple Silicon, not Intel Macs. It is ad hoc signed, not notarized, and may trigger Gatekeeper; Control-click the app and choose Open once. Accessibility permission is required for automatic window placement. Masks and calibration remain available without it.</dd>
+          </div>
+          <div class="requirement-row">
+            <dt>What ScreenFix does</dt>
+            <dd>ScreenFix works around physical display damage; it does not repair the panel or restore dead pixels.</dd>
+          </div>
+          <div class="requirement-row">
+            <dt>Window limitations</dt>
+            <dd>ScreenFix protects ordinary movable windows. It restores ordinary maximized Windows windows into safe space, but administrator windows and protected, custom, fixed-size, non-movable, borderless, exclusive, or full-screen windows may remain unchanged.</dd>
+          </div>
+        </dl>
       </section>
       <section id="faq" aria-labelledby="faq-title">
         <h2 id="faq-title">Questions before you download.</h2>
@@ -155,6 +226,7 @@
       <a href="https://github.com/far1h/ScreenFix/releases/latest">Releases</a>
       <a href="https://github.com/far1h/ScreenFix#install-the-hammerspoon-version">Advanced Hammerspoon setup</a>
       <a href="https://github.com/far1h/ScreenFix/blob/main/LICENSE">MIT license</a>
+      <p class="footer-credit">Built by <a href="https://farihmhmd.com/">farihmhmd.com</a></p>
     </footer>
   </body>
 </html>

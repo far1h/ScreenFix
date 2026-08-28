@@ -885,6 +885,265 @@ def validate_landing_page(path: Path) -> None:
     _validate_faq(page)
     _validate_downloads(page)
     _validate_image_alts(page)
+    _validate_header_structure(page)
+    _validate_editorial_illustrations(page)
+    _validate_privacy_requirements_notes_and_footer(page)
+    _validate_platform_groups(page)
+
+
+def _nodes_with_class(nodes: list[HtmlNode] | tuple[HtmlNode, ...], token: str) -> list[HtmlNode]:
+    """Return nodes carrying one exact class token."""
+    return [node for node in nodes if token in (node.attrs.get("class") or "").split()]
+
+
+def _validate_header_structure(page: LandingPageParser) -> None:
+    """Require one constrained header inner with direct brand and nav children."""
+    header = page.nodes("header")[0]
+    inners = _nodes_with_class(header.children, "site-header-inner")
+    if len(inners) != 1:
+        raise ContractError("site header must contain exactly one site-header-inner")
+    inner = inners[0]
+    has_direct_brand_and_nav = (
+        len(inner.children) == 2
+        and inner.children[0].tag == "a"
+        and "brand" in (inner.children[0].attrs.get("class") or "").split()
+        and inner.children[1].tag == "nav"
+    )
+    if not has_direct_brand_and_nav:
+        raise ContractError("site-header-inner must contain direct brand and navigation children")
+
+
+def _validate_lazy_illustration(image: HtmlNode, source: str, alt: str) -> None:
+    """Require one exact 4:3 editorial image contract."""
+    expected = {
+        "src": source,
+        "alt": alt,
+        "width": "1200",
+        "height": "900",
+        "loading": "lazy",
+        "decoding": "async",
+    }
+    if image.attrs != expected:
+        raise ContractError(f"{source} must match the reviewed illustration contract")
+
+
+def _validate_editorial_illustrations(page: LandingPageParser) -> None:
+    """Require the three How illustrations and two editorial section images."""
+    expected_steps = (
+        (
+            "1",
+            "assets/how-mark-strip.jpg",
+            "Cartoon monitor with three calibration guides marking a damaged vertical strip",
+            "Mark the damaged strip.",
+            "Open calibration and drag the guides to mark the damaged strip on the selected display.",
+        ),
+        (
+            "2",
+            "assets/how-mask-strip.jpg",
+            "Cartoon monitor with an opaque black mask covering the damaged vertical strip",
+            "Keep it dark.",
+            "Save the calibration to place an opaque black mask over the damaged strip.",
+        ),
+        (
+            "3",
+            "assets/how-use-space.jpg",
+            "Cartoon monitor with ordinary windows arranged in the usable space beside the damaged strip",
+            "Use the remaining space.",
+            "ScreenFix keeps ordinary movable windows inside the usable space on either side.",
+        ),
+    )
+    steps = [node for node in page.by_id("how")[0].children if node.tag == "article"]
+    if len(steps) != len(expected_steps):
+        raise ContractError("How section must contain the three reviewed steps")
+    for step, (number, source, alt, heading, paragraph) in zip(steps, expected_steps):
+        numbers = _nodes_with_class(step.children, "step-number")
+        images = [child for child in step.children if child.tag == "img"]
+        copies = _nodes_with_class(step.children, "how-step-copy")
+        if len(numbers) != 1 or numbers[0].text() != number or len(images) != 1 or len(copies) != 1:
+            raise ContractError(f"How step {number} must contain its number, illustration, and copy")
+        _validate_lazy_illustration(images[0], source, alt)
+        if [(child.tag, child.text()) for child in copies[0].children] != [
+            ("h3", heading),
+            ("p", paragraph),
+        ]:
+            raise ContractError(f"How step {number} copy must match the reviewed facts")
+
+    editorial = (
+        (
+            "privacy",
+            "assets/privacy-local.jpg",
+            "Cartoon monitor keeping ScreenFix window geometry contained on the computer",
+        ),
+        (
+            "requirements",
+            "assets/requirements-platforms.jpg",
+            "Cartoon Windows and Mac computers working around the same damaged display strip",
+        ),
+    )
+    for section_id, source, alt in editorial:
+        if sum(image.attrs.get("src") == source for image in page.images) != 1:
+            raise ContractError(f"{source} must appear exactly once")
+        images = [child for child in page.by_id(section_id)[0].children if child.tag == "img"]
+        if len(images) != 1:
+            raise ContractError(f"{section_id} must contain one reviewed illustration")
+        _validate_lazy_illustration(images[0], source, alt)
+
+
+def _validate_privacy_requirements_notes_and_footer(page: LandingPageParser) -> None:
+    """Require the approved local-only copy, labelled limits, notes, and credit."""
+    _validate_privacy_revision(page)
+    _validate_requirements_revision(page)
+    _validate_download_notes(page)
+    _validate_footer_credit(page)
+
+
+def _validate_privacy_revision(page: LandingPageParser) -> None:
+    """Require only the approved local application facts in Privacy."""
+    privacy = page.by_id("privacy")[0]
+    expected_privacy = (
+        "The ScreenFix application does not capture the screen, read window contents, "
+        "use the network, or send telemetry. It observes only the window geometry needed "
+        "to keep ordinary windows in usable space."
+    )
+    if [child.tag for child in privacy.children] != ["h2", "img", "p"]:
+        raise ContractError("Privacy must contain only its heading, illustration, and app-local paragraph")
+    if privacy.children[0].text() != "ScreenFix stays on your computer.":
+        raise ContractError("Privacy heading must match the approved local-only copy")
+    forbidden_privacy = (
+        "GoatCounter",
+        "analytics",
+        "visit",
+        "visitor",
+        "tracking",
+        "cookie",
+        "IP address",
+        "user agent",
+    )
+    privacy_copy = privacy.text()
+    if any(term.lower() in privacy_copy.lower() for term in forbidden_privacy):
+        raise ContractError("Privacy must not show website measurement or visitor language")
+    if privacy.children[2].text() != expected_privacy:
+        raise ContractError("Privacy paragraph must match the approved app-local facts")
+
+
+def _validate_requirements_revision(page: LandingPageParser) -> None:
+    """Require four ordered rows containing every approved limitation."""
+    requirements = page.by_id("requirements")[0]
+    lists = [child for child in requirements.children if child.tag == "dl"]
+    if len(lists) != 1:
+        raise ContractError("Requirements must use one four-row definition list")
+    rows = lists[0].children
+    if len(rows) != 4 or any(
+        row.tag != "div" or "requirement-row" not in (row.attrs.get("class") or "").split()
+        for row in rows
+    ):
+        raise ContractError("Requirements must contain four labelled rows")
+    expected_rows = (
+        (
+            "Windows",
+            "The Windows build supports ordinary Intel or AMD x64 Windows. It is unsigned and may trigger SmartScreen.",
+        ),
+        (
+            "macOS",
+            "The macOS build supports macOS 13 or later on Apple Silicon, not Intel Macs. It is ad hoc signed, not notarized, and may trigger Gatekeeper; Control-click the app and choose Open once. Accessibility permission is required for automatic window placement. Masks and calibration remain available without it.",
+        ),
+        (
+            "What ScreenFix does",
+            "ScreenFix works around physical display damage; it does not repair the panel or restore dead pixels.",
+        ),
+        (
+            "Window limitations",
+            "ScreenFix protects ordinary movable windows. It restores ordinary maximized Windows windows into safe space, but administrator windows and protected, custom, fixed-size, non-movable, borderless, exclusive, or full-screen windows may remain unchanged.",
+        ),
+    )
+    actual_rows: list[tuple[str, str]] = []
+    for row in rows:
+        terms = [child for child in row.children if child.tag == "dt"]
+        descriptions = [child for child in row.children if child.tag == "dd"]
+        if len(terms) != 1 or len(descriptions) != 1 or len(row.children) != 2:
+            raise ContractError("Each requirement row must contain one term and one description")
+        if _is_hidden(row):
+            raise ContractError("Requirement rows must remain visible")
+        actual_rows.append((terms[0].text(), descriptions[0].text()))
+    if tuple(actual_rows) != expected_rows:
+        raise ContractError("Requirement rows must preserve every approved platform and window fact")
+
+
+def _validate_download_notes(page: LandingPageParser) -> None:
+    """Require the three approved download support notes."""
+    notes = _nodes_with_class(page.nodes("p"), "download-note")
+    expected_notes = (
+        "Windows may show SmartScreen because this build is unsigned.",
+        "Accessibility permission enables automatic window placement. Masks and calibration continue to work without that permission.",
+    )
+    if len(notes) != 3 or (notes[0].text(), notes[2].text()) != expected_notes:
+        raise ContractError("Downloads must contain exactly the three approved support notes")
+    fallback_links = [child for child in notes[1].children if child.tag == "a"]
+    fallback_copy = " ".join(" ".join(notes[1].data).split())
+    if fallback_copy != (
+        "If compressed startup or extraction causes trouble, use the behavior-identical ."
+    ) or len(fallback_links) != 1 or fallback_links[0].text() != "Windows x64 uncompressed fallback":
+        raise ContractError("Downloads must contain exactly the three approved support notes")
+
+
+def _validate_footer_credit(page: LandingPageParser) -> None:
+    """Require the exact final builder credit and link."""
+    footer = page.nodes("footer")[0]
+    if not footer.children:
+        raise ContractError("Footer must end with the builder credit")
+    credit = footer.children[-1]
+    if credit.tag != "p" or "footer-credit" not in (credit.attrs.get("class") or "").split():
+        raise ContractError("Footer final child must be the dedicated builder credit")
+    credit_links = [child for child in credit.children if child.tag == "a"]
+    if credit.text() != "Built by farihmhmd.com" or len(credit_links) != 1:
+        raise ContractError("Footer credit must read Built by farihmhmd.com")
+    if credit_links[0].attrs != {"href": "https://farihmhmd.com/"} or credit_links[0].text() != "farihmhmd.com":
+        raise ContractError("Footer credit must link the exact builder website")
+
+
+def _validate_platform_groups(page: LandingPageParser) -> None:
+    """Require two complete static download groups for progressive enhancement."""
+    groups = [node for node in page.elements if "data-platform-group" in node.attrs]
+    if [group.attrs.get("data-platform-group") for group in groups] != ["hero", "detailed"]:
+        raise ContractError("landing page must contain the hero and detailed platform groups")
+    labels = [node for node in page.elements if "data-device-recommendation" in node.attrs]
+    if len(labels) != 4:
+        raise ContractError("landing page must contain exactly four hidden recommendation labels")
+    expected_urls = {
+        "windows": "https://github.com/far1h/ScreenFix/releases/latest/download/ScreenFix-Windows-x64.exe",
+        "macos": "https://github.com/far1h/ScreenFix/releases/latest/download/ScreenFix-macos-arm64.zip",
+    }
+    for group in groups:
+        options = [child for child in group.children if "data-platform-option" in child.attrs]
+        values = [option.attrs.get("data-platform-option") for option in options]
+        if values != ["windows", "macos"]:
+            raise ContractError("each platform group must expose one Windows and one macOS option")
+        for option, platform in zip(options, values):
+            if _is_hidden(option) or any(
+                attribute in option.attrs
+                for attribute in ("style", "order", "data-order", "inert")
+            ):
+                raise ContractError("platform options must remain visible in source order")
+            labels = [
+                node
+                for node in _descendant_nodes(option)
+                if "data-device-recommendation" in node.attrs
+            ]
+            if len(labels) != 1 or labels[0].attrs != {
+                "data-device-recommendation": None,
+                "hidden": None,
+            }:
+                raise ContractError("each option must contain one hidden recommendation label")
+            if labels[0].text() != "Recommended for this device":
+                raise ContractError("recommendation labels must use the approved text")
+            option_nodes = (option, *_descendant_nodes(option))
+            primary_links = [
+                node
+                for node in option_nodes
+                if node.tag == "a" and "download-primary" in (node.attrs.get("class") or "").split()
+            ]
+            if len(primary_links) != 1 or primary_links[0].attrs.get("href") != expected_urls[platform]:
+                raise ContractError("platform options must preserve the exact native download URLs")
 
 
 def _validate_hero(page: LandingPageParser) -> None:
@@ -1054,16 +1313,19 @@ def _is_counter_identifier(identifier: str, prefixes: tuple[str, ...]) -> bool:
 
 
 def _validate_script(page: LandingPageParser) -> None:
-    """Require only the exact privacy-reviewed GoatCounter script."""
-    if len(page.scripts) != 1:
-        raise ContractError("landing page must contain exactly one script")
-    expected = {
+    """Require the reviewed external counter and local platform module only."""
+    if len(page.scripts) != 2:
+        raise ContractError("landing page must contain exactly two reviewed scripts")
+    goatcounter = {
         "data-goatcounter": "https://farihmhmd.goatcounter.com/count",
         "async": None,
         "src": "https://gc.zgo.at/count.js",
     }
-    if page.scripts[0].attrs != expected or page.scripts[0].text():
+    platform = {"type": "module", "src": "platform.mjs"}
+    if page.scripts[0].attrs != goatcounter or page.scripts[0].text():
         raise ContractError("GoatCounter script attributes must match the privacy contract")
+    if page.scripts[1].attrs != platform or page.scripts[1].text():
+        raise ContractError("platform module script attributes must match the local contract")
 
 
 def _validate_references(page: LandingPageParser) -> None:
@@ -4104,6 +4366,22 @@ class LandingPageContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, message):
                 validate_landing_page(path)
 
+    def assert_revision_mutation_rejected(
+        self,
+        old: str,
+        new: str,
+        validator: Callable[[LandingPageParser], None],
+        message: str,
+    ) -> None:
+        """Apply one semantic mutation and require its focused validator to reject it."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "index.html"
+            source = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+            self.assertIn(old, source)
+            path.write_text(source.replace(old, new, 1), encoding="utf-8")
+            with self.assertRaisesRegex(ContractError, message):
+                validator(parse_landing_page(path))
+
     def test_exact_site_tree(self) -> None:
         site = ROOT / "site"
         actual = {
@@ -4172,7 +4450,14 @@ class LandingPageContractTests(unittest.TestCase):
             ],
             nav_links,
         )
-        brand_images = [node for node in page.nodes("header")[0].children if node.tag == "a" for node in node.children if node.tag == "img"]
+        header_nodes = _descendant_nodes(page.nodes("header")[0])
+        brand_images = [
+            image
+            for node in header_nodes
+            if node.tag == "a" and "brand" in (node.attrs.get("class") or "").split()
+            for image in node.children
+            if image.tag == "img"
+        ]
         self.assertEqual(1, len(brand_images))
         self.assertEqual("assets/screenfix-icon.svg", brand_images[0].attrs.get("src"))
         self.assertEqual("", brand_images[0].attrs.get("alt"))
@@ -4189,6 +4474,171 @@ class LandingPageContractTests(unittest.TestCase):
             ["ScreenFix blacks out the broken strip and keeps ordinary windows in the space that still works."],
             [node.text() for node in explanations],
         )
+
+    def test_header_inner_contains_direct_brand_and_navigation(self) -> None:
+        """Keep the full-width header shell separate from its constrained contents."""
+        page = parse_landing_page()
+        _validate_header_structure(page)
+
+    def test_editorial_illustrations_match_the_semantic_contract(self) -> None:
+        """Pair each approved illustration with the exact content it explains."""
+        page = parse_landing_page()
+        _validate_editorial_illustrations(page)
+
+    def test_scripts_are_the_exact_external_counter_and_local_module(self) -> None:
+        """Allow only the unchanged counter tag and inert local module include."""
+        page = parse_landing_page()
+        _validate_script(page)
+
+    def test_privacy_requirements_notes_and_footer_revision(self) -> None:
+        """Keep the revised supporting content factual, local, and clearly labelled."""
+        page = parse_landing_page()
+        _validate_privacy_requirements_notes_and_footer(page)
+
+    def test_privacy_measurement_word_mutations_are_rejected(self) -> None:
+        """Reject visible measurement wording, including ordinary plural forms."""
+        for word in ("visits", "visitors"):
+            with self.subTest(word=word):
+                self.assert_revision_mutation_rejected(
+                    "to keep ordinary windows in usable space.</p>",
+                    f"to keep ordinary windows in usable space. It counts {word}.</p>",
+                    _validate_privacy_requirements_notes_and_footer,
+                    "website measurement or visitor language",
+                )
+
+    def test_platform_groups_are_static_and_complete(self) -> None:
+        """Keep both native downloads usable before device recommendation runs."""
+        page = parse_landing_page()
+        _validate_platform_groups(page)
+
+    def test_platform_group_mutations_are_rejected(self) -> None:
+        """Reject incomplete, hidden, reordered, or mislabeled static alternatives."""
+        mutations = {
+            "missing group": (
+                'data-platform-group="hero"',
+                'data-group="hero"',
+                "hero and detailed platform groups",
+            ),
+            "missing alternative": (
+                'data-platform-option="macos"',
+                'data-platform="macos"',
+                "one Windows and one macOS option",
+            ),
+            "hidden option": (
+                'data-platform-option="windows"\n              href=',
+                'data-platform-option="windows" hidden\n              href=',
+                "visible in source order",
+            ),
+            "exposed label": (
+                "data-device-recommendation hidden",
+                "data-device-recommendation",
+                "hidden recommendation label",
+            ),
+            "duplicate platform": (
+                'data-platform-option="macos"',
+                'data-platform-option="windows"',
+                "one Windows and one macOS option",
+            ),
+            "label outside option": (
+                ">Download for Windows x64<span data-device-recommendation hidden>Recommended for this device</span></a>",
+                ">Download for Windows x64</a><span data-device-recommendation hidden>Recommended for this device</span>",
+                "hidden recommendation label",
+            ),
+            "extra label outside options": (
+                '</div>\n          <a class="secondary-link"',
+                '</div>\n          <span data-device-recommendation hidden>Recommended for this device</span>\n          <a class="secondary-link"',
+                "four hidden recommendation labels",
+            ),
+            "changed URL": (
+                "ScreenFix-Windows-x64.exe",
+                "ScreenFix-Windows.exe",
+                "exact native download URLs",
+            ),
+            "CSS order": (
+                'data-platform-option="windows"\n              href=',
+                'data-platform-option="windows" style="order: -1"\n              href=',
+                "visible in source order",
+            ),
+        }
+        for name, (old, new, message) in mutations.items():
+            with self.subTest(name=name):
+                self.assert_revision_mutation_rejected(
+                    old,
+                    new,
+                    _validate_platform_groups,
+                    message,
+                )
+
+    def test_editorial_structure_mutations_are_rejected(self) -> None:
+        """Protect the reviewed header shell, image details, and How copy wrappers."""
+        mutations = {
+            "header inner": (
+                '<div class="site-header-inner">',
+                "<div>",
+                _validate_header_structure,
+                "site-header-inner",
+            ),
+            "How image source": (
+                'src="assets/how-mark-strip.jpg"',
+                'src="assets/how-mask-strip.jpg"',
+                _validate_editorial_illustrations,
+                "how-mark-strip.jpg",
+            ),
+            "How copy wrapper": (
+                '<div class="how-step-copy">',
+                "<div>",
+                _validate_editorial_illustrations,
+                "number, illustration, and copy",
+            ),
+            "privacy image dimensions": (
+                'src="assets/privacy-local.jpg"\n          alt="Cartoon monitor keeping ScreenFix window geometry contained on the computer"\n          width="1200"',
+                'src="assets/privacy-local.jpg"\n          alt="Cartoon monitor keeping ScreenFix window geometry contained on the computer"\n          width="1199"',
+                _validate_editorial_illustrations,
+                "privacy-local.jpg",
+            ),
+            "duplicate privacy image": (
+                '</figure>\n      </div>\n      <section id="how"',
+                '</figure>\n        <img src="assets/privacy-local.jpg" alt="Cartoon monitor keeping ScreenFix window geometry contained on the computer" width="1200" height="900" loading="lazy" decoding="async">\n      </div>\n      <section id="how"',
+                _validate_editorial_illustrations,
+                "exactly once",
+            ),
+        }
+        for name, (old, new, validator, message) in mutations.items():
+            with self.subTest(name=name):
+                self.assert_revision_mutation_rejected(old, new, validator, message)
+
+    def test_supporting_content_mutations_are_rejected(self) -> None:
+        """Protect requirement facts, note count, and the exact builder credit."""
+        mutations = {
+            "requirements order": (
+                "<dt>Windows</dt>",
+                "<dt>macOS</dt>",
+                "preserve every approved platform and window fact",
+            ),
+            "maximized-window fact": (
+                "ordinary maximized Windows windows",
+                "maximized windows",
+                "preserve every approved platform and window fact",
+            ),
+            "support note": (
+                '<p class="download-note">Windows may show SmartScreen',
+                "<p>Windows may show SmartScreen",
+                "exactly the three approved support notes",
+            ),
+            "footer link": (
+                'href="https://farihmhmd.com/"',
+                'href="https://example.com/"',
+                "exact builder website",
+            ),
+        }
+        for name, (old, new, message) in mutations.items():
+            with self.subTest(name=name):
+                self.assert_revision_mutation_rejected(
+                    old,
+                    new,
+                    _validate_privacy_requirements_notes_and_footer,
+                    message,
+                )
 
     def test_sections_steps_and_project_images(self) -> None:
         page = parse_landing_page()
@@ -4227,8 +4677,10 @@ class LandingPageContractTests(unittest.TestCase):
         actual_steps = []
         for step in steps:
             number = [node.text() for node in step.children if "step-number" in (node.attrs.get("class") or "").split()]
-            heading = [node.text() for node in step.children if node.tag == "h3"]
-            copy = [node.text() for node in step.children if node.tag == "p"]
+            copy_containers = _nodes_with_class(step.children, "how-step-copy")
+            self.assertEqual(1, len(copy_containers))
+            heading = [node.text() for node in copy_containers[0].children if node.tag == "h3"]
+            copy = [node.text() for node in copy_containers[0].children if node.tag == "p"]
             self.assertEqual((1, 1, 1), (len(number), len(heading), len(copy)))
             actual_steps.append((number[0], heading[0], copy[0]))
         self.assertEqual(expected_steps, actual_steps)
@@ -4328,7 +4780,7 @@ class LandingPageContractTests(unittest.TestCase):
         self.assertEqual(1, len(heroes))
         self.assertEqual("div", heroes[0].tag)
         hero = heroes[0]
-        hero_links = [node for node in hero.children[0].children if node.tag == "a"]
+        hero_links = [node for node in _descendant_nodes(hero.children[0]) if node.tag == "a"]
         self.assertEqual([windows_url, macos_url, releases_url], [node.attrs.get("href") for node in hero_links])
 
         downloads = page.by_id("downloads")[0]
@@ -4351,18 +4803,19 @@ class LandingPageContractTests(unittest.TestCase):
             "read window contents",
             "use the network",
             "send telemetry",
-            "landing page uses GoatCounter",
-            "privacy-friendly aggregate visit measurement",
-            "count visits",
-            "broad country-level traffic",
-            "does not set tracking cookies",
-            "briefly process an IP address and user agent in memory",
-            "site owner does not receive or retain visitors’ IP addresses",
         ):
             self.assertIn(phrase, privacy)
-        self.assertIn("only third-party analytics service used by this website", privacy)
-        self.assertIn("does not display a public visit counter", privacy)
-        self.assertNotIn("only third-party request", privacy)
+        for forbidden in (
+            "GoatCounter",
+            "analytics",
+            "visit",
+            "visitor",
+            "tracking",
+            "cookie",
+            "IP address",
+            "user agent",
+        ):
+            self.assertNotRegex(privacy, rf"(?i)\b{re.escape(forbidden)}\b")
 
         requirements = page.by_id("requirements")[0].text()
         for phrase in (
@@ -4452,9 +4905,9 @@ class LandingPageContractTests(unittest.TestCase):
                 self.assertTrue(image.attrs.get("alt"))
 
         scripts = page.scripts
-        self.assertEqual(1, len(scripts))
-        self.assertIsNotNone(scripts[0].parent)
-        self.assertEqual("head", scripts[0].parent.tag)
+        self.assertEqual(2, len(scripts))
+        self.assertTrue(all(script.parent is not None for script in scripts))
+        self.assertTrue(all(script.parent.tag == "head" for script in scripts if script.parent))
         self.assertEqual(
             {
                 "data-goatcounter": "https://farihmhmd.goatcounter.com/count",
@@ -4463,7 +4916,8 @@ class LandingPageContractTests(unittest.TestCase):
             },
             scripts[0].attrs,
         )
-        self.assertEqual("", scripts[0].text())
+        self.assertEqual({"type": "module", "src": "platform.mjs"}, scripts[1].attrs)
+        self.assertEqual(["", ""], [script.text() for script in scripts])
 
         banned_regions = (
             "eyebrow",
@@ -4509,7 +4963,7 @@ class LandingPageContractTests(unittest.TestCase):
         self.assert_mutation_rejected(
             'src="https://gc.zgo.at/count.js"></script>',
             'src="https://gc.zgo.at/count.js"></script>\n    <script src="https://example.com/second.js"></script>',
-            "exactly one script",
+            "exactly two reviewed scripts",
         )
 
     def test_protocol_relative_goatcounter_mutation_is_rejected(self) -> None:
