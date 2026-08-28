@@ -27,10 +27,154 @@ EXPECTED_SITE_FILES = {
     "assets/result-mask.jpg",
 }
 PAGES_WORKFLOW = ROOT / ".github" / "workflows" / "pages.yml"
+README = ROOT / "README.md"
+README_SITE_URL = "https://far1h.github.io/ScreenFix/"
+README_RELEASES_URL = "https://github.com/far1h/ScreenFix/releases"
+README_ROOT_SITE_PATTERN = re.compile(r"^[├└]──[ \t]+site/(?:[ \t]+.*)?$", re.MULTILINE)
+README_VALIDATION_COMMAND = "python3 -m unittest discover -s tests/site -p 'test_*.py' -v"
+README_COPY_BLOCK_MIN_LENGTH = 60
+
+
+class ReadmeContractError(AssertionError):
+    """Report a README contract violation."""
 
 
 class WorkflowContractError(AssertionError):
     """Report a GitHub Pages workflow contract violation."""
+
+
+def _require_readme(condition: bool, message: str) -> None:
+    """Raise a focused contract failure when a README rule is false."""
+    if not condition:
+        raise ReadmeContractError(message)
+
+
+def _readme_section(source: str, heading: str) -> str:
+    """Return the body of one level-two README section."""
+    match = re.search(rf"(?ms)^{re.escape(heading)}\n(.*?)(?=^## |\Z)", source)
+    _require_readme(match is not None, f"README must keep the {heading} section")
+    return match.group(1)
+
+
+def _markdown_links(source: str) -> tuple[tuple[str, str], ...]:
+    """Return ordinary inline Markdown link labels and targets."""
+    return tuple(re.findall(r"(?<!!)\[([^\]\n]+)\]\(([^)\s]+)\)", source))
+
+
+def _validate_readme_links(source: str) -> None:
+    """Require one descriptive public-site link and the Releases link."""
+    _require_readme(
+        source.count(README_SITE_URL) == 1,
+        "README must contain the exact default Pages URL exactly once",
+    )
+    links = _markdown_links(source)
+    site_labels = [label.strip() for label, target in links if target == README_SITE_URL]
+    _require_readme(
+        len(site_labels) == 1,
+        "README must link the exact default Pages URL exactly once",
+    )
+    _require_readme(
+        bool(site_labels[0])
+        and re.search(r"\b(?:ScreenFix|website)\b", site_labels[0], re.IGNORECASE) is not None,
+        "README Pages link must have a descriptive ScreenFix or website label",
+    )
+    _require_readme(
+        any(target == README_RELEASES_URL for _, target in links),
+        "README must keep the GitHub Releases URL",
+    )
+
+
+def _validate_readme_file_tree(source: str) -> None:
+    """Require the dependency-free site in the root file tree."""
+    files = _readme_section(source, "## Files")
+    tree = re.search(r"(?ms)^```text\n(.*?)\n```$", files)
+    _require_readme(tree is not None, "README Files must keep its text file tree")
+    _require_readme(
+        len(README_ROOT_SITE_PATTERN.findall(tree.group(1))) == 1,
+        "README root file tree must contain one site/ entry",
+    )
+
+
+def _validate_readme_collaboration(source: str) -> None:
+    """Require the exact site validation command under Collaborating."""
+    _require_readme(
+        source.count(README_VALIDATION_COMMAND) == 1,
+        "README must contain the exact site validation command exactly once",
+    )
+    collaborating = _readme_section(source, "## Collaborating")
+    command_block = f"```bash\n{README_VALIDATION_COMMAND}\n```"
+    _require_readme(
+        collaborating.count(command_block) == 1,
+        "README Collaborating must contain the site command in its own bash block",
+    )
+    context = collaborating[: collaborating.index(command_block)].rstrip().split("\n\n")[-1]
+    _require_readme(
+        "validat" in context.lower() and "landing page" in context.lower(),
+        "README must identify the command as landing-page validation",
+    )
+
+
+def _validate_readme_native_content(source: str) -> None:
+    """Require existing Releases and native installation content to remain."""
+    required_once = (
+        "## Install the native Windows app",
+        "## Install the native macOS app",
+        "1. Download `ScreenFix-Windows-x64.exe` from the Releases page.",
+        "1. Extract `ScreenFix-macos-arm64.zip`.",
+    )
+    _require_readme(
+        any(target == README_RELEASES_URL for _, target in _markdown_links(source)),
+        "README must keep the GitHub Releases URL",
+    )
+    for required in required_once:
+        _require_readme(
+            source.count(required) == 1,
+            f"README must keep exactly one native installation entry: {required}",
+        )
+
+
+def _markdown_headings(source: str) -> tuple[str, ...]:
+    """Return Markdown headings outside fenced code blocks."""
+    headings: list[str] = []
+    in_fence = False
+    for line in source.splitlines():
+        if re.match(r"^\s*```", line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        match = re.match(r"^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?$", line)
+        if match:
+            headings.append(match.group(1).strip())
+    return tuple(headings)
+
+
+def _validate_readme_scope(source: str) -> None:
+    """Reject substantive copied landing-page sections while allowing isolated mentions."""
+    copied_section_headings = {
+        "faq",
+        "privacy",
+        "Questions before you download.",
+        "ScreenFix stays on your computer.",
+        "Work around a damaged screen.",
+        "Give the damage its own space.",
+        "What it looks like in use.",
+        "Download ScreenFix.",
+    }
+    headings = {heading.casefold() for heading in _markdown_headings(source)}
+    copied_headings = {heading for heading in copied_section_headings if heading.casefold() in headings}
+    _require_readme(
+        not copied_headings,
+        f"README must not copy landing-page section headings: {sorted(copied_headings)}",
+    )
+    copied_blocks, faq_summaries = _landing_page_readme_copy()
+    normalized_source = " ".join(source.split())
+    _require_readme(
+        not any(block in normalized_source for block in copied_blocks),
+        "README must not copy full landing-page privacy, FAQ, or download blocks",
+    )
+    copied_questions = sum(summary in normalized_source for summary in faq_summaries)
+    _require_readme(copied_questions < 2, "README must not copy the landing-page FAQ block")
 
 
 @dataclass(frozen=True)
@@ -637,6 +781,44 @@ def parse_landing_page(path: Path = ROOT / "site" / "index.html") -> LandingPage
     if parser.errors:
         raise ContractError("; ".join(parser.errors))
     return parser
+
+
+def _descendant_nodes(root: HtmlNode) -> tuple[HtmlNode, ...]:
+    """Return all descendants of one parsed HTML node."""
+    descendants: list[HtmlNode] = []
+    for child in root.children:
+        descendants.append(child)
+        descendants.extend(_descendant_nodes(child))
+    return tuple(descendants)
+
+
+def _landing_page_readme_copy() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return substantive page blocks and FAQ summaries relevant to README duplication."""
+    page = parse_landing_page()
+    privacy_nodes = _descendant_nodes(page.by_id("privacy")[0])
+    faq_nodes = _descendant_nodes(page.by_id("faq")[0])
+    download_nodes = _descendant_nodes(page.by_id("downloads")[0])
+    download_articles = [
+        node
+        for node in download_nodes
+        if node.tag == "article" and "download-option" in (node.attrs.get("class") or "").split()
+    ]
+    block_nodes = [node for node in privacy_nodes + faq_nodes if node.tag == "p"]
+    block_nodes.extend(
+        node
+        for article in download_articles
+        for node in _descendant_nodes(article)
+        if node.tag == "p"
+    )
+    blocks = tuple(
+        dict.fromkeys(
+            text
+            for node in block_nodes
+            if len(text := node.text()) >= README_COPY_BLOCK_MIN_LENGTH
+        )
+    )
+    summaries = tuple(node.text() for node in faq_nodes if node.tag == "summary" and node.text())
+    return blocks, summaries
 
 
 def validate_landing_page(path: Path) -> None:
@@ -3147,6 +3329,146 @@ class StyleContractTests(unittest.TestCase):
     def test_giant_pill_radius_mutation_is_rejected(self) -> None:
         mutated = self.styles.replace("border-radius: 8px;", "border-radius: 999px;", 1)
         self.assert_style_rejected(mutated, _validate_forbidden_style_contract, "pill radii")
+
+
+class ReadmeContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        """Load the README source for each contract test."""
+        self.source = README.read_text(encoding="utf-8")
+
+    def test_public_site_link_is_exact_and_unique(self) -> None:
+        """Require one exact Pages target with a descriptive link label."""
+        _validate_readme_links(self.source)
+
+    def test_root_file_tree_includes_the_site(self) -> None:
+        """Require one concise root entry for the dependency-free site."""
+        _validate_readme_file_tree(self.source)
+
+    def test_collaborating_includes_the_exact_site_validation_command(self) -> None:
+        """Require the reproducible site-suite command in validation context."""
+        _validate_readme_collaboration(self.source)
+
+    def test_releases_and_native_installation_content_remains(self) -> None:
+        """Protect existing Releases and native installation documentation."""
+        _validate_readme_native_content(self.source)
+
+    def test_readme_does_not_copy_landing_page_sections(self) -> None:
+        """Keep the README concise instead of duplicating page content."""
+        _validate_readme_scope(self.source)
+        page = parse_landing_page()
+        privacy_paragraphs = [
+            child.text()
+            for child in page.by_id("privacy")[0].children
+            if child.tag == "p" and len(child.text()) >= README_COPY_BLOCK_MIN_LENGTH
+        ]
+        download_paragraphs = [
+            child.text()
+            for article in page.nodes("article")
+            if "download-option" in (article.attrs.get("class") or "").split()
+            for child in article.children
+            if child.tag == "p" and len(child.text()) >= README_COPY_BLOCK_MIN_LENGTH
+        ]
+        _, faq_summaries = _landing_page_readme_copy()
+        self.assertTrue(privacy_paragraphs)
+        self.assertTrue(download_paragraphs)
+        self.assertGreaterEqual(len(faq_summaries), 2)
+        mutations = {
+            "FAQ heading": f"{self.source}\n## FAQ\n",
+            "privacy heading": f"{self.source}\n## Privacy\n",
+            "marketing heading": f"{self.source}\n## Give the damage its own space.\n",
+            "privacy paragraph": f"{self.source}\n{privacy_paragraphs[0]}\n",
+            "download paragraph": f"{self.source}\n{download_paragraphs[0]}\n",
+            "FAQ block": f"{self.source}\n{faq_summaries[0]}\n\n{faq_summaries[1]}\n",
+        }
+        for name, mutated in mutations.items():
+            with self.subTest(name=name), self.assertRaises(ReadmeContractError):
+                _validate_readme_scope(mutated)
+
+    def test_duplicate_url_and_command_mutations_are_rejected(self) -> None:
+        """Reject repeated public URLs and validation commands."""
+        mutations = {
+            "duplicate URL": (
+                _validate_readme_links,
+                f"{self.source}\n[ScreenFix website]({README_SITE_URL})\n",
+            ),
+            "raw duplicate URL": (
+                _validate_readme_links,
+                f"{self.source}\n{README_SITE_URL}\n",
+            ),
+            "duplicate command": (
+                _validate_readme_collaboration,
+                f"{self.source}\n{README_VALIDATION_COMMAND}\n",
+            ),
+        }
+        for name, (validator, mutated) in mutations.items():
+            with self.subTest(name=name), self.assertRaises(ReadmeContractError):
+                validator(mutated)
+
+    def test_required_source_omissions_are_rejected(self) -> None:
+        """Reject omission of the site tree, Releases URL, and native headings."""
+        without_site, site_count = README_ROOT_SITE_PATTERN.subn("", self.source, count=1)
+        nested_site, nested_count = README_ROOT_SITE_PATTERN.subn(
+            "│   ├── site/  Nested unrelated files.",
+            self.source,
+            count=1,
+        )
+        self.assertEqual((1, 1), (site_count, nested_count))
+        mutations = {
+            "missing site URL": (
+                _validate_readme_links,
+                self.source.replace(f"]({README_SITE_URL})", "](https://example.invalid/)", 1),
+            ),
+            "missing root site": (_validate_readme_file_tree, without_site),
+            "nested site only": (_validate_readme_file_tree, nested_site),
+            "missing Releases URL": (
+                _validate_readme_native_content,
+                self.source.replace(README_RELEASES_URL, "https://example.invalid/releases", 1),
+            ),
+            "missing Windows heading": (
+                _validate_readme_native_content,
+                self.source.replace("## Install the native Windows app", "", 1),
+            ),
+            "missing macOS heading": (
+                _validate_readme_native_content,
+                self.source.replace("## Install the native macOS app", "", 1),
+            ),
+        }
+        for name, (validator, mutated) in mutations.items():
+            self.assertNotEqual(self.source, mutated)
+            with self.subTest(name=name), self.assertRaises(ReadmeContractError):
+                validator(mutated)
+
+    def test_harmless_documentation_edits_are_accepted(self) -> None:
+        """Allow copy, alignment, and collaborator-note changes outside the contract."""
+        realigned_tree, replacement_count = README_ROOT_SITE_PATTERN.subn(
+            "├── site/  Holds the static landing page.",
+            self.source,
+            count=1,
+        )
+        self.assertEqual(1, replacement_count)
+        mutations = {
+            "website sentence rewording": (
+                _validate_readme_links,
+                self.source.replace(
+                    "The product overview and direct native downloads are also available on the "
+                    "[ScreenFix website]",
+                    "Explore ScreenFix and get native downloads from the [project website]",
+                    1,
+                ),
+            ),
+            "site tree description and alignment": (
+                _validate_readme_file_tree,
+                realigned_tree,
+            ),
+            "collaborator GoatCounter mention": (
+                _validate_readme_scope,
+                f"{self.source}\nCollaborators may discuss GoatCounter changes in review.\n",
+            ),
+        }
+        for name, (validator, mutated) in mutations.items():
+            self.assertNotEqual(self.source, mutated)
+            with self.subTest(name=name):
+                validator(mutated)
 
 
 class LandingPageContractTests(unittest.TestCase):
