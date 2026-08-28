@@ -1131,6 +1131,10 @@ def _validate_platform_groups(page: LandingPageParser) -> None:
         "windows": "https://github.com/far1h/ScreenFix/releases/latest/download/ScreenFix-Windows-x64.exe",
         "macos": "https://github.com/far1h/ScreenFix/releases/latest/download/ScreenFix-macos-arm64.zip",
     }
+    expected_labels = {
+        "windows": "Recommended for this device",
+        "macos": "macOS detected — Apple Silicon required",
+    }
     for group in groups:
         options = [child for child in group.children if "data-platform-option" in child.attrs]
         values = [option.attrs.get("data-platform-option") for option in options]
@@ -1152,8 +1156,10 @@ def _validate_platform_groups(page: LandingPageParser) -> None:
                 "hidden": None,
             }:
                 raise ContractError("each option must contain one hidden recommendation label")
-            if labels[0].text() != "Recommended for this device":
-                raise ContractError("recommendation labels must use the approved text")
+            if labels[0].text() != expected_labels[platform]:
+                raise ContractError(
+                    "recommendation labels must use the approved per-platform text"
+                )
             option_nodes = (option, *_descendant_nodes(option))
             primary_links = [
                 node
@@ -4959,6 +4965,16 @@ class LandingPageContractTests(unittest.TestCase):
                 "data-device-recommendation hidden",
                 "data-device-recommendation",
                 "hidden recommendation label",
+            ),
+            "wrong Windows recommendation": (
+                "<span data-device-recommendation hidden>Recommended for this device</span>",
+                "<span data-device-recommendation hidden>macOS detected — Apple Silicon required</span>",
+                "approved per-platform text",
+            ),
+            "generic macOS recommendation": (
+                "<span data-device-recommendation hidden>macOS detected — Apple Silicon required</span>",
+                "<span data-device-recommendation hidden>Recommended for this device</span>",
+                "approved per-platform text",
             ),
             "duplicate platform": (
                 'data-platform-option="macos"',

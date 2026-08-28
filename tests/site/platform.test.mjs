@@ -20,8 +20,9 @@ class FakeClassList {
 
 
 class FakeLabel {
-  constructor(hidden = true) {
+  constructor(textContent, hidden = true) {
     this.hidden = hidden;
+    this.textContent = textContent;
   }
 }
 
@@ -31,7 +32,11 @@ class FakeOption {
     this.platform = platform;
     this.classList = new FakeClassList();
     this.hidden = false;
-    this.label = new FakeLabel();
+    this.label = new FakeLabel(
+      platform === "macos"
+        ? "macOS detected — Apple Silicon required"
+        : "Recommended for this device",
+    );
   }
 
   querySelector(selector) {
@@ -171,6 +176,8 @@ test("macOS recommendation moves existing options first in every group", () => {
 
   for (const group of groups) {
     assert.deepEqual(platforms(group), ["macos", "windows"]);
+    assert.equal(group.children.length, 2);
+    assert.ok(group.children.every((option) => option.hidden === false));
     assert.equal(group.children[0].classList.contains("is-recommended"), true);
   }
 });
@@ -197,6 +204,26 @@ test("only matched existing recommendation labels are revealed", () => {
   const windows = group.children.find((option) => option.platform === "windows");
   assert.equal(macos.label.hidden, false);
   assert.equal(windows.label.hidden, true);
+  assert.equal(macos.label.textContent, "macOS detected — Apple Silicon required");
+  assert.equal(windows.label.textContent, "Recommended for this device");
+});
+
+
+test("MacIntel reveals architecture-safe macOS advice in every group", () => {
+  const groups = [new FakeGroup("windows", "macos"), new FakeGroup("windows", "macos")];
+  const platform = detectPlatform({ platform: "MacIntel", maxTouchPoints: 0 });
+
+  applyPlatformRecommendation(new FakeDocument(...groups), platform);
+
+  const labels = groups.map((group) => group.children[0].label);
+  assert.ok(labels.every((label) => label.hidden === false));
+  assert.deepEqual(
+    labels.map((label) => label.textContent),
+    [
+      "macOS detected — Apple Silicon required",
+      "macOS detected — Apple Silicon required",
+    ],
+  );
 });
 
 
