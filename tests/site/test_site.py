@@ -26,6 +26,294 @@ EXPECTED_SITE_FILES = {
     "assets/result-calibration.jpg",
     "assets/result-mask.jpg",
 }
+PAGES_WORKFLOW = ROOT / ".github" / "workflows" / "pages.yml"
+
+
+class WorkflowContractError(AssertionError):
+    """Report a GitHub Pages workflow contract violation."""
+
+
+@dataclass(frozen=True)
+class _WorkflowLine:
+    """Represent one significant YAML source line."""
+
+    number: int
+    indent: int
+    content: str
+
+
+@dataclass(frozen=True)
+class _WorkflowEntry:
+    """Represent one source-aware YAML mapping entry."""
+
+    value: str
+    children: tuple[_WorkflowLine, ...]
+    number: int
+
+
+def _workflow_lines(source: str) -> tuple[_WorkflowLine, ...]:
+    """Return significant YAML lines while preserving source structure."""
+    lines: list[_WorkflowLine] = []
+    for number, raw_line in enumerate(source.splitlines(), start=1):
+        if "\t" in raw_line[: len(raw_line) - len(raw_line.lstrip())]:
+            raise WorkflowContractError(f"line {number}: tabs are not allowed for YAML indentation")
+        content = raw_line.lstrip(" ")
+        if not content or content.startswith("#"):
+            continue
+        lines.append(_WorkflowLine(number, len(raw_line) - len(content), content.rstrip()))
+    return tuple(lines)
+
+
+def _workflow_mapping(lines: tuple[_WorkflowLine, ...], label: str) -> dict[str, _WorkflowEntry]:
+    """Parse one YAML mapping level and reject duplicate source keys."""
+    if not lines:
+        raise WorkflowContractError(f"{label} must be a non-empty mapping")
+    indent = min(line.indent for line in lines)
+    entry_indexes = [index for index, line in enumerate(lines) if line.indent == indent]
+    entries: dict[str, _WorkflowEntry] = {}
+    for offset, index in enumerate(entry_indexes):
+        line = lines[index]
+        match = re.fullmatch(r"([A-Za-z0-9_-]+):(?:\s*(.*))?", line.content)
+        if not match:
+            raise WorkflowContractError(f"line {line.number}: invalid {label} mapping entry")
+        key, value = match.group(1), match.group(2) or ""
+        if key in entries:
+            raise WorkflowContractError(f"line {line.number}: duplicate {label} key {key!r}")
+        end = entry_indexes[offset + 1] if offset + 1 < len(entry_indexes) else len(lines)
+        children = tuple(lines[index + 1 : end])
+        if any(child.indent <= indent for child in children):
+            raise WorkflowContractError(f"line {line.number}: malformed {label} block")
+        entries[key] = _WorkflowEntry(value, children, line.number)
+    return entries
+
+
+def _workflow_sequence(lines: tuple[_WorkflowLine, ...], label: str) -> list[dict[str, _WorkflowEntry]]:
+    """Parse a YAML sequence of mapping items."""
+    if not lines:
+        raise WorkflowContractError(f"{label} must be a non-empty sequence")
+    indent = min(line.indent for line in lines)
+    item_indexes = [
+        index for index, line in enumerate(lines) if line.indent == indent and line.content.startswith("- ")
+    ]
+    if not item_indexes or any(
+        line.indent == indent and not line.content.startswith("- ") for line in lines
+    ):
+        raise WorkflowContractError(f"{label} must contain only mapping items")
+    items: list[dict[str, _WorkflowEntry]] = []
+    for offset, index in enumerate(item_indexes):
+        end = item_indexes[offset + 1] if offset + 1 < len(item_indexes) else len(lines)
+        item_lines = list(lines[index:end])
+        first = item_lines[0]
+        nested_indent = min(
+            (line.indent for line in item_lines[1:] if line.indent > indent),
+            default=indent + 2,
+        )
+        item_lines[0] = _WorkflowLine(first.number, nested_indent, first.content[2:])
+        items.append(_workflow_mapping(tuple(item_lines), f"{label} item"))
+    return items
+
+
+def _require_workflow(condition: bool, message: str) -> None:
+    """Raise a focused contract failure when a workflow rule is false."""
+    if not condition:
+        raise WorkflowContractError(message)
+
+
+def _require_keys(mapping: dict[str, _WorkflowEntry], expected: set[str], label: str) -> None:
+    """Require a mapping to expose exactly the expected keys."""
+    actual = set(mapping)
+    _require_workflow(actual == expected, f"{label} keys must be {sorted(expected)}; got {sorted(actual)}")
+
+
+def _scalar_list(entry: _WorkflowEntry, label: str) -> list[str]:
+    """Return the scalar values from a YAML block sequence."""
+    _require_workflow(entry.value == "" and bool(entry.children), f"{label} must be a block sequence")
+    indent = min(line.indent for line in entry.children)
+    values: list[str] = []
+    for line in entry.children:
+        _require_workflow(
+            line.indent == indent and line.content.startswith("- "),
+            f"line {line.number}: {label} must contain only scalar items",
+        )
+        values.append(line.content[2:].strip())
+    return values
+
+
+def _run_lines(step: dict[str, _WorkflowEntry], label: str) -> tuple[str, ...]:
+    """Return normalized shell lines from a workflow run step."""
+    run = step.get("run")
+    _require_workflow(run is not None, f"{label} must be a run step")
+    if run.value in {"|", "|-", "|+"}:
+        _require_workflow(bool(run.children), f"{label} run block must not be empty")
+        return tuple(line.content for line in run.children)
+    _require_workflow(not run.children, f"{label} has malformed run syntax")
+    return (run.value,)
+
+
+def _validate_checkout_step(step: dict[str, _WorkflowEntry], label: str) -> None:
+    """Require a pinned, PR-head-safe checkout with credentials disabled."""
+    _require_keys(step, {"name", "uses", "with"}, label)
+    _require_workflow(step["uses"].value == "actions/checkout@v7", f"{label} must use checkout@v7")
+    checkout_with = _workflow_mapping(step["with"].children, f"{label} with")
+    _require_keys(checkout_with, {"ref", "persist-credentials"}, f"{label} with")
+    _require_workflow(
+        checkout_with["ref"].value == "${{ github.event.pull_request.head.sha || github.sha }}",
+        f"{label} must checkout the triggering commit",
+    )
+    _require_workflow(
+        checkout_with["persist-credentials"].value == "false",
+        f"{label} must disable persisted credentials",
+    )
+
+
+def _validate_permissions(entry: _WorkflowEntry, expected: dict[str, str], label: str) -> None:
+    """Require an exact least-privilege permissions mapping."""
+    permissions = _workflow_mapping(entry.children, label)
+    _require_keys(permissions, set(expected), label)
+    for key, value in expected.items():
+        _require_workflow(permissions[key].value == value, f"{label} must set {key}: {value}")
+
+
+def validate_pages_workflow(source: str) -> None:
+    """Validate the Pages workflow contract."""
+    lines = _workflow_lines(source)
+    top = _workflow_mapping(lines, "top-level")
+    _require_keys(top, {"name", "on", "permissions", "concurrency", "jobs"}, "top-level")
+    _require_workflow(top["name"].value == "ScreenFix Pages", "workflow name must be ScreenFix Pages")
+
+    triggers = _workflow_mapping(top["on"].children, "triggers")
+    _require_keys(triggers, {"pull_request", "push", "workflow_dispatch"}, "triggers")
+    _require_workflow(
+        triggers["pull_request"].value == "{}" and not triggers["pull_request"].children,
+        "pull_request must be unfiltered",
+    )
+    _require_workflow(
+        triggers["workflow_dispatch"].value == "{}" and not triggers["workflow_dispatch"].children,
+        "workflow_dispatch must be unfiltered",
+    )
+    push = _workflow_mapping(triggers["push"].children, "push trigger")
+    _require_keys(push, {"branches"}, "push trigger")
+    _require_workflow(_scalar_list(push["branches"], "push branches") == ["main"], "push must target only main")
+    _require_workflow(not re.search(r"(?m)^\s*paths(?:-ignore)?:", source), "path filters are forbidden")
+
+    _validate_permissions(top["permissions"], {"contents": "read"}, "top-level permissions")
+    concurrency = _workflow_mapping(top["concurrency"].children, "concurrency")
+    _require_keys(concurrency, {"group", "cancel-in-progress"}, "concurrency")
+    _require_workflow(concurrency["group"].value == "screenfix-pages", "concurrency group must be screenfix-pages")
+    _require_workflow(concurrency["cancel-in-progress"].value == "false", "concurrency cancellation must be false")
+
+    jobs = _workflow_mapping(top["jobs"].children, "jobs")
+    _require_keys(jobs, {"validate", "publish", "deploy"}, "jobs")
+    validate = _workflow_mapping(jobs["validate"].children, "validate job")
+    publish = _workflow_mapping(jobs["publish"].children, "publish job")
+    deploy = _workflow_mapping(jobs["deploy"].children, "deploy job")
+    _require_keys(validate, {"runs-on", "permissions", "steps"}, "validate job")
+    _require_keys(publish, {"needs", "if", "runs-on", "permissions", "steps"}, "publish job")
+    _require_keys(deploy, {"needs", "if", "runs-on", "permissions", "environment", "steps"}, "deploy job")
+    for job_name, job in (("validate", validate), ("publish", publish), ("deploy", deploy)):
+        _require_workflow(job["runs-on"].value == "ubuntu-latest", f"{job_name} must run on ubuntu-latest")
+
+    _validate_permissions(validate["permissions"], {"contents": "read"}, "validate permissions")
+    _validate_permissions(
+        publish["permissions"],
+        {"contents": "read", "pages": "read"},
+        "publish permissions",
+    )
+    _validate_permissions(
+        deploy["permissions"],
+        {"pages": "write", "id-token": "write"},
+        "deploy permissions",
+    )
+    condition = "github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
+    _require_workflow(publish["needs"].value == "validate", "publish must need validate")
+    _require_workflow(publish["if"].value == condition, "publish condition must be main push or manual dispatch")
+    _require_workflow(deploy["needs"].value == "publish", "deploy must need publish")
+    _require_workflow(deploy["if"].value == condition, "deploy condition must be main push or manual dispatch")
+
+    validate_steps = _workflow_sequence(validate["steps"].children, "validate steps")
+    _require_workflow(len(validate_steps) == 3, "validate must have exactly three steps")
+    _validate_checkout_step(validate_steps[0], "validate checkout")
+    _require_keys(validate_steps[1], {"name", "run"}, "validate test step")
+    test_command = "python3 -m unittest discover -s tests/site -p 'test_*.py' -v"
+    _require_workflow(_run_lines(validate_steps[1], "validate test step") == (test_command,), "validate must run all site tests")
+    _require_keys(validate_steps[2], {"name", "shell", "run"}, "validate archive step")
+    _require_workflow(validate_steps[2]["shell"].value == "bash", "validate archive step must use bash")
+    validate_archive_lines = (
+        "set -euo pipefail",
+        'validation_archive="$RUNNER_TEMP/pages-validation.tar"',
+        'expected_manifest="$RUNNER_TEMP/pages-expected.txt"',
+        'actual_manifest="$RUNNER_TEMP/pages-actual.txt"',
+        'tar --dereference --hard-dereference --directory site -cf "$validation_archive" .',
+        'find site -type f -print | sed \'s#^site/##\' | LC_ALL=C sort > "$expected_manifest"',
+        'tar -tf "$validation_archive" | sed -e \'s#^\\./##\' -e \'/\\/$/d\' -e \'/^$/d\' | LC_ALL=C sort > "$actual_manifest"',
+        'diff -u "$expected_manifest" "$actual_manifest"',
+    )
+    _require_workflow(
+        _run_lines(validate_steps[2], "validate archive step") == validate_archive_lines,
+        "validate must build and inspect the exact Pages-equivalent archive",
+    )
+
+    publish_steps = _workflow_sequence(publish["steps"].children, "publish steps")
+    _require_workflow(len(publish_steps) == 5, "publish must have exactly five steps")
+    _validate_checkout_step(publish_steps[0], "publish checkout")
+    _require_keys(publish_steps[1], {"name", "run"}, "publish test step")
+    _require_workflow(_run_lines(publish_steps[1], "publish test step") == (test_command,), "publish must rerun all site tests")
+    _require_keys(publish_steps[2], {"name", "uses"}, "configure Pages step")
+    _require_workflow(
+        publish_steps[2]["uses"].value == "actions/configure-pages@v6",
+        "publish must use configure-pages@v6",
+    )
+    _require_keys(publish_steps[3], {"name", "uses", "with"}, "upload Pages artifact step")
+    _require_workflow(
+        publish_steps[3]["uses"].value == "actions/upload-pages-artifact@v5",
+        "publish must use upload-pages-artifact@v5",
+    )
+    upload_with = _workflow_mapping(publish_steps[3]["with"].children, "upload Pages artifact with")
+    _require_keys(upload_with, {"path", "include-hidden-files"}, "upload Pages artifact with")
+    _require_workflow(upload_with["path"].value == "site", "Pages artifact path must be site")
+    _require_workflow(upload_with["include-hidden-files"].value == "true", "Pages artifact must include hidden files")
+    _require_keys(publish_steps[4], {"name", "shell", "run"}, "inspect uploaded artifact step")
+    _require_workflow(publish_steps[4]["shell"].value == "bash", "artifact inspection must use bash")
+    publish_archive_lines = (
+        "set -euo pipefail",
+        'expected_manifest="$RUNNER_TEMP/pages-expected.txt"',
+        'actual_manifest="$RUNNER_TEMP/pages-actual.txt"',
+        'find site -type f -print | sed \'s#^site/##\' | LC_ALL=C sort > "$expected_manifest"',
+        'tar -tf "$RUNNER_TEMP/artifact.tar" | sed -e \'s#^\\./##\' -e \'/\\/$/d\' -e \'/^$/d\' | LC_ALL=C sort > "$actual_manifest"',
+        'diff -u "$expected_manifest" "$actual_manifest"',
+    )
+    _require_workflow(
+        _run_lines(publish_steps[4], "inspect uploaded artifact step") == publish_archive_lines,
+        "publish must inspect the upload action's actual artifact.tar",
+    )
+
+    environment = _workflow_mapping(deploy["environment"].children, "deploy environment")
+    _require_keys(environment, {"name", "url"}, "deploy environment")
+    _require_workflow(environment["name"].value == "github-pages", "deploy environment must be github-pages")
+    _require_workflow(
+        environment["url"].value == "${{ steps.deployment.outputs.page_url }}",
+        "deploy environment URL must use the deployment output",
+    )
+    deploy_steps = _workflow_sequence(deploy["steps"].children, "deploy steps")
+    _require_workflow(len(deploy_steps) == 1, "deploy must have exactly one step")
+    _require_keys(deploy_steps[0], {"name", "id", "uses"}, "deploy Pages step")
+    _require_workflow(deploy_steps[0]["id"].value == "deployment", "deploy step id must be deployment")
+    _require_workflow(deploy_steps[0]["uses"].value == "actions/deploy-pages@v5", "deploy must use deploy-pages@v5")
+
+    all_steps = [*validate_steps, *publish_steps, *deploy_steps]
+    actions = [step["uses"].value for step in all_steps if "uses" in step]
+    _require_workflow(
+        actions
+        == [
+            "actions/checkout@v7",
+            "actions/checkout@v7",
+            "actions/configure-pages@v6",
+            "actions/upload-pages-artifact@v5",
+            "actions/deploy-pages@v5",
+        ],
+        "workflow actions must be exact and unique",
+    )
+    _require_workflow(not re.search(r"\bpull_request_target\b|\bsecrets(?:\.|\[)", source), "unsafe PR inputs are forbidden")
 
 EXPECTED_IMAGES = {
     "damaged-display.jpg": (1200, 900),
@@ -3980,3 +4268,194 @@ class ImageContractTests(unittest.TestCase):
             size = path.stat().st_size
             total += size
         self.assertLessEqual(total, MAX_TOTAL_IMAGE_BYTES)
+
+
+class PagesWorkflowContractTests(unittest.TestCase):
+    """Protect the least-privilege GitHub Pages delivery workflow."""
+
+    def _source(self) -> str:
+        """Return the checked-in Pages workflow source."""
+        return PAGES_WORKFLOW.read_text(encoding="utf-8")
+
+    def _mutation(self, old: str, new: str) -> str:
+        """Apply one controlled source mutation to the valid workflow."""
+        source = self._source()
+        self.assertIn(old, source, f"mutation anchor must exist: {old!r}")
+        return source.replace(old, new, 1)
+
+    def _assert_mutations_rejected(self, mutations: dict[str, str]) -> None:
+        """Require every named invalid workflow mutation to fail validation."""
+        for name, source in mutations.items():
+            with self.subTest(mutation=name), self.assertRaises(WorkflowContractError):
+                validate_pages_workflow(source)
+
+    def test_pages_workflow_exists(self) -> None:
+        """Require the repository to define its Pages workflow."""
+        self.assertTrue(PAGES_WORKFLOW.is_file(), f"missing {PAGES_WORKFLOW.relative_to(ROOT)}")
+
+    def test_pages_workflow_satisfies_contract(self) -> None:
+        """Require the checked-in workflow to satisfy the delivery contract."""
+        validate_pages_workflow(self._source())
+
+    def test_trigger_mutations_are_rejected(self) -> None:
+        """Reject filtered or broadened workflow triggers."""
+        self._assert_mutations_rejected(
+            {
+                "pull request paths": self._mutation(
+                    "  pull_request: {}",
+                    "  pull_request:\n    paths:\n      - site/**",
+                ),
+                "pull request paths ignored": self._mutation(
+                    "  pull_request: {}",
+                    "  pull_request:\n    paths-ignore:\n      - docs/**",
+                ),
+                "non-main push": self._mutation("      - main", "      - develop"),
+                "pull request target": self._mutation(
+                    "  pull_request: {}",
+                    "  pull_request_target: {}",
+                ),
+            }
+        )
+
+    def test_checkout_mutations_are_rejected(self) -> None:
+        """Reject unsafe or incorrectly pinned checkout steps."""
+        first_ref = "          ref: ${{ github.event.pull_request.head.sha || github.sha }}"
+        first_credentials = "          persist-credentials: false"
+        self._assert_mutations_rejected(
+            {
+                "missing ref": self._mutation(first_ref, "          ref: ${{ github.sha }}"),
+                "missing credential protection": self._mutation(
+                    first_credentials,
+                    "          persist-credentials: true",
+                ),
+                "wrong checkout major": self._mutation(
+                    "        uses: actions/checkout@v7\n        with:",
+                    "        uses: actions/checkout@v6\n        with:",
+                ),
+            }
+        )
+
+    def test_dependency_and_permission_mutations_are_rejected(self) -> None:
+        """Reject broadened privileges and broken job dependencies."""
+        self._assert_mutations_rejected(
+            {
+                "publish missing validate dependency": self._mutation(
+                    "  publish:\n    needs: validate\n",
+                    "  publish:\n",
+                ),
+                "publish lacks pages read": self._mutation("      pages: read", "      pages: none"),
+                "deploy missing publish dependency": self._mutation(
+                    "  deploy:\n    needs: publish\n",
+                    "  deploy:\n",
+                ),
+                "deploy gets contents": self._mutation(
+                    "      id-token: write\n    environment:",
+                    "      id-token: write\n      contents: read\n    environment:",
+                ),
+                "validate gets pages write": self._mutation(
+                    "  validate:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read",
+                    "  validate:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      pages: write",
+                ),
+                "publish gets oidc write": self._mutation(
+                    "      pages: read\n    steps:",
+                    "      pages: read\n      id-token: write\n    steps:",
+                ),
+                "contents write": self._mutation(
+                    "permissions:\n  contents: read",
+                    "permissions:\n  contents: write",
+                ),
+            }
+        )
+
+    def test_action_and_archive_mutations_are_rejected(self) -> None:
+        """Reject wrong actions, incomplete validation, and wrong upload inputs."""
+        validate_test = "        run: python3 -m unittest discover -s tests/site -p 'test_*.py' -v"
+        validate_tar = '          tar --dereference --hard-dereference --directory site -cf "$validation_archive" .'
+        validate_inspection = '          tar -tf "$validation_archive" | sed'
+        publish_inspection = '          tar -tf "$RUNNER_TEMP/artifact.tar" | sed'
+        self._assert_mutations_rejected(
+            {
+                "validate missing tests": self._mutation(
+                    validate_test,
+                    "        run: python3 -m unittest -v",
+                ),
+                "validate missing equivalent tar": self._mutation(
+                    validate_tar,
+                    '          tar --directory site -cf "$validation_archive" .',
+                ),
+                "validate missing archive inspection": self._mutation(
+                    validate_inspection,
+                    '          printf \'not inspected\\n\' | sed',
+                ),
+                "publish missing actual artifact inspection": self._mutation(
+                    publish_inspection,
+                    '          printf \'not inspected\\n\' | sed',
+                ),
+                "wrong configure major": self._mutation(
+                    "actions/configure-pages@v6",
+                    "actions/configure-pages@v5",
+                ),
+                "wrong upload major": self._mutation(
+                    "actions/upload-pages-artifact@v5",
+                    "actions/upload-pages-artifact@v4",
+                ),
+                "hidden files omitted": self._mutation(
+                    "          include-hidden-files: true\n",
+                    "",
+                ),
+                "hidden files disabled": self._mutation(
+                    "          include-hidden-files: true",
+                    "          include-hidden-files: false",
+                ),
+                "wrong upload path": self._mutation("          path: site", "          path: dist"),
+            }
+        )
+
+    def test_deploy_mutations_are_rejected(self) -> None:
+        """Reject broadened deployment conditions and incomplete environment wiring."""
+        exact_condition = (
+            "    if: github.ref == 'refs/heads/main' && "
+            "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
+        )
+        self._assert_mutations_rejected(
+            {
+                "broadened publish condition": self._mutation(
+                    exact_condition + "\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read",
+                    "    if: github.ref == 'refs/heads/main'\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read",
+                ),
+                "missing github-pages environment": self._mutation("      name: github-pages\n", ""),
+                "missing environment url": self._mutation(
+                    "      url: ${{ steps.deployment.outputs.page_url }}\n",
+                    "",
+                ),
+                "missing deployment id": self._mutation("        id: deployment\n", ""),
+                "broadened deploy condition": self._mutation(
+                    "  deploy:\n    needs: publish\n" + exact_condition,
+                    "  deploy:\n    needs: publish\n    if: github.ref == 'refs/heads/main'",
+                ),
+                "wrong deploy major": self._mutation("actions/deploy-pages@v5", "actions/deploy-pages@v4"),
+            }
+        )
+
+    def test_adversarial_duplicates_and_secrets_are_rejected(self) -> None:
+        """Reject duplicates that could conceal an unsafe earlier definition."""
+        self._assert_mutations_rejected(
+            {
+                "duplicate top key": self._mutation(
+                    "name: ScreenFix Pages",
+                    "name: Unsafe Pages\nname: ScreenFix Pages",
+                ),
+                "duplicate job": self._mutation(
+                    "jobs:\n  validate:",
+                    "jobs:\n  validate:\n    runs-on: ubuntu-latest\n  validate:",
+                ),
+                "duplicate action": self._mutation(
+                    "        uses: actions/checkout@v7\n        with:",
+                    "        uses: untrusted/checkout@v1\n        uses: actions/checkout@v7\n        with:",
+                ),
+                "secret reference": self._mutation(
+                    "          persist-credentials: false",
+                    "          persist-credentials: ${{ secrets.PAGES_TOKEN }}",
+                ),
+            }
+        )
