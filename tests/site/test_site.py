@@ -22,6 +22,7 @@ EXPECTED_SITE_FILES = {
     ".nojekyll",
     "index.html",
     "platform.mjs",
+    "sitemap.xml",
     "styles.css",
     "assets/screenfix-icon.svg",
     "assets/damaged-display.jpg",
@@ -48,6 +49,32 @@ DEPLOY_PAGES_ACTION = (
 )
 PLATFORM_MODULE = ROOT / "site" / "platform.mjs"
 MAX_PLATFORM_MODULE_BYTES = 4_096
+SITEMAP = ROOT / "site" / "sitemap.xml"
+MAX_SITEMAP_BYTES = 4_096
+SITEMAP_NAMESPACE = "http://www.sitemaps.org/schemas/sitemap/0.9"
+CANONICAL_URL = "https://far1h.github.io/ScreenFix/"
+SEO_TITLE = "Use the Working Part of a Broken Screen | ScreenFix"
+SEO_DESCRIPTION = (
+    "ScreenFix blacks out a damaged display strip and keeps ordinary windows inside "
+    "the working part of a broken Windows or macOS screen."
+)
+ROBOTS_DIRECTIVE = "index, follow, max-image-preview:large"
+SOCIAL_TITLE = "ScreenFix — Use the working part of a broken screen"
+SOCIAL_IMAGE = f"{CANONICAL_URL}assets/result-mask.jpg"
+SOCIAL_IMAGE_ALT = (
+    "ScreenFix mask keeping windows inside the usable part of a damaged display"
+)
+HERO_HEADING = "Use the working part of a damaged screen."
+HERO_EXPLANATION = (
+    "ScreenFix blacks out the broken strip and keeps ordinary windows inside the part "
+    "of your screen that still works."
+)
+SEO_FAQ_QUESTION = "Can I use only the working part of a broken screen?"
+SEO_FAQ_ANSWER = (
+    "ScreenFix can black out a damaged strip and keep ordinary movable windows in the "
+    "remaining usable space. It does not repair the panel, restore dead pixels, or "
+    "control every full-screen, protected, custom, or fixed-size window."
+)
 PLATFORM_APPROVED_TEMPLATE = '`[data-platform-option="${platform}"]`'
 PLATFORM_APPROVED_REGEXES = (
     "/Android|iPhone|iPad|Mobile/i",
@@ -211,7 +238,7 @@ def _validate_readme_scope(source: str) -> None:
         "privacy",
         "Questions before you download.",
         "ScreenFix stays on your computer.",
-        "Work around a damaged screen.",
+        HERO_HEADING,
         "Give the damage its own space.",
         "What it looks like in use.",
         "Download ScreenFix.",
@@ -872,16 +899,21 @@ class LandingPageParser(HTMLParser):
         ]
 
 
-def parse_landing_page(path: Path = ROOT / "site" / "index.html") -> LandingPageParser:
-    """Parse one landing-page file and require balanced HTML elements."""
+def parse_landing_page_source(source: str) -> LandingPageParser:
+    """Parse landing-page source and require balanced HTML elements."""
     parser = LandingPageParser()
-    parser.feed(path.read_text(encoding="utf-8"))
+    parser.feed(source)
     parser.close()
     if parser.stack:
         parser.errors.append(f"unclosed tag: {parser.stack[-1].tag}")
     if parser.errors:
         raise ContractError("; ".join(parser.errors))
     return parser
+
+
+def parse_landing_page(path: Path = ROOT / "site" / "index.html") -> LandingPageParser:
+    """Parse one landing-page file and require balanced HTML elements."""
+    return parse_landing_page_source(path.read_text(encoding="utf-8"))
 
 
 def _descendant_nodes(root: HtmlNode) -> tuple[HtmlNode, ...]:
@@ -925,6 +957,8 @@ def _landing_page_readme_copy() -> tuple[tuple[str, ...], tuple[str, ...]]:
 def validate_landing_page(path: Path) -> None:
     """Validate mutation-sensitive landing-page semantics."""
     page = parse_landing_page(path)
+    _validate_seo_metadata(page)
+    _validate_search_copy(page)
     _validate_hero(page)
     _validate_marketing_exclusions(page)
     _validate_required_visibility(page)
@@ -943,6 +977,177 @@ def validate_landing_page(path: Path) -> None:
     _validate_editorial_illustrations(page)
     _validate_privacy_requirements_notes_and_footer(page)
     _validate_platform_groups(page)
+
+
+def _metadata_content(
+    page: LandingPageParser,
+    attribute: str,
+    identifier: str,
+    expected: str,
+) -> str:
+    """Return one exact reviewed metadata value."""
+    matches = [
+        node
+        for node in page.nodes("meta")
+        if (node.attrs.get(attribute) or "").casefold() == identifier.casefold()
+    ]
+    if len(matches) != 1:
+        raise ContractError(f"{identifier} metadata must appear exactly once")
+    node = matches[0]
+    if node.parent is None or node.parent.tag != "head":
+        raise ContractError(f"{identifier} metadata must remain in the document head")
+    if node.attrs != {attribute: identifier, "content": expected}:
+        raise ContractError(f"{identifier} metadata must match the reviewed value")
+    return node.attrs["content"] or ""
+
+
+def _require_same_site_https(value: str, label: str) -> None:
+    """Require an absolute HTTPS URL on the canonical Pages origin."""
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "far1h.github.io"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ContractError(f"{label} must use the reviewed same-site HTTPS URL")
+
+
+def _validate_seo_metadata(page: LandingPageParser) -> None:
+    """Require exact unique search and social metadata."""
+    titles = page.nodes("title")
+    if (
+        len(titles) != 1
+        or titles[0].parent is None
+        or titles[0].parent.tag != "head"
+        or titles[0].attrs
+        or titles[0].text() != SEO_TITLE
+    ):
+        raise ContractError("document title must match the reviewed SEO title exactly once")
+
+    description = _metadata_content(page, "name", "description", SEO_DESCRIPTION)
+    _metadata_content(page, "name", "robots", ROBOTS_DIRECTIVE)
+
+    canonical_links = [
+        node
+        for node in page.nodes("link")
+        if "canonical" in {
+            token.casefold() for token in (node.attrs.get("rel") or "").split()
+        }
+    ]
+    if len(canonical_links) != 1:
+        raise ContractError("canonical link must appear exactly once")
+    canonical = canonical_links[0]
+    canonical_url = canonical.attrs.get("href") or ""
+    _require_same_site_https(canonical_url, "canonical link")
+    if (
+        canonical.parent is None
+        or canonical.parent.tag != "head"
+        or canonical.attrs != {"rel": "canonical", "href": CANONICAL_URL}
+    ):
+        raise ContractError("canonical link must match the reviewed URL")
+
+    open_graph = {
+        "og:type": "website",
+        "og:title": SOCIAL_TITLE,
+        "og:description": SEO_DESCRIPTION,
+        "og:url": CANONICAL_URL,
+        "og:image": SOCIAL_IMAGE,
+        "og:image:width": "1200",
+        "og:image:height": "675",
+        "og:image:alt": SOCIAL_IMAGE_ALT,
+    }
+    open_graph_values = {
+        name: _metadata_content(page, "property", name, value)
+        for name, value in open_graph.items()
+    }
+    twitter = {
+        "twitter:card": "summary_large_image",
+        "twitter:title": SOCIAL_TITLE,
+        "twitter:description": SEO_DESCRIPTION,
+        "twitter:image": SOCIAL_IMAGE,
+        "twitter:image:alt": SOCIAL_IMAGE_ALT,
+    }
+    twitter_values = {
+        name: _metadata_content(page, "name", name, value)
+        for name, value in twitter.items()
+    }
+
+    for label, value in (
+        ("Open Graph URL", open_graph_values["og:url"]),
+        ("Open Graph image", open_graph_values["og:image"]),
+        ("Twitter image", twitter_values["twitter:image"]),
+    ):
+        _require_same_site_https(value, label)
+    if open_graph_values["og:url"] != canonical_url:
+        raise ContractError("Open Graph URL must match the canonical URL")
+    if open_graph_values["og:description"] != description:
+        raise ContractError("Open Graph description must match the meta description")
+    if twitter_values["twitter:description"] != description:
+        raise ContractError("Twitter description must match the meta description")
+    if open_graph_values["og:title"] != twitter_values["twitter:title"]:
+        raise ContractError("Open Graph and Twitter titles must match")
+    if open_graph_values["og:image"] != twitter_values["twitter:image"]:
+        raise ContractError("Open Graph and Twitter images must match")
+    if open_graph_values["og:image:alt"] != twitter_values["twitter:image:alt"]:
+        raise ContractError("Open Graph and Twitter image alternatives must match")
+
+
+def _validate_search_copy(page: LandingPageParser) -> None:
+    """Require the natural reviewed search-intent copy without repair claims."""
+    if [node.text() for node in page.nodes("h1")] != [HERO_HEADING]:
+        raise ContractError("hero heading must match the reviewed search-intent copy")
+    explanations = _nodes_with_class(page.nodes("p"), "hero-explanation")
+    if [node.text() for node in explanations] != [HERO_EXPLANATION]:
+        raise ContractError("hero explanation must match the reviewed behavior claim")
+
+
+def validate_sitemap(path: Path = SITEMAP) -> None:
+    """Require one bounded regular UTF-8 sitemap containing only the canonical URL."""
+    try:
+        status = path.lstat()
+    except FileNotFoundError as error:
+        raise ContractError("sitemap.xml must exist") from error
+    if not stat.S_ISREG(status.st_mode):
+        raise ContractError("sitemap must be a regular non-symlink file")
+    if status.st_size == 0 or status.st_size > MAX_SITEMAP_BYTES:
+        raise ContractError("sitemap must be non-empty and bounded")
+    try:
+        source = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ContractError("sitemap must be UTF-8") from error
+    declaration = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    if not source.startswith(declaration) or "<!DOCTYPE" in source:
+        raise ContractError("sitemap must use the reviewed UTF-8 XML declaration")
+    document = source[len(declaration) :]
+    if "<!--" in document or "<?" in document:
+        raise ContractError("sitemap must not contain comments or processing instructions")
+    try:
+        parser = ET.XMLParser(
+            target=ET.TreeBuilder(insert_comments=True, insert_pis=True)
+        )
+        root = ET.fromstring(source, parser=parser)
+    except ET.ParseError as error:
+        raise ContractError("sitemap must be well-formed XML") from error
+
+    url_tag = f"{{{SITEMAP_NAMESPACE}}}url"
+    loc_tag = f"{{{SITEMAP_NAMESPACE}}}loc"
+    if root.tag != f"{{{SITEMAP_NAMESPACE}}}urlset" or root.attrib:
+        raise ContractError("sitemap must use the standard urlset namespace")
+    if len(root) != 1 or root[0].tag != url_tag or root[0].attrib:
+        raise ContractError("sitemap must contain exactly one URL entry")
+    url = root[0]
+    if len(url) != 1 or url[0].tag != loc_tag or url[0].attrib or len(url[0]):
+        raise ContractError("sitemap URL entry must contain only one loc element")
+    loc = url[0]
+    if (loc.text or "") != CANONICAL_URL:
+        raise ContractError("sitemap loc must equal the canonical URL")
+    text_nodes = (root.text, url.text, loc.tail, url.tail)
+    if any(value and value.strip() for value in text_nodes):
+        raise ContractError("sitemap must not contain text outside the canonical loc")
 
 
 def _nodes_with_class(nodes: list[HtmlNode] | tuple[HtmlNode, ...], token: str) -> list[HtmlNode]:
@@ -1461,7 +1666,7 @@ def _validate_sections(page: LandingPageParser) -> None:
 
 
 def _validate_faq(page: LandingPageParser) -> None:
-    """Require four ordered native disclosures with answers."""
+    """Require five ordered native disclosures with the reviewed search answer."""
     faq_sections = page.by_id("faq")
     if len(faq_sections) != 1:
         raise ContractError("FAQ section must appear exactly once")
@@ -1473,13 +1678,14 @@ def _validate_faq(page: LandingPageParser) -> None:
     ]
     questions = [summaries[0].text() if summaries else "" for _, summaries in relationships]
     expected = [
+        SEO_FAQ_QUESTION,
         "Does ScreenFix repair the damaged panel?",
         "Which windows may remain unchanged?",
         "Why does my operating system warn about ScreenFix?",
         "When does ScreenFix need macOS Accessibility permission?",
     ]
-    if len(relationships) != 4 or any(not question for question in questions):
-        raise ContractError("FAQ summary must be non-empty in each of four details")
+    if len(relationships) != 5 or any(not question for question in questions):
+        raise ContractError("FAQ summary must be non-empty in each of five details")
     for detail, summaries in relationships:
         if len(summaries) != 1 or detail.children[0] is not summaries[0]:
             raise ContractError("FAQ summary must be non-empty and first in details")
@@ -1487,6 +1693,9 @@ def _validate_faq(page: LandingPageParser) -> None:
             raise ContractError("FAQ answer must be non-empty")
     if questions != expected:
         raise ContractError("FAQ order does not match the approved contract")
+    first_answers = [child for child in relationships[0][0].children[1:] if child.text()]
+    if len(first_answers) != 1 or first_answers[0].text() != SEO_FAQ_ANSWER:
+        raise ContractError("FAQ search answer must match the reviewed limitation claim")
 
 
 def _validate_downloads(page: LandingPageParser) -> None:
@@ -4894,6 +5103,276 @@ class ReadmeContractTests(unittest.TestCase):
                 validator(mutated)
 
 
+class SeoContractTests(unittest.TestCase):
+    def reviewed_metadata_source(self) -> str:
+        """Return a minimal document containing the complete reviewed metadata set."""
+        return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <title>{SEO_TITLE}</title>
+    <meta name="description" content="{SEO_DESCRIPTION}">
+    <meta name="robots" content="{ROBOTS_DIRECTIVE}">
+    <link rel="canonical" href="{CANONICAL_URL}">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="{SOCIAL_TITLE}">
+    <meta property="og:description" content="{SEO_DESCRIPTION}">
+    <meta property="og:url" content="{CANONICAL_URL}">
+    <meta property="og:image" content="{SOCIAL_IMAGE}">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="675">
+    <meta property="og:image:alt" content="{SOCIAL_IMAGE_ALT}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{SOCIAL_TITLE}">
+    <meta name="twitter:description" content="{SEO_DESCRIPTION}">
+    <meta name="twitter:image" content="{SOCIAL_IMAGE}">
+    <meta name="twitter:image:alt" content="{SOCIAL_IMAGE_ALT}">
+  </head>
+  <body></body>
+</html>
+"""
+
+    def reviewed_search_copy_source(self) -> str:
+        """Return minimal reviewed hero and FAQ markup for mutation tests."""
+        return f"""<!doctype html>
+<html lang="en">
+  <head><title>Fixture</title></head>
+  <body>
+    <div class="hero-copy">
+      <h1 id="hero-title">{HERO_HEADING}</h1>
+      <p class="hero-explanation">{HERO_EXPLANATION}</p>
+    </div>
+    <section id="faq">
+      <details><summary>{SEO_FAQ_QUESTION}</summary><p>{SEO_FAQ_ANSWER}</p></details>
+      <details><summary>Does ScreenFix repair the damaged panel?</summary><p>No.</p></details>
+      <details><summary>Which windows may remain unchanged?</summary><p>Some windows.</p></details>
+      <details><summary>Why does my operating system warn about ScreenFix?</summary><p>The builds are unsigned.</p></details>
+      <details><summary>When does ScreenFix need macOS Accessibility permission?</summary><p>For automatic placement.</p></details>
+    </section>
+  </body>
+</html>
+"""
+
+    def assert_metadata_mutation_rejected(self, old: str, new: str) -> None:
+        """Apply one metadata mutation to a valid fixture and require rejection."""
+        source = self.reviewed_metadata_source()
+        _validate_seo_metadata(parse_landing_page_source(source))
+        self.assertIn(old, source)
+        mutated = source.replace(old, new, 1)
+        self.assertNotEqual(source, mutated)
+        with self.assertRaises(ContractError):
+            _validate_seo_metadata(parse_landing_page_source(mutated))
+
+    def test_reviewed_metadata_and_visible_search_copy_are_exact(self) -> None:
+        """Require the deployed page to carry the complete reviewed SEO contract."""
+        page = parse_landing_page()
+        _validate_seo_metadata(page)
+        _validate_search_copy(page)
+        _validate_faq(page)
+
+    def test_duplicate_metadata_fields_are_rejected(self) -> None:
+        """Reject duplicate title, description, canonical, and social fields."""
+        mutations = {
+            "title": (
+                f"    <title>{SEO_TITLE}</title>",
+                f"    <title>{SEO_TITLE}</title>\n    <title>{SEO_TITLE}</title>",
+            ),
+            "description": (
+                f'    <meta name="description" content="{SEO_DESCRIPTION}">',
+                f'    <meta name="description" content="{SEO_DESCRIPTION}">\n'
+                f'    <meta name="description" content="{SEO_DESCRIPTION}">',
+            ),
+            "canonical": (
+                f'    <link rel="canonical" href="{CANONICAL_URL}">',
+                f'    <link rel="canonical" href="{CANONICAL_URL}">\n'
+                f'    <link rel="canonical" href="{CANONICAL_URL}">',
+            ),
+            "Open Graph": (
+                f'    <meta property="og:title" content="{SOCIAL_TITLE}">',
+                f'    <meta property="og:title" content="{SOCIAL_TITLE}">\n'
+                f'    <meta property="og:title" content="{SOCIAL_TITLE}">',
+            ),
+            "Twitter": (
+                f'    <meta name="twitter:title" content="{SOCIAL_TITLE}">',
+                f'    <meta name="twitter:title" content="{SOCIAL_TITLE}">\n'
+                f'    <meta name="twitter:title" content="{SOCIAL_TITLE}">',
+            ),
+        }
+        for name, (old, new) in mutations.items():
+            with self.subTest(name=name):
+                self.assert_metadata_mutation_rejected(old, new)
+
+    def test_robots_mutations_are_rejected(self) -> None:
+        """Reject missing, reordered, additional, negative, or reformatted directives."""
+        old = f'content="{ROBOTS_DIRECTIVE}"'
+        mutations = {
+            "missing token": "index, follow",
+            "reordered": "follow, index, max-image-preview:large",
+            "additional": "index, follow, max-image-preview:large, noarchive",
+            "noindex": "noindex, follow, max-image-preview:large",
+            "nofollow": "index, nofollow, max-image-preview:large",
+            "case": "Index, follow, max-image-preview:large",
+            "whitespace": "index,  follow, max-image-preview:large",
+        }
+        for name, value in mutations.items():
+            with self.subTest(name=name):
+                self.assert_metadata_mutation_rejected(old, f'content="{value}"')
+
+    def test_url_relationship_dimension_and_claim_mutations_are_rejected(self) -> None:
+        """Reject unsafe URLs, mismatches, malformed dimensions, and search spam."""
+        mutations = {
+            "insecure canonical": (
+                f'href="{CANONICAL_URL}"',
+                'href="http://far1h.github.io/ScreenFix/"',
+            ),
+            "off-site Open Graph URL": (
+                f'property="og:url" content="{CANONICAL_URL}"',
+                'property="og:url" content="https://example.com/ScreenFix/"',
+            ),
+            "mismatched Twitter description": (
+                f'name="twitter:description" content="{SEO_DESCRIPTION}"',
+                'name="twitter:description" content="Different description"',
+            ),
+            "mismatched Twitter image": (
+                f'name="twitter:image" content="{SOCIAL_IMAGE}"',
+                f'name="twitter:image" content="{CANONICAL_URL}assets/damaged-display.jpg"',
+            ),
+            "missing image width": (
+                '    <meta property="og:image:width" content="1200">\n',
+                "",
+            ),
+            "malformed image height": (
+                'property="og:image:height" content="675"',
+                'property="og:image:height" content="six-seven-five"',
+            ),
+            "keyword stuffing": (
+                f'name="description" content="{SEO_DESCRIPTION}"',
+                f'name="description" content="{SEO_DESCRIPTION} broken screen damaged screen usable screen"',
+            ),
+            "misleading repair claim": (
+                f'name="description" content="{SEO_DESCRIPTION}"',
+                'name="description" content="ScreenFix repairs broken panels and restores dead pixels."',
+            ),
+        }
+        for name, (old, new) in mutations.items():
+            with self.subTest(name=name):
+                self.assert_metadata_mutation_rejected(old, new)
+
+    def test_visible_keyword_stuffing_and_repair_claims_are_rejected(self) -> None:
+        """Reject spammy hero copy and an unsupported physical-repair FAQ answer."""
+        source = self.reviewed_search_copy_source()
+        page = parse_landing_page_source(source)
+        _validate_search_copy(page)
+        _validate_faq(page)
+        mutations = {
+            "keyword-stuffed heading": (
+                HERO_HEADING,
+                f"{HERO_HEADING} Broken screen damaged screen usable screen.",
+                _validate_search_copy,
+            ),
+            "misleading hero claim": (
+                HERO_EXPLANATION,
+                "ScreenFix repairs the damaged panel and restores dead pixels.",
+                _validate_search_copy,
+            ),
+            "misleading FAQ claim": (
+                SEO_FAQ_ANSWER,
+                "ScreenFix repairs the panel, restores dead pixels, and controls every window.",
+                _validate_faq,
+            ),
+        }
+        for name, (old, new, validator) in mutations.items():
+            with self.subTest(name=name):
+                mutated = source.replace(old, new, 1)
+                self.assertNotEqual(source, mutated)
+                with self.assertRaises(ContractError):
+                    validator(parse_landing_page_source(mutated))
+
+    def test_sitemap_is_bounded_regular_utf8_and_canonical(self) -> None:
+        """Require the deployed sitemap to contain one exact canonical URL."""
+        validate_sitemap()
+
+    def test_sitemap_structure_mutations_are_rejected(self) -> None:
+        """Reject extra URLs, fields, namespaces, text, and malformed XML."""
+        valid = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<urlset xmlns="{SITEMAP_NAMESPACE}">\n'
+            "  <url>\n"
+            f"    <loc>{CANONICAL_URL}</loc>\n"
+            "  </url>\n"
+            "</urlset>\n"
+        )
+        mutations = {
+            "pre-root processing instruction": (
+                f'<urlset xmlns="{SITEMAP_NAMESPACE}">',
+                '<?xml-stylesheet type="text/xsl" href="https://example.com/sitemap.xsl"?>\n'
+                f'<urlset xmlns="{SITEMAP_NAMESPACE}">',
+            ),
+            "post-root processing instruction": (
+                "</urlset>\n",
+                "</urlset>\n"
+                '<?xml-stylesheet type="text/xsl" href="https://example.com/sitemap.xsl"?>\n',
+            ),
+            "pre-root comment": (
+                f'<urlset xmlns="{SITEMAP_NAMESPACE}">',
+                f'<!-- sitemap -->\n<urlset xmlns="{SITEMAP_NAMESPACE}">',
+            ),
+            "post-root comment": (
+                "</urlset>\n",
+                "</urlset>\n<!-- sitemap -->\n",
+            ),
+            "wrong namespace": (SITEMAP_NAMESPACE, "https://example.com/sitemap"),
+            "wrong loc": (CANONICAL_URL, "https://far1h.github.io/Other/"),
+            "second loc": (
+                f"    <loc>{CANONICAL_URL}</loc>",
+                f"    <loc>{CANONICAL_URL}</loc>\n    <loc>{CANONICAL_URL}</loc>",
+            ),
+            "second URL": (
+                "  </url>\n</urlset>",
+                f"  </url>\n  <url><loc>{CANONICAL_URL}</loc></url>\n</urlset>",
+            ),
+            "lastmod": ("  </url>", "    <lastmod>2026-08-29</lastmod>\n  </url>"),
+            "changefreq": ("  </url>", "    <changefreq>monthly</changefreq>\n  </url>"),
+            "priority": ("  </url>", "    <priority>1.0</priority>\n  </url>"),
+            "stray text": ("  <url>", "  stray text\n  <url>"),
+            "malformed XML": ("</urlset>", ""),
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "sitemap.xml"
+            path.write_text(valid, encoding="utf-8")
+            validate_sitemap(path)
+            for name, (old, new) in mutations.items():
+                with self.subTest(name=name):
+                    mutated = valid.replace(old, new, 1)
+                    self.assertNotEqual(valid, mutated)
+                    path.write_text(mutated, encoding="utf-8")
+                    with self.assertRaises(ContractError):
+                        validate_sitemap(path)
+
+    def test_non_regular_oversized_and_non_utf8_sitemaps_are_rejected(self) -> None:
+        """Reject filesystem and encoding forms outside the bounded sitemap contract."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            with self.assertRaisesRegex(ContractError, "regular non-symlink"):
+                validate_sitemap(directory)
+
+            target = directory / "target.xml"
+            target.write_text("<urlset></urlset>", encoding="utf-8")
+            symlink = directory / "symlink.xml"
+            symlink.symlink_to(target)
+            with self.assertRaisesRegex(ContractError, "regular non-symlink"):
+                validate_sitemap(symlink)
+
+            oversized = directory / "oversized.xml"
+            oversized.write_bytes(b" " * (MAX_SITEMAP_BYTES + 1))
+            with self.assertRaisesRegex(ContractError, "bounded"):
+                validate_sitemap(oversized)
+
+            non_utf8 = directory / "non-utf8.xml"
+            non_utf8.write_bytes(b"\xff")
+            with self.assertRaisesRegex(ContractError, "UTF-8"):
+                validate_sitemap(non_utf8)
+
+
 class LandingPageContractTests(unittest.TestCase):
     def assert_mutation_rejected(self, old: str, new: str, message: str) -> None:
         """Mutate a temporary page copy and require a specific rejection."""
@@ -4961,14 +5440,13 @@ class LandingPageContractTests(unittest.TestCase):
         self.assertTrue(
             any(
                 meta.attrs.get("name") == "description"
-                and meta.attrs.get("content")
-                == "ScreenFix masks a damaged vertical display strip and keeps ordinary windows in the usable space on either side."
+                and meta.attrs.get("content") == SEO_DESCRIPTION
                 for meta in metas
             )
         )
-        self.assertEqual(["ScreenFix — Work around a damaged screen"], [node.text() for node in page.nodes("title")])
+        self.assertEqual([SEO_TITLE], [node.text() for node in page.nodes("title")])
         links = page.nodes("link")
-        self.assertTrue(any(node.attrs.get("rel") == "canonical" and node.attrs.get("href") == "https://far1h.github.io/ScreenFix/" for node in links))
+        self.assertTrue(any(node.attrs.get("rel") == "canonical" and node.attrs.get("href") == CANONICAL_URL for node in links))
         self.assertTrue(any(node.attrs.get("rel") == "icon" and node.attrs.get("href") == "assets/screenfix-icon.svg" for node in links))
         self.assertTrue(any(node.attrs.get("rel") == "stylesheet" and node.attrs.get("href") == "styles.css" for node in links))
 
@@ -5003,7 +5481,7 @@ class LandingPageContractTests(unittest.TestCase):
         self.assertEqual("", brand_images[0].attrs.get("alt"))
 
         headings = page.nodes("h1")
-        self.assertEqual(["Work around a damaged screen."], [heading.text() for heading in headings])
+        self.assertEqual([HERO_HEADING], [heading.text() for heading in headings])
         hero_copy = [node for node in page.elements if "hero-copy" in (node.attrs.get("class") or "").split()]
         self.assertEqual(1, len(hero_copy))
         substantive_children = [child for child in hero_copy[0].children if child.text()]
@@ -5011,7 +5489,7 @@ class LandingPageContractTests(unittest.TestCase):
         self.assertIs(headings[0], substantive_children[0])
         explanations = [node for node in hero_copy[0].children if "hero-explanation" in (node.attrs.get("class") or "").split()]
         self.assertEqual(
-            ["ScreenFix blacks out the broken strip and keeps ordinary windows in the space that still works."],
+            [HERO_EXPLANATION],
             [node.text() for node in explanations],
         )
 
@@ -5471,6 +5949,7 @@ class LandingPageContractTests(unittest.TestCase):
             self.assertIn(phrase, requirements)
 
         questions = [
+            SEO_FAQ_QUESTION,
             "Does ScreenFix repair the damaged panel?",
             "Which windows may remain unchanged?",
             "Why does my operating system warn about ScreenFix?",
@@ -5478,7 +5957,7 @@ class LandingPageContractTests(unittest.TestCase):
         ]
         faq = page.by_id("faq")[0]
         details = [node for node in faq.children if node.tag == "details"]
-        self.assertEqual(4, len(details))
+        self.assertEqual(5, len(details))
         actual_questions = []
         for detail in details:
             summaries = [node for node in detail.children if node.tag == "summary"]
@@ -5489,6 +5968,7 @@ class LandingPageContractTests(unittest.TestCase):
             self.assertTrue(answers)
             actual_questions.append(summaries[0].text())
         self.assertEqual(questions, actual_questions)
+        self.assertEqual(SEO_FAQ_ANSWER, details[0].children[1].text())
 
         footer = page.nodes("footer")[0]
         self.assertIn("ScreenFix is an open-source utility for working around a damaged display strip.", footer.text())
@@ -5584,8 +6064,8 @@ class LandingPageContractTests(unittest.TestCase):
 
     def test_standalone_trust_claim_mutation_is_rejected(self) -> None:
         self.assert_mutation_rejected(
-            '<p class="hero-explanation">ScreenFix blacks out the broken strip and keeps ordinary windows in the space that still works.</p>',
-            '<p class="hero-explanation">ScreenFix blacks out the broken strip and keeps ordinary windows in the space that still works.</p>\n          <p>Free and MIT licensed</p>',
+            f'<p class="hero-explanation">{HERO_EXPLANATION}</p>',
+            f'<p class="hero-explanation">{HERO_EXPLANATION}</p>\n          <p>Free and MIT licensed</p>',
             "standalone trust claim",
         )
 
@@ -5636,9 +6116,9 @@ class LandingPageContractTests(unittest.TestCase):
             path = Path(temporary_directory) / "index.html"
             shutil.copyfile(ROOT / "site" / "index.html", path)
             source = path.read_text(encoding="utf-8")
-            first_start = source.index("        <details>\n          <summary>Does ScreenFix repair")
-            second_start = source.index("        <details>\n          <summary>Which windows")
-            third_start = source.index("        <details>\n          <summary>Why does")
+            first_start = source.index(f"        <details>\n          <summary>{SEO_FAQ_QUESTION}")
+            second_start = source.index("        <details>\n          <summary>Does ScreenFix repair")
+            third_start = source.index("        <details>\n          <summary>Which windows")
             reordered = source[:first_start] + source[second_start:third_start] + source[first_start:second_start] + source[third_start:]
             path.write_text(reordered, encoding="utf-8")
             with self.assertRaisesRegex(ContractError, "FAQ order"):
@@ -5646,7 +6126,7 @@ class LandingPageContractTests(unittest.TestCase):
 
     def test_empty_faq_summary_mutation_is_rejected(self) -> None:
         self.assert_mutation_rejected(
-            "<summary>Does ScreenFix repair the damaged panel?</summary>",
+            f"<summary>{SEO_FAQ_QUESTION}</summary>",
             "<summary></summary>",
             "FAQ summary must be non-empty",
         )
