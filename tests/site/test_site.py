@@ -672,7 +672,7 @@ base || a || color
 base || a:not(.download-primary):not(.brand) || text-decoration text-underline-offset
 base || a:hover || text-decoration-thickness
 base || figcaption || margin-top color font-size line-height
-base || main > *, .site-footer || width max-width margin-inline padding-inline
+base || main > *, .site-footer-inner || width max-width margin-inline padding-inline
 base || .site-header || width border-bottom
 base || .site-header-inner || width max-width margin-inline padding-inline min-height display flex-wrap align-items justify-content gap padding-block
 base || .brand || min-height display align-items gap color font-size font-weight text-decoration
@@ -703,6 +703,7 @@ base || .hero-figure || margin-bottom
 base || .hero-image, #results img || width border-radius
 base || .hero-image || aspect-ratio object-fit
 base || main > section || padding-block border-bottom
+base || main > section:last-child || border-bottom
 base || .how-step || display grid-template-columns gap padding-block border-top
 base || .how-step:last-child || border-bottom
 base || .step-number || grid-row color font-size font-weight
@@ -735,7 +736,8 @@ base || #faq details || border-top
 base || #faq details:last-child || border-bottom
 base || #faq summary || min-height padding-block cursor font-weight
 base || #faq details p || max-width padding color
-base || .site-footer || display flex-wrap align-items gap padding-block font-size
+base || .site-footer || width border-top
+base || .site-footer-inner || display flex-wrap align-items gap padding-block font-size
 base || .site-footer p || flex margin-bottom color
 base || .footer-credit || flex margin-top
 max700 || .brand || width justify-content
@@ -752,7 +754,7 @@ min900 || #privacy h2, #requirements h2 || grid-column
 min900 || #results || grid-template-columns align-items
 min900 || #results h2 || grid-column
 min900 || #results figure:last-of-type || margin-top
-min1024 || .site-header-inner, main > *, .site-footer || padding-inline
+min1024 || .site-header-inner, main > *, .site-footer-inner || padding-inline
 reduced || html || scroll-behavior
 reduced || *, *::before, *::after || transition
 """.strip()
@@ -974,6 +976,7 @@ def validate_landing_page(path: Path) -> None:
     _validate_downloads(page)
     _validate_image_alts(page)
     _validate_header_structure(page)
+    _validate_footer_structure(page)
     _validate_editorial_illustrations(page)
     _validate_privacy_requirements_notes_and_footer(page)
     _validate_platform_groups(page)
@@ -1174,6 +1177,53 @@ def _validate_header_structure(page: LandingPageParser) -> None:
         raise ContractError("site-header-inner must contain direct brand and navigation children")
 
 
+def _footer_inner(page: LandingPageParser) -> HtmlNode:
+    """Return the sole direct footer content shell."""
+    footer = page.nodes("footer")[0]
+    inners = _nodes_with_class(page.elements, "site-footer-inner")
+    if (
+        len(inners) != 1
+        or inners[0].tag != "div"
+        or inners[0].attrs != {"class": "site-footer-inner"}
+        or inners[0].parent is not footer
+        or footer.children != inners
+    ):
+        raise ContractError("site footer must contain exactly one direct site-footer-inner")
+    return inners[0]
+
+
+def _validate_footer_structure(page: LandingPageParser) -> None:
+    """Require every reviewed footer child inside the direct content shell."""
+    inner = _footer_inner(page)
+    expected = (
+        (
+            "p",
+            {},
+            "ScreenFix is an open-source utility for working around a damaged display strip.",
+        ),
+        ("a", {"href": "https://github.com/far1h/ScreenFix"}, "Source"),
+        (
+            "a",
+            {"href": "https://github.com/far1h/ScreenFix/releases/latest"},
+            "Releases",
+        ),
+        (
+            "a",
+            {"href": "https://github.com/far1h/ScreenFix#install-the-hammerspoon-version"},
+            "Advanced Hammerspoon setup",
+        ),
+        (
+            "a",
+            {"href": "https://github.com/far1h/ScreenFix/blob/main/LICENSE"},
+            "MIT license",
+        ),
+        ("p", {"class": "footer-credit"}, "Built by farihmhmd.com"),
+    )
+    actual = tuple((child.tag, child.attrs, child.text()) for child in inner.children)
+    if actual != expected:
+        raise ContractError("site-footer-inner must own every reviewed footer child in order")
+
+
 def _validate_lazy_illustration(image: HtmlNode, source: str, alt: str) -> None:
     """Require one exact 4:3 editorial image contract."""
     expected = {
@@ -1349,10 +1399,10 @@ def _validate_download_notes(page: LandingPageParser) -> None:
 
 def _validate_footer_credit(page: LandingPageParser) -> None:
     """Require the exact final builder credit and link."""
-    footer = page.nodes("footer")[0]
-    if not footer.children:
+    inner = _footer_inner(page)
+    if not inner.children:
         raise ContractError("Footer must end with the builder credit")
-    credit = footer.children[-1]
+    credit = inner.children[-1]
     if credit.tag != "p" or "footer-credit" not in (credit.attrs.get("class") or "").split():
         raise ContractError("Footer final child must be the dedicated builder credit")
     credit_links = [child for child in credit.children if child.tag == "a"]
@@ -2198,8 +2248,10 @@ def _validate_effective_color_contract(styles: str) -> None:
             ]
         )
     fallback_parent = CssNode("p", parent=windows_option)
+    footer = CssNode("footer", frozenset({"site-footer"}), parent=body)
+    footer_inner = CssNode("div", frozenset({"site-footer-inner"}), parent=footer)
     links = {
-        "paper link": (CssNode("a", parent=CssNode("footer", frozenset({"site-footer"}), parent=body)), "--paper"),
+        "paper link": (CssNode("a", parent=footer_inner), "--paper"),
         "surface hero link": (CssNode("a", frozenset({"secondary-link"}), parent=hero_copy), "--surface"),
         "surface fallback link": (CssNode("a", frozenset({"download-fallback"}), parent=fallback_parent), "--surface"),
     }
@@ -2706,6 +2758,66 @@ def _validate_header_shell_contract(styles: str) -> None:
                 raise ContractError("mobile navigation must be centered below the brand")
 
 
+def _footer_used_width(declarations: dict[str, str], viewport: float) -> float:
+    """Resolve the reviewed footer shell width for overflow checks."""
+    width_value = declarations.get("width", "")
+    width = viewport if width_value == "100%" else _css_length_pixels(width_value, viewport)
+    maximum_value = declarations.get("max-width")
+    if maximum_value is not None:
+        width = min(width, _css_length_pixels(maximum_value, viewport))
+    return width
+
+
+def _validate_footer_shell_contract(styles: str) -> None:
+    """Keep one full-width footer rule outside a constrained content shell."""
+    body = CssNode("body")
+    footer = CssNode("footer", frozenset({"site-footer"}), parent=body)
+    inner = CssNode("div", frozenset({"site-footer-inner"}), parent=footer)
+    main = CssNode("main", parent=body)
+    final_section = CssNode(
+        "section",
+        identifier="faq",
+        states=frozenset({"last-child"}),
+        parent=main,
+    )
+    for viewport, gutter in ((375, "24px"), (768, "24px"), (1024, "48px"), (1440, "48px")):
+        footer_styles = effective_declarations(styles, footer, viewport)
+        inner_styles = effective_declarations(styles, inner, viewport)
+        final_section_styles = effective_declarations(styles, final_section, viewport)
+        if (
+            footer_styles.get("width") != "100%"
+            or footer_styles.get("border-top") != "1px solid var(--rule)"
+            or any(
+                property_name in footer_styles
+                for property_name in ("max-width", "margin-inline", "padding-inline")
+            )
+        ):
+            raise ContractError("divider must belong to an unconstrained full-width footer")
+        if "width" not in inner_styles:
+            raise ContractError("footer content must use the constrained responsive inner shell")
+        if _footer_used_width(footer_styles, viewport) > viewport or _footer_used_width(
+            inner_styles,
+            viewport,
+        ) > viewport:
+            raise ContractError("footer shells must fit within every reviewed viewport")
+        expected_inner = {
+            "width": "100%",
+            "max-width": "1200px",
+            "margin-inline": "auto",
+            "padding-inline": gutter,
+            "display": "flex",
+            "flex-wrap": "wrap",
+            "align-items": "center",
+            "gap": "0 24px",
+            "padding-block": "22px",
+            "font-size": "14px",
+        }
+        if any(inner_styles.get(name) != value for name, value in expected_inner.items()):
+            raise ContractError("footer content must use the constrained responsive inner shell")
+        if final_section_styles.get("border-bottom") != "0":
+            raise ContractError("final main section must not draw a second or constrained divider")
+
+
 def _validate_tablet_editorial_layout_values(styles: str) -> None:
     """Keep the 768px editorial layout stacked and overflow-safe."""
     viewport = 768
@@ -2874,7 +2986,8 @@ def _validate_supporting_revision_style_values(styles: str) -> None:
     row = CssNode("div", frozenset({"requirement-row"}), parent=CssNode("dl", parent=requirements))
     term = CssNode("dt", parent=row)
     footer = CssNode("footer", frozenset({"site-footer"}), parent=body)
-    credit = CssNode("p", frozenset({"footer-credit"}), parent=footer)
+    footer_inner = CssNode("div", frozenset({"site-footer-inner"}), parent=footer)
+    credit = CssNode("p", frozenset({"footer-credit"}), parent=footer_inner)
     credit_link = CssNode("a", parent=credit)
 
     for viewport in (375, 768, 1024, 1440):
@@ -2952,7 +3065,7 @@ def _validate_supporting_revision_style_values(styles: str) -> None:
 
 def _validate_layout_contract(styles: str) -> None:
     """Require the approved editorial layouts at mobile and desktop widths."""
-    container = _css_block(styles, "main > *,\n.site-footer")
+    container = _css_block(styles, "main > *,\n.site-footer-inner")
     container_contract = (
         "width: 100%;",
         "max-width: 1200px;",
@@ -3025,7 +3138,7 @@ def _validate_layout_contract(styles: str) -> None:
     if "grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);" not in desktop_results:
         raise ContractError("desktop results must use an asymmetric two-figure grid")
     wide = _css_media_block(styles, "(min-width: 1024px)")
-    if "padding-inline: 48px;" not in _css_block(wide, ".site-header-inner,\nmain > *,\n.site-footer"):
+    if "padding-inline: 48px;" not in _css_block(wide, ".site-header-inner,\nmain > *,\n.site-footer-inner"):
         raise ContractError("desktop container must use fluid wide gutters")
 
 
@@ -3033,6 +3146,7 @@ def _validate_effective_responsive_contract(styles: str) -> None:
     """Resolve required layout declarations at the four reviewed widths."""
     main = CssNode("main")
     header = CssNode("header", frozenset({"site-header"}))
+    footer = CssNode("footer", frozenset({"site-footer"}))
     nodes = {
         "header inner": CssNode(
             "div",
@@ -3041,7 +3155,11 @@ def _validate_effective_responsive_contract(styles: str) -> None:
         ),
         "hero": CssNode("div", frozenset({"hero"}), parent=main),
         "results": CssNode("section", identifier="results", parent=main),
-        "footer": CssNode("footer", frozenset({"site-footer"})),
+        "footer inner": CssNode(
+            "div",
+            frozenset({"site-footer-inner"}),
+            parent=footer,
+        ),
         "downloads": CssNode(
             "div",
             frozenset({"download-pair"}),
@@ -3079,7 +3197,7 @@ def _validate_effective_responsive_contract(styles: str) -> None:
             name: effective_declarations(styles, node, viewport)
             for name, node in nodes.items()
         }
-        for name in ("header inner", "hero", "results", "footer"):
+        for name in ("header inner", "hero", "results", "footer inner"):
             expected = {
                 "width": "100%",
                 "max-width": "1200px",
@@ -3264,6 +3382,7 @@ def _validate_effective_interaction_targets(styles: str) -> None:
     header = CssNode("header", frozenset({"site-header"}), parent=body)
     navigation = CssNode("nav", parent=header)
     footer = CssNode("footer", frozenset({"site-footer"}), parent=body)
+    footer_inner = CssNode("div", frozenset({"site-footer-inner"}), parent=footer)
     main = CssNode("main", parent=body)
     hero = CssNode("div", frozenset({"hero"}), parent=main)
     hero_copy = CssNode("div", frozenset({"hero-copy"}), parent=hero)
@@ -3276,7 +3395,7 @@ def _validate_effective_interaction_targets(styles: str) -> None:
         "skip link": CssNode("a", frozenset({"skip-link"}), parent=body),
         "brand": CssNode("a", frozenset({"brand"}), parent=header),
         "navigation link": CssNode("a", parent=navigation),
-        "footer link": CssNode("a", parent=footer),
+        "footer link": CssNode("a", parent=footer_inner),
         "hero primary": CssNode(
             "a",
             frozenset({"download-primary", "download-windows"}),
@@ -3458,6 +3577,7 @@ def validate_stylesheet(styles: str) -> None:
     _validate_interaction_contract(styles)
     _validate_skip_link_visibility_contract(styles)
     _validate_layout_contract(styles)
+    _validate_footer_shell_contract(styles)
     _validate_editorial_illustration_layout_values(styles)
     _validate_effective_responsive_contract(styles)
     _validate_effective_target_contract(styles)
@@ -4458,6 +4578,84 @@ class StyleContractTests(unittest.TestCase):
     def test_header_divider_is_full_width_with_constrained_inner_content(self) -> None:
         _validate_header_shell_contract(self.styles)
 
+    def test_footer_divider_is_full_width_with_constrained_inner_content(self) -> None:
+        _validate_footer_shell_contract(self.styles)
+
+    def test_footer_shell_root_cause_mutations_are_rejected(self) -> None:
+        constrained_footer = self.styles.replace(
+            ".site-footer {\n  width: 100%;\n  border-top: 1px solid var(--rule);",
+            ".site-footer {\n  width: 100%;\n  max-width: 1200px;\n"
+            "  margin-inline: auto;\n  padding-inline: 24px;\n"
+            "  border-top: 1px solid var(--rule);",
+            1,
+        )
+        short_final_border = self.styles.replace(
+            ".site-footer {\n  width: 100%;\n  border-top: 1px solid var(--rule);",
+            ".site-footer {\n  width: 100%;",
+            1,
+        ).replace(
+            "main > section:last-child {\n  border-bottom: 0;",
+            "main > section:last-child {\n  border-bottom: 1px solid var(--rule);",
+            1,
+        )
+        double_divider = self.styles.replace(
+            "main > section:last-child {\n  border-bottom: 0;",
+            "main > section:last-child {\n  border-bottom: 1px solid var(--rule);",
+            1,
+        )
+        wrong_gutters = self.styles.replace(
+            "main > *,\n.site-footer-inner {\n  width: 100%;\n  max-width: 1200px;\n"
+            "  margin-inline: auto;\n  padding-inline: 24px;",
+            "main > *,\n.site-footer-inner {\n  width: 100%;\n  max-width: 1200px;\n"
+            "  margin-inline: auto;\n  padding-inline: 20px;",
+            1,
+        )
+        wrong_wide_gutters = self.styles.replace(
+            ".site-header-inner,\n  main > *,\n  .site-footer-inner {\n"
+            "    padding-inline: 48px;",
+            ".site-header-inner,\n  main > *,\n  .site-footer-inner {\n"
+            "    padding-inline: 40px;",
+            1,
+        )
+        overflowing_inner = self.styles.replace(
+            "main > *,\n.site-footer-inner {\n  width: 100%;",
+            "main > *,\n.site-footer-inner {\n  width: 1200px;",
+            1,
+        )
+        mutations = {
+            "constrained footer": (
+                constrained_footer,
+                "unconstrained full-width footer",
+            ),
+            "short final border": (
+                short_final_border,
+                "unconstrained full-width footer",
+            ),
+            "double divider": (
+                double_divider,
+                "must not draw a second or constrained divider",
+            ),
+            "wrong gutters": (
+                wrong_gutters,
+                "constrained responsive inner shell",
+            ),
+            "wrong wide gutters": (
+                wrong_wide_gutters,
+                "constrained responsive inner shell",
+            ),
+            "overflow": (
+                overflowing_inner,
+                "fit within every reviewed viewport",
+            ),
+        }
+        for name, (mutated, message) in mutations.items():
+            with self.subTest(name=name):
+                self.assert_style_rejected(
+                    mutated,
+                    _validate_footer_shell_contract,
+                    message,
+                )
+
     def test_editorial_illustration_layout_values(self) -> None:
         _validate_editorial_illustration_layout_values(self.styles)
 
@@ -4575,8 +4773,8 @@ class StyleContractTests(unittest.TestCase):
             "mobile brand must not be underlined",
         )
         constrained_divider = self.styles.replace(
-            "main > *,\n.site-footer {",
-            ".site-header,\nmain > *,\n.site-footer {",
+            "main > *,\n.site-footer-inner {",
+            ".site-header,\nmain > *,\n.site-footer-inner {",
             1,
         )
         self.assert_style_rejected(
@@ -4667,7 +4865,7 @@ class StyleContractTests(unittest.TestCase):
     def test_effective_responsive_override_mutations_are_rejected(self) -> None:
         mutations = {
             "display-block": ".hero, #results { display: block; }",
-            "narrow-container": ".site-header, main > *, .site-footer { max-width: 640px; }",
+            "narrow-container": ".site-header-inner, main > * { max-width: 640px; }",
             "hero-columns": (
                 "@media (min-width: 900px) { "
                 ".hero { grid-template-columns: minmax(0, 1fr); } }"
@@ -4779,8 +4977,8 @@ class StyleContractTests(unittest.TestCase):
                 1,
             ),
             "footer-background": self.styles.replace(
-                ".site-footer {\n  display: flex;",
-                ".site-footer {\n  background: var(--ink);\n  display: flex;",
+                ".site-footer {\n  width: 100%;",
+                ".site-footer {\n  background: var(--ink);\n  width: 100%;",
                 1,
             ),
             "hidden-heading": self.styles.replace(
@@ -5498,6 +5696,41 @@ class LandingPageContractTests(unittest.TestCase):
         page = parse_landing_page()
         _validate_header_structure(page)
 
+    def test_footer_inner_contains_every_footer_child_in_order(self) -> None:
+        """Keep the full-width footer shell separate from its constrained contents."""
+        page = parse_landing_page()
+        _validate_footer_structure(page)
+
+    def test_footer_inner_ownership_mutations_are_rejected(self) -> None:
+        """Reject a missing, misplaced, or partially bypassed footer inner shell."""
+        source = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+        missing_inner = source.replace(' class="site-footer-inner"', "", 1)
+        misplaced_inner = missing_inner.replace(
+            '    <footer class="site-footer">',
+            '    <div class="site-footer-inner">\n    <footer class="site-footer">',
+            1,
+        ).replace("    </footer>", "    </footer>\n    </div>", 1)
+        escaped_credit = source.replace(
+            '        <p class="footer-credit">Built by '
+            '<a href="https://farihmhmd.com/">farihmhmd.com</a></p>\n'
+            "      </div>",
+            "      </div>\n"
+            '      <p class="footer-credit">Built by '
+            '<a href="https://farihmhmd.com/">farihmhmd.com</a></p>',
+            1,
+        )
+        mutations = {
+            "missing inner": missing_inner,
+            "misplaced inner": misplaced_inner,
+            "content outside inner": escaped_credit,
+        }
+        for name, mutated in mutations.items():
+            with self.subTest(name=name):
+                self.assertNotEqual(source, mutated)
+                page = parse_landing_page_source(mutated)
+                with self.assertRaisesRegex(ContractError, "site-footer-inner"):
+                    _validate_footer_structure(page)
+
     def test_brand_link_returns_to_page_top(self) -> None:
         """Keep the clickable brand anchored to the top of the current page."""
         brand = _nodes_with_class(parse_landing_page().nodes("a"), "brand")
@@ -5971,8 +6204,13 @@ class LandingPageContractTests(unittest.TestCase):
         self.assertEqual(SEO_FAQ_ANSWER, details[0].children[1].text())
 
         footer = page.nodes("footer")[0]
+        footer_inner = _footer_inner(page)
         self.assertIn("ScreenFix is an open-source utility for working around a damaged display strip.", footer.text())
-        footer_links = [(node.text(), node.attrs.get("href")) for node in footer.children if node.tag == "a"]
+        footer_links = [
+            (node.text(), node.attrs.get("href"))
+            for node in footer_inner.children
+            if node.tag == "a"
+        ]
         self.assertEqual(
             [
                 ("Source", "https://github.com/far1h/ScreenFix"),
