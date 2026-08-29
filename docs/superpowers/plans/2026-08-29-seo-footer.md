@@ -14,6 +14,7 @@
 
 **Files:**
 - Create: `site/sitemap.xml`
+- Create: `tests/site/test_seo.py`
 - Modify: `site/index.html`
 - Modify: `tests/site/test_site.py`
 
@@ -58,7 +59,7 @@ there must be exactly one `url/loc`; and it must equal
 Run:
 
 ```bash
-python3 -B -m unittest discover -s tests/site -p 'test_site.py' -k 'SeoContractTests' -v
+python3 -B -m unittest discover -s tests/site -p 'test_seo.py' -v
 python3 -B -m unittest discover -s tests/site -p 'test_site.py' -k 'test_exact_site_tree' -v
 ```
 
@@ -89,7 +90,7 @@ warnings or skips.
 Then run:
 
 ```bash
-python3 -B -m unittest discover -s tests/site -p 'test_site.py' -v
+python3 -B -m unittest discover -s tests/site -p 'test_*.py' -v
 ```
 
 Expected: the complete Python suite passes before Task 1 is committed.
@@ -97,7 +98,7 @@ Expected: the complete Python suite passes before Task 1 is committed.
 - [ ] **Step 5: Commit Task 1**
 
 ```bash
-git add site/index.html site/sitemap.xml tests/site/test_site.py
+git add site/index.html site/sitemap.xml tests/site/test_seo.py tests/site/test_site.py
 git diff --cached --check
 git commit -m "feat: add ScreenFix search metadata"
 ```
@@ -174,7 +175,7 @@ git commit -m "fix: extend the footer divider"
 - [ ] **Step 1: Run the complete local verification**
 
 ```bash
-python3 -B -m unittest discover -s tests/site -p 'test_site.py' -v
+python3 -B -m unittest discover -s tests/site -p 'test_*.py' -v
 node --test tests/site/platform.test.mjs
 git diff --check main...HEAD
 ```
