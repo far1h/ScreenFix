@@ -80,7 +80,7 @@ figcaption {
 }
 
 main > *,
-.site-footer {
+.site-footer-inner {
   width: 100%;
   max-width: 1200px;
   margin-inline: auto;
@@ -287,6 +287,10 @@ main > section {
   border-bottom: 1px solid var(--rule);
 }
 
+main > section:last-child {
+  border-bottom: 0;
+}
+
 .how-step {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
@@ -468,6 +472,11 @@ main > section {
 }
 
 .site-footer {
+  width: 100%;
+  border-top: 1px solid var(--rule);
+}
+
+.site-footer-inner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -561,7 +570,7 @@ main > section {
 @media (min-width: 1024px) {
   .site-header-inner,
   main > *,
-  .site-footer {
+  .site-footer-inner {
     padding-inline: 48px;
   }
 }

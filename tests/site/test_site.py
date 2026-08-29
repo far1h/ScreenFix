@@ -22,6 +22,7 @@ EXPECTED_SITE_FILES = {
     ".nojekyll",
     "index.html",
     "platform.mjs",
+    "sitemap.xml",
     "styles.css",
     "assets/screenfix-icon.svg",
     "assets/damaged-display.jpg",
@@ -48,6 +49,32 @@ DEPLOY_PAGES_ACTION = (
 )
 PLATFORM_MODULE = ROOT / "site" / "platform.mjs"
 MAX_PLATFORM_MODULE_BYTES = 4_096
+SITEMAP = ROOT / "site" / "sitemap.xml"
+MAX_SITEMAP_BYTES = 4_096
+SITEMAP_NAMESPACE = "http://www.sitemaps.org/schemas/sitemap/0.9"
+CANONICAL_URL = "https://far1h.github.io/ScreenFix/"
+SEO_TITLE = "Use the Working Part of a Broken Screen | ScreenFix"
+SEO_DESCRIPTION = (
+    "ScreenFix blacks out a damaged display strip and keeps ordinary windows inside "
+    "the working part of a broken Windows or macOS screen."
+)
+ROBOTS_DIRECTIVE = "index, follow, max-image-preview:large"
+SOCIAL_TITLE = "ScreenFix — Use the working part of a broken screen"
+SOCIAL_IMAGE = f"{CANONICAL_URL}assets/result-mask.jpg"
+SOCIAL_IMAGE_ALT = (
+    "ScreenFix mask keeping windows inside the usable part of a damaged display"
+)
+HERO_HEADING = "Use the working part of a damaged screen."
+HERO_EXPLANATION = (
+    "ScreenFix blacks out the broken strip and keeps ordinary windows inside the part "
+    "of your screen that still works."
+)
+SEO_FAQ_QUESTION = "Can I use only the working part of a broken screen?"
+SEO_FAQ_ANSWER = (
+    "ScreenFix can black out a damaged strip and keep ordinary movable windows in the "
+    "remaining usable space. It does not repair the panel, restore dead pixels, or "
+    "control every full-screen, protected, custom, or fixed-size window."
+)
 PLATFORM_APPROVED_TEMPLATE = '`[data-platform-option="${platform}"]`'
 PLATFORM_APPROVED_REGEXES = (
     "/Android|iPhone|iPad|Mobile/i",
@@ -211,7 +238,7 @@ def _validate_readme_scope(source: str) -> None:
         "privacy",
         "Questions before you download.",
         "ScreenFix stays on your computer.",
-        "Work around a damaged screen.",
+        HERO_HEADING,
         "Give the damage its own space.",
         "What it looks like in use.",
         "Download ScreenFix.",
@@ -645,7 +672,7 @@ base || a || color
 base || a:not(.download-primary):not(.brand) || text-decoration text-underline-offset
 base || a:hover || text-decoration-thickness
 base || figcaption || margin-top color font-size line-height
-base || main > *, .site-footer || width max-width margin-inline padding-inline
+base || main > *, .site-footer-inner || width max-width margin-inline padding-inline
 base || .site-header || width border-bottom
 base || .site-header-inner || width max-width margin-inline padding-inline min-height display flex-wrap align-items justify-content gap padding-block
 base || .brand || min-height display align-items gap color font-size font-weight text-decoration
@@ -676,6 +703,7 @@ base || .hero-figure || margin-bottom
 base || .hero-image, #results img || width border-radius
 base || .hero-image || aspect-ratio object-fit
 base || main > section || padding-block border-bottom
+base || main > section:last-child || border-bottom
 base || .how-step || display grid-template-columns gap padding-block border-top
 base || .how-step:last-child || border-bottom
 base || .step-number || grid-row color font-size font-weight
@@ -708,7 +736,8 @@ base || #faq details || border-top
 base || #faq details:last-child || border-bottom
 base || #faq summary || min-height padding-block cursor font-weight
 base || #faq details p || max-width padding color
-base || .site-footer || display flex-wrap align-items gap padding-block font-size
+base || .site-footer || width border-top
+base || .site-footer-inner || display flex-wrap align-items gap padding-block font-size
 base || .site-footer p || flex margin-bottom color
 base || .footer-credit || flex margin-top
 max700 || .brand || width justify-content
@@ -725,7 +754,7 @@ min900 || #privacy h2, #requirements h2 || grid-column
 min900 || #results || grid-template-columns align-items
 min900 || #results h2 || grid-column
 min900 || #results figure:last-of-type || margin-top
-min1024 || .site-header-inner, main > *, .site-footer || padding-inline
+min1024 || .site-header-inner, main > *, .site-footer-inner || padding-inline
 reduced || html || scroll-behavior
 reduced || *, *::before, *::after || transition
 """.strip()
@@ -872,16 +901,21 @@ class LandingPageParser(HTMLParser):
         ]
 
 
-def parse_landing_page(path: Path = ROOT / "site" / "index.html") -> LandingPageParser:
-    """Parse one landing-page file and require balanced HTML elements."""
+def parse_landing_page_source(source: str) -> LandingPageParser:
+    """Parse landing-page source and require balanced HTML elements."""
     parser = LandingPageParser()
-    parser.feed(path.read_text(encoding="utf-8"))
+    parser.feed(source)
     parser.close()
     if parser.stack:
         parser.errors.append(f"unclosed tag: {parser.stack[-1].tag}")
     if parser.errors:
         raise ContractError("; ".join(parser.errors))
     return parser
+
+
+def parse_landing_page(path: Path = ROOT / "site" / "index.html") -> LandingPageParser:
+    """Parse one landing-page file and require balanced HTML elements."""
+    return parse_landing_page_source(path.read_text(encoding="utf-8"))
 
 
 def _descendant_nodes(root: HtmlNode) -> tuple[HtmlNode, ...]:
@@ -925,6 +959,8 @@ def _landing_page_readme_copy() -> tuple[tuple[str, ...], tuple[str, ...]]:
 def validate_landing_page(path: Path) -> None:
     """Validate mutation-sensitive landing-page semantics."""
     page = parse_landing_page(path)
+    _validate_seo_metadata(page)
+    _validate_search_copy(page)
     _validate_hero(page)
     _validate_marketing_exclusions(page)
     _validate_required_visibility(page)
@@ -940,9 +976,181 @@ def validate_landing_page(path: Path) -> None:
     _validate_downloads(page)
     _validate_image_alts(page)
     _validate_header_structure(page)
+    _validate_footer_structure(page)
     _validate_editorial_illustrations(page)
     _validate_privacy_requirements_notes_and_footer(page)
     _validate_platform_groups(page)
+
+
+def _metadata_content(
+    page: LandingPageParser,
+    attribute: str,
+    identifier: str,
+    expected: str,
+) -> str:
+    """Return one exact reviewed metadata value."""
+    matches = [
+        node
+        for node in page.nodes("meta")
+        if (node.attrs.get(attribute) or "").casefold() == identifier.casefold()
+    ]
+    if len(matches) != 1:
+        raise ContractError(f"{identifier} metadata must appear exactly once")
+    node = matches[0]
+    if node.parent is None or node.parent.tag != "head":
+        raise ContractError(f"{identifier} metadata must remain in the document head")
+    if node.attrs != {attribute: identifier, "content": expected}:
+        raise ContractError(f"{identifier} metadata must match the reviewed value")
+    return node.attrs["content"] or ""
+
+
+def _require_same_site_https(value: str, label: str) -> None:
+    """Require an absolute HTTPS URL on the canonical Pages origin."""
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "far1h.github.io"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ContractError(f"{label} must use the reviewed same-site HTTPS URL")
+
+
+def _validate_seo_metadata(page: LandingPageParser) -> None:
+    """Require exact unique search and social metadata."""
+    titles = page.nodes("title")
+    if (
+        len(titles) != 1
+        or titles[0].parent is None
+        or titles[0].parent.tag != "head"
+        or titles[0].attrs
+        or titles[0].text() != SEO_TITLE
+    ):
+        raise ContractError("document title must match the reviewed SEO title exactly once")
+
+    description = _metadata_content(page, "name", "description", SEO_DESCRIPTION)
+    _metadata_content(page, "name", "robots", ROBOTS_DIRECTIVE)
+
+    canonical_links = [
+        node
+        for node in page.nodes("link")
+        if "canonical" in {
+            token.casefold() for token in (node.attrs.get("rel") or "").split()
+        }
+    ]
+    if len(canonical_links) != 1:
+        raise ContractError("canonical link must appear exactly once")
+    canonical = canonical_links[0]
+    canonical_url = canonical.attrs.get("href") or ""
+    _require_same_site_https(canonical_url, "canonical link")
+    if (
+        canonical.parent is None
+        or canonical.parent.tag != "head"
+        or canonical.attrs != {"rel": "canonical", "href": CANONICAL_URL}
+    ):
+        raise ContractError("canonical link must match the reviewed URL")
+
+    open_graph = {
+        "og:type": "website",
+        "og:title": SOCIAL_TITLE,
+        "og:description": SEO_DESCRIPTION,
+        "og:url": CANONICAL_URL,
+        "og:image": SOCIAL_IMAGE,
+        "og:image:width": "1200",
+        "og:image:height": "675",
+        "og:image:alt": SOCIAL_IMAGE_ALT,
+    }
+    open_graph_values = {
+        name: _metadata_content(page, "property", name, value)
+        for name, value in open_graph.items()
+    }
+    twitter = {
+        "twitter:card": "summary_large_image",
+        "twitter:title": SOCIAL_TITLE,
+        "twitter:description": SEO_DESCRIPTION,
+        "twitter:image": SOCIAL_IMAGE,
+        "twitter:image:alt": SOCIAL_IMAGE_ALT,
+    }
+    twitter_values = {
+        name: _metadata_content(page, "name", name, value)
+        for name, value in twitter.items()
+    }
+
+    for label, value in (
+        ("Open Graph URL", open_graph_values["og:url"]),
+        ("Open Graph image", open_graph_values["og:image"]),
+        ("Twitter image", twitter_values["twitter:image"]),
+    ):
+        _require_same_site_https(value, label)
+    if open_graph_values["og:url"] != canonical_url:
+        raise ContractError("Open Graph URL must match the canonical URL")
+    if open_graph_values["og:description"] != description:
+        raise ContractError("Open Graph description must match the meta description")
+    if twitter_values["twitter:description"] != description:
+        raise ContractError("Twitter description must match the meta description")
+    if open_graph_values["og:title"] != twitter_values["twitter:title"]:
+        raise ContractError("Open Graph and Twitter titles must match")
+    if open_graph_values["og:image"] != twitter_values["twitter:image"]:
+        raise ContractError("Open Graph and Twitter images must match")
+    if open_graph_values["og:image:alt"] != twitter_values["twitter:image:alt"]:
+        raise ContractError("Open Graph and Twitter image alternatives must match")
+
+
+def _validate_search_copy(page: LandingPageParser) -> None:
+    """Require the natural reviewed search-intent copy without repair claims."""
+    if [node.text() for node in page.nodes("h1")] != [HERO_HEADING]:
+        raise ContractError("hero heading must match the reviewed search-intent copy")
+    explanations = _nodes_with_class(page.nodes("p"), "hero-explanation")
+    if [node.text() for node in explanations] != [HERO_EXPLANATION]:
+        raise ContractError("hero explanation must match the reviewed behavior claim")
+
+
+def validate_sitemap(path: Path = SITEMAP) -> None:
+    """Require one bounded regular UTF-8 sitemap containing only the canonical URL."""
+    try:
+        status = path.lstat()
+    except FileNotFoundError as error:
+        raise ContractError("sitemap.xml must exist") from error
+    if not stat.S_ISREG(status.st_mode):
+        raise ContractError("sitemap must be a regular non-symlink file")
+    if status.st_size == 0 or status.st_size > MAX_SITEMAP_BYTES:
+        raise ContractError("sitemap must be non-empty and bounded")
+    try:
+        source = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ContractError("sitemap must be UTF-8") from error
+    declaration = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    if not source.startswith(declaration) or "<!DOCTYPE" in source:
+        raise ContractError("sitemap must use the reviewed UTF-8 XML declaration")
+    document = source[len(declaration) :]
+    if "<!--" in document or "<?" in document:
+        raise ContractError("sitemap must not contain comments or processing instructions")
+    try:
+        parser = ET.XMLParser(
+            target=ET.TreeBuilder(insert_comments=True, insert_pis=True)
+        )
+        root = ET.fromstring(source, parser=parser)
+    except ET.ParseError as error:
+        raise ContractError("sitemap must be well-formed XML") from error
+
+    url_tag = f"{{{SITEMAP_NAMESPACE}}}url"
+    loc_tag = f"{{{SITEMAP_NAMESPACE}}}loc"
+    if root.tag != f"{{{SITEMAP_NAMESPACE}}}urlset" or root.attrib:
+        raise ContractError("sitemap must use the standard urlset namespace")
+    if len(root) != 1 or root[0].tag != url_tag or root[0].attrib:
+        raise ContractError("sitemap must contain exactly one URL entry")
+    url = root[0]
+    if len(url) != 1 or url[0].tag != loc_tag or url[0].attrib or len(url[0]):
+        raise ContractError("sitemap URL entry must contain only one loc element")
+    loc = url[0]
+    if (loc.text or "") != CANONICAL_URL:
+        raise ContractError("sitemap loc must equal the canonical URL")
+    text_nodes = (root.text, url.text, loc.tail, url.tail)
+    if any(value and value.strip() for value in text_nodes):
+        raise ContractError("sitemap must not contain text outside the canonical loc")
 
 
 def _nodes_with_class(nodes: list[HtmlNode] | tuple[HtmlNode, ...], token: str) -> list[HtmlNode]:
@@ -967,6 +1175,53 @@ def _validate_header_structure(page: LandingPageParser) -> None:
     )
     if not has_direct_brand_and_nav:
         raise ContractError("site-header-inner must contain direct brand and navigation children")
+
+
+def _footer_inner(page: LandingPageParser) -> HtmlNode:
+    """Return the sole direct footer content shell."""
+    footer = page.nodes("footer")[0]
+    inners = _nodes_with_class(page.elements, "site-footer-inner")
+    if (
+        len(inners) != 1
+        or inners[0].tag != "div"
+        or inners[0].attrs != {"class": "site-footer-inner"}
+        or inners[0].parent is not footer
+        or footer.children != inners
+    ):
+        raise ContractError("site footer must contain exactly one direct site-footer-inner")
+    return inners[0]
+
+
+def _validate_footer_structure(page: LandingPageParser) -> None:
+    """Require every reviewed footer child inside the direct content shell."""
+    inner = _footer_inner(page)
+    expected = (
+        (
+            "p",
+            {},
+            "ScreenFix is an open-source utility for working around a damaged display strip.",
+        ),
+        ("a", {"href": "https://github.com/far1h/ScreenFix"}, "Source"),
+        (
+            "a",
+            {"href": "https://github.com/far1h/ScreenFix/releases/latest"},
+            "Releases",
+        ),
+        (
+            "a",
+            {"href": "https://github.com/far1h/ScreenFix#install-the-hammerspoon-version"},
+            "Advanced Hammerspoon setup",
+        ),
+        (
+            "a",
+            {"href": "https://github.com/far1h/ScreenFix/blob/main/LICENSE"},
+            "MIT license",
+        ),
+        ("p", {"class": "footer-credit"}, "Built by farihmhmd.com"),
+    )
+    actual = tuple((child.tag, child.attrs, child.text()) for child in inner.children)
+    if actual != expected:
+        raise ContractError("site-footer-inner must own every reviewed footer child in order")
 
 
 def _validate_lazy_illustration(image: HtmlNode, source: str, alt: str) -> None:
@@ -1144,10 +1399,10 @@ def _validate_download_notes(page: LandingPageParser) -> None:
 
 def _validate_footer_credit(page: LandingPageParser) -> None:
     """Require the exact final builder credit and link."""
-    footer = page.nodes("footer")[0]
-    if not footer.children:
+    inner = _footer_inner(page)
+    if not inner.children:
         raise ContractError("Footer must end with the builder credit")
-    credit = footer.children[-1]
+    credit = inner.children[-1]
     if credit.tag != "p" or "footer-credit" not in (credit.attrs.get("class") or "").split():
         raise ContractError("Footer final child must be the dedicated builder credit")
     credit_links = [child for child in credit.children if child.tag == "a"]
@@ -1461,7 +1716,7 @@ def _validate_sections(page: LandingPageParser) -> None:
 
 
 def _validate_faq(page: LandingPageParser) -> None:
-    """Require four ordered native disclosures with answers."""
+    """Require five ordered native disclosures with the reviewed search answer."""
     faq_sections = page.by_id("faq")
     if len(faq_sections) != 1:
         raise ContractError("FAQ section must appear exactly once")
@@ -1473,13 +1728,14 @@ def _validate_faq(page: LandingPageParser) -> None:
     ]
     questions = [summaries[0].text() if summaries else "" for _, summaries in relationships]
     expected = [
+        SEO_FAQ_QUESTION,
         "Does ScreenFix repair the damaged panel?",
         "Which windows may remain unchanged?",
         "Why does my operating system warn about ScreenFix?",
         "When does ScreenFix need macOS Accessibility permission?",
     ]
-    if len(relationships) != 4 or any(not question for question in questions):
-        raise ContractError("FAQ summary must be non-empty in each of four details")
+    if len(relationships) != 5 or any(not question for question in questions):
+        raise ContractError("FAQ summary must be non-empty in each of five details")
     for detail, summaries in relationships:
         if len(summaries) != 1 or detail.children[0] is not summaries[0]:
             raise ContractError("FAQ summary must be non-empty and first in details")
@@ -1487,6 +1743,9 @@ def _validate_faq(page: LandingPageParser) -> None:
             raise ContractError("FAQ answer must be non-empty")
     if questions != expected:
         raise ContractError("FAQ order does not match the approved contract")
+    first_answers = [child for child in relationships[0][0].children[1:] if child.text()]
+    if len(first_answers) != 1 or first_answers[0].text() != SEO_FAQ_ANSWER:
+        raise ContractError("FAQ search answer must match the reviewed limitation claim")
 
 
 def _validate_downloads(page: LandingPageParser) -> None:
@@ -1989,8 +2248,10 @@ def _validate_effective_color_contract(styles: str) -> None:
             ]
         )
     fallback_parent = CssNode("p", parent=windows_option)
+    footer = CssNode("footer", frozenset({"site-footer"}), parent=body)
+    footer_inner = CssNode("div", frozenset({"site-footer-inner"}), parent=footer)
     links = {
-        "paper link": (CssNode("a", parent=CssNode("footer", frozenset({"site-footer"}), parent=body)), "--paper"),
+        "paper link": (CssNode("a", parent=footer_inner), "--paper"),
         "surface hero link": (CssNode("a", frozenset({"secondary-link"}), parent=hero_copy), "--surface"),
         "surface fallback link": (CssNode("a", frozenset({"download-fallback"}), parent=fallback_parent), "--surface"),
     }
@@ -2497,6 +2758,66 @@ def _validate_header_shell_contract(styles: str) -> None:
                 raise ContractError("mobile navigation must be centered below the brand")
 
 
+def _footer_used_width(declarations: dict[str, str], viewport: float) -> float:
+    """Resolve the reviewed footer shell width for overflow checks."""
+    width_value = declarations.get("width", "")
+    width = viewport if width_value == "100%" else _css_length_pixels(width_value, viewport)
+    maximum_value = declarations.get("max-width")
+    if maximum_value is not None:
+        width = min(width, _css_length_pixels(maximum_value, viewport))
+    return width
+
+
+def _validate_footer_shell_contract(styles: str) -> None:
+    """Keep one full-width footer rule outside a constrained content shell."""
+    body = CssNode("body")
+    footer = CssNode("footer", frozenset({"site-footer"}), parent=body)
+    inner = CssNode("div", frozenset({"site-footer-inner"}), parent=footer)
+    main = CssNode("main", parent=body)
+    final_section = CssNode(
+        "section",
+        identifier="faq",
+        states=frozenset({"last-child"}),
+        parent=main,
+    )
+    for viewport, gutter in ((375, "24px"), (768, "24px"), (1024, "48px"), (1440, "48px")):
+        footer_styles = effective_declarations(styles, footer, viewport)
+        inner_styles = effective_declarations(styles, inner, viewport)
+        final_section_styles = effective_declarations(styles, final_section, viewport)
+        if (
+            footer_styles.get("width") != "100%"
+            or footer_styles.get("border-top") != "1px solid var(--rule)"
+            or any(
+                property_name in footer_styles
+                for property_name in ("max-width", "margin-inline", "padding-inline")
+            )
+        ):
+            raise ContractError("divider must belong to an unconstrained full-width footer")
+        if "width" not in inner_styles:
+            raise ContractError("footer content must use the constrained responsive inner shell")
+        if _footer_used_width(footer_styles, viewport) > viewport or _footer_used_width(
+            inner_styles,
+            viewport,
+        ) > viewport:
+            raise ContractError("footer shells must fit within every reviewed viewport")
+        expected_inner = {
+            "width": "100%",
+            "max-width": "1200px",
+            "margin-inline": "auto",
+            "padding-inline": gutter,
+            "display": "flex",
+            "flex-wrap": "wrap",
+            "align-items": "center",
+            "gap": "0 24px",
+            "padding-block": "22px",
+            "font-size": "14px",
+        }
+        if any(inner_styles.get(name) != value for name, value in expected_inner.items()):
+            raise ContractError("footer content must use the constrained responsive inner shell")
+        if final_section_styles.get("border-bottom") != "0":
+            raise ContractError("final main section must not draw a second or constrained divider")
+
+
 def _validate_tablet_editorial_layout_values(styles: str) -> None:
     """Keep the 768px editorial layout stacked and overflow-safe."""
     viewport = 768
@@ -2665,7 +2986,8 @@ def _validate_supporting_revision_style_values(styles: str) -> None:
     row = CssNode("div", frozenset({"requirement-row"}), parent=CssNode("dl", parent=requirements))
     term = CssNode("dt", parent=row)
     footer = CssNode("footer", frozenset({"site-footer"}), parent=body)
-    credit = CssNode("p", frozenset({"footer-credit"}), parent=footer)
+    footer_inner = CssNode("div", frozenset({"site-footer-inner"}), parent=footer)
+    credit = CssNode("p", frozenset({"footer-credit"}), parent=footer_inner)
     credit_link = CssNode("a", parent=credit)
 
     for viewport in (375, 768, 1024, 1440):
@@ -2743,7 +3065,7 @@ def _validate_supporting_revision_style_values(styles: str) -> None:
 
 def _validate_layout_contract(styles: str) -> None:
     """Require the approved editorial layouts at mobile and desktop widths."""
-    container = _css_block(styles, "main > *,\n.site-footer")
+    container = _css_block(styles, "main > *,\n.site-footer-inner")
     container_contract = (
         "width: 100%;",
         "max-width: 1200px;",
@@ -2816,7 +3138,7 @@ def _validate_layout_contract(styles: str) -> None:
     if "grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);" not in desktop_results:
         raise ContractError("desktop results must use an asymmetric two-figure grid")
     wide = _css_media_block(styles, "(min-width: 1024px)")
-    if "padding-inline: 48px;" not in _css_block(wide, ".site-header-inner,\nmain > *,\n.site-footer"):
+    if "padding-inline: 48px;" not in _css_block(wide, ".site-header-inner,\nmain > *,\n.site-footer-inner"):
         raise ContractError("desktop container must use fluid wide gutters")
 
 
@@ -2824,6 +3146,7 @@ def _validate_effective_responsive_contract(styles: str) -> None:
     """Resolve required layout declarations at the four reviewed widths."""
     main = CssNode("main")
     header = CssNode("header", frozenset({"site-header"}))
+    footer = CssNode("footer", frozenset({"site-footer"}))
     nodes = {
         "header inner": CssNode(
             "div",
@@ -2832,7 +3155,11 @@ def _validate_effective_responsive_contract(styles: str) -> None:
         ),
         "hero": CssNode("div", frozenset({"hero"}), parent=main),
         "results": CssNode("section", identifier="results", parent=main),
-        "footer": CssNode("footer", frozenset({"site-footer"})),
+        "footer inner": CssNode(
+            "div",
+            frozenset({"site-footer-inner"}),
+            parent=footer,
+        ),
         "downloads": CssNode(
             "div",
             frozenset({"download-pair"}),
@@ -2870,7 +3197,7 @@ def _validate_effective_responsive_contract(styles: str) -> None:
             name: effective_declarations(styles, node, viewport)
             for name, node in nodes.items()
         }
-        for name in ("header inner", "hero", "results", "footer"):
+        for name in ("header inner", "hero", "results", "footer inner"):
             expected = {
                 "width": "100%",
                 "max-width": "1200px",
@@ -3055,6 +3382,7 @@ def _validate_effective_interaction_targets(styles: str) -> None:
     header = CssNode("header", frozenset({"site-header"}), parent=body)
     navigation = CssNode("nav", parent=header)
     footer = CssNode("footer", frozenset({"site-footer"}), parent=body)
+    footer_inner = CssNode("div", frozenset({"site-footer-inner"}), parent=footer)
     main = CssNode("main", parent=body)
     hero = CssNode("div", frozenset({"hero"}), parent=main)
     hero_copy = CssNode("div", frozenset({"hero-copy"}), parent=hero)
@@ -3067,7 +3395,7 @@ def _validate_effective_interaction_targets(styles: str) -> None:
         "skip link": CssNode("a", frozenset({"skip-link"}), parent=body),
         "brand": CssNode("a", frozenset({"brand"}), parent=header),
         "navigation link": CssNode("a", parent=navigation),
-        "footer link": CssNode("a", parent=footer),
+        "footer link": CssNode("a", parent=footer_inner),
         "hero primary": CssNode(
             "a",
             frozenset({"download-primary", "download-windows"}),
@@ -3249,6 +3577,7 @@ def validate_stylesheet(styles: str) -> None:
     _validate_interaction_contract(styles)
     _validate_skip_link_visibility_contract(styles)
     _validate_layout_contract(styles)
+    _validate_footer_shell_contract(styles)
     _validate_editorial_illustration_layout_values(styles)
     _validate_effective_responsive_contract(styles)
     _validate_effective_target_contract(styles)
@@ -4249,6 +4578,84 @@ class StyleContractTests(unittest.TestCase):
     def test_header_divider_is_full_width_with_constrained_inner_content(self) -> None:
         _validate_header_shell_contract(self.styles)
 
+    def test_footer_divider_is_full_width_with_constrained_inner_content(self) -> None:
+        _validate_footer_shell_contract(self.styles)
+
+    def test_footer_shell_root_cause_mutations_are_rejected(self) -> None:
+        constrained_footer = self.styles.replace(
+            ".site-footer {\n  width: 100%;\n  border-top: 1px solid var(--rule);",
+            ".site-footer {\n  width: 100%;\n  max-width: 1200px;\n"
+            "  margin-inline: auto;\n  padding-inline: 24px;\n"
+            "  border-top: 1px solid var(--rule);",
+            1,
+        )
+        short_final_border = self.styles.replace(
+            ".site-footer {\n  width: 100%;\n  border-top: 1px solid var(--rule);",
+            ".site-footer {\n  width: 100%;",
+            1,
+        ).replace(
+            "main > section:last-child {\n  border-bottom: 0;",
+            "main > section:last-child {\n  border-bottom: 1px solid var(--rule);",
+            1,
+        )
+        double_divider = self.styles.replace(
+            "main > section:last-child {\n  border-bottom: 0;",
+            "main > section:last-child {\n  border-bottom: 1px solid var(--rule);",
+            1,
+        )
+        wrong_gutters = self.styles.replace(
+            "main > *,\n.site-footer-inner {\n  width: 100%;\n  max-width: 1200px;\n"
+            "  margin-inline: auto;\n  padding-inline: 24px;",
+            "main > *,\n.site-footer-inner {\n  width: 100%;\n  max-width: 1200px;\n"
+            "  margin-inline: auto;\n  padding-inline: 20px;",
+            1,
+        )
+        wrong_wide_gutters = self.styles.replace(
+            ".site-header-inner,\n  main > *,\n  .site-footer-inner {\n"
+            "    padding-inline: 48px;",
+            ".site-header-inner,\n  main > *,\n  .site-footer-inner {\n"
+            "    padding-inline: 40px;",
+            1,
+        )
+        overflowing_inner = self.styles.replace(
+            "main > *,\n.site-footer-inner {\n  width: 100%;",
+            "main > *,\n.site-footer-inner {\n  width: 1200px;",
+            1,
+        )
+        mutations = {
+            "constrained footer": (
+                constrained_footer,
+                "unconstrained full-width footer",
+            ),
+            "short final border": (
+                short_final_border,
+                "unconstrained full-width footer",
+            ),
+            "double divider": (
+                double_divider,
+                "must not draw a second or constrained divider",
+            ),
+            "wrong gutters": (
+                wrong_gutters,
+                "constrained responsive inner shell",
+            ),
+            "wrong wide gutters": (
+                wrong_wide_gutters,
+                "constrained responsive inner shell",
+            ),
+            "overflow": (
+                overflowing_inner,
+                "fit within every reviewed viewport",
+            ),
+        }
+        for name, (mutated, message) in mutations.items():
+            with self.subTest(name=name):
+                self.assert_style_rejected(
+                    mutated,
+                    _validate_footer_shell_contract,
+                    message,
+                )
+
     def test_editorial_illustration_layout_values(self) -> None:
         _validate_editorial_illustration_layout_values(self.styles)
 
@@ -4366,8 +4773,8 @@ class StyleContractTests(unittest.TestCase):
             "mobile brand must not be underlined",
         )
         constrained_divider = self.styles.replace(
-            "main > *,\n.site-footer {",
-            ".site-header,\nmain > *,\n.site-footer {",
+            "main > *,\n.site-footer-inner {",
+            ".site-header,\nmain > *,\n.site-footer-inner {",
             1,
         )
         self.assert_style_rejected(
@@ -4458,7 +4865,7 @@ class StyleContractTests(unittest.TestCase):
     def test_effective_responsive_override_mutations_are_rejected(self) -> None:
         mutations = {
             "display-block": ".hero, #results { display: block; }",
-            "narrow-container": ".site-header, main > *, .site-footer { max-width: 640px; }",
+            "narrow-container": ".site-header-inner, main > * { max-width: 640px; }",
             "hero-columns": (
                 "@media (min-width: 900px) { "
                 ".hero { grid-template-columns: minmax(0, 1fr); } }"
@@ -4570,8 +4977,8 @@ class StyleContractTests(unittest.TestCase):
                 1,
             ),
             "footer-background": self.styles.replace(
-                ".site-footer {\n  display: flex;",
-                ".site-footer {\n  background: var(--ink);\n  display: flex;",
+                ".site-footer {\n  width: 100%;",
+                ".site-footer {\n  background: var(--ink);\n  width: 100%;",
                 1,
             ),
             "hidden-heading": self.styles.replace(
@@ -4958,17 +5365,7 @@ class LandingPageContractTests(unittest.TestCase):
                 for meta in metas
             )
         )
-        self.assertTrue(
-            any(
-                meta.attrs.get("name") == "description"
-                and meta.attrs.get("content")
-                == "ScreenFix masks a damaged vertical display strip and keeps ordinary windows in the usable space on either side."
-                for meta in metas
-            )
-        )
-        self.assertEqual(["ScreenFix — Work around a damaged screen"], [node.text() for node in page.nodes("title")])
         links = page.nodes("link")
-        self.assertTrue(any(node.attrs.get("rel") == "canonical" and node.attrs.get("href") == "https://far1h.github.io/ScreenFix/" for node in links))
         self.assertTrue(any(node.attrs.get("rel") == "icon" and node.attrs.get("href") == "assets/screenfix-icon.svg" for node in links))
         self.assertTrue(any(node.attrs.get("rel") == "stylesheet" and node.attrs.get("href") == "styles.css" for node in links))
 
@@ -5003,22 +5400,56 @@ class LandingPageContractTests(unittest.TestCase):
         self.assertEqual("", brand_images[0].attrs.get("alt"))
 
         headings = page.nodes("h1")
-        self.assertEqual(["Work around a damaged screen."], [heading.text() for heading in headings])
+        self.assertEqual(1, len(headings))
+        self.assertTrue(headings[0].text())
         hero_copy = [node for node in page.elements if "hero-copy" in (node.attrs.get("class") or "").split()]
         self.assertEqual(1, len(hero_copy))
         substantive_children = [child for child in hero_copy[0].children if child.text()]
         self.assertTrue(substantive_children)
         self.assertIs(headings[0], substantive_children[0])
         explanations = [node for node in hero_copy[0].children if "hero-explanation" in (node.attrs.get("class") or "").split()]
-        self.assertEqual(
-            ["ScreenFix blacks out the broken strip and keeps ordinary windows in the space that still works."],
-            [node.text() for node in explanations],
-        )
+        self.assertEqual(1, len(explanations))
+        self.assertTrue(explanations[0].text())
 
     def test_header_inner_contains_direct_brand_and_navigation(self) -> None:
         """Keep the full-width header shell separate from its constrained contents."""
         page = parse_landing_page()
         _validate_header_structure(page)
+
+    def test_footer_inner_contains_every_footer_child_in_order(self) -> None:
+        """Keep the full-width footer shell separate from its constrained contents."""
+        page = parse_landing_page()
+        _validate_footer_structure(page)
+
+    def test_footer_inner_ownership_mutations_are_rejected(self) -> None:
+        """Reject a missing, misplaced, or partially bypassed footer inner shell."""
+        source = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+        missing_inner = source.replace(' class="site-footer-inner"', "", 1)
+        misplaced_inner = missing_inner.replace(
+            '    <footer class="site-footer">',
+            '    <div class="site-footer-inner">\n    <footer class="site-footer">',
+            1,
+        ).replace("    </footer>", "    </footer>\n    </div>", 1)
+        escaped_credit = source.replace(
+            '        <p class="footer-credit">Built by '
+            '<a href="https://farihmhmd.com/">farihmhmd.com</a></p>\n'
+            "      </div>",
+            "      </div>\n"
+            '      <p class="footer-credit">Built by '
+            '<a href="https://farihmhmd.com/">farihmhmd.com</a></p>',
+            1,
+        )
+        mutations = {
+            "missing inner": missing_inner,
+            "misplaced inner": misplaced_inner,
+            "content outside inner": escaped_credit,
+        }
+        for name, mutated in mutations.items():
+            with self.subTest(name=name):
+                self.assertNotEqual(source, mutated)
+                page = parse_landing_page_source(mutated)
+                with self.assertRaisesRegex(ContractError, "site-footer-inner"):
+                    _validate_footer_structure(page)
 
     def test_brand_link_returns_to_page_top(self) -> None:
         """Keep the clickable brand anchored to the top of the current page."""
@@ -5470,29 +5901,14 @@ class LandingPageContractTests(unittest.TestCase):
         ):
             self.assertIn(phrase, requirements)
 
-        questions = [
-            "Does ScreenFix repair the damaged panel?",
-            "Which windows may remain unchanged?",
-            "Why does my operating system warn about ScreenFix?",
-            "When does ScreenFix need macOS Accessibility permission?",
-        ]
-        faq = page.by_id("faq")[0]
-        details = [node for node in faq.children if node.tag == "details"]
-        self.assertEqual(4, len(details))
-        actual_questions = []
-        for detail in details:
-            summaries = [node for node in detail.children if node.tag == "summary"]
-            self.assertEqual(1, len(summaries))
-            self.assertIs(detail.children[0], summaries[0])
-            self.assertTrue(summaries[0].text())
-            answers = [node for node in detail.children[1:] if node.text()]
-            self.assertTrue(answers)
-            actual_questions.append(summaries[0].text())
-        self.assertEqual(questions, actual_questions)
-
         footer = page.nodes("footer")[0]
+        footer_inner = _footer_inner(page)
         self.assertIn("ScreenFix is an open-source utility for working around a damaged display strip.", footer.text())
-        footer_links = [(node.text(), node.attrs.get("href")) for node in footer.children if node.tag == "a"]
+        footer_links = [
+            (node.text(), node.attrs.get("href"))
+            for node in footer_inner.children
+            if node.tag == "a"
+        ]
         self.assertEqual(
             [
                 ("Source", "https://github.com/far1h/ScreenFix"),
@@ -5584,8 +6000,8 @@ class LandingPageContractTests(unittest.TestCase):
 
     def test_standalone_trust_claim_mutation_is_rejected(self) -> None:
         self.assert_mutation_rejected(
-            '<p class="hero-explanation">ScreenFix blacks out the broken strip and keeps ordinary windows in the space that still works.</p>',
-            '<p class="hero-explanation">ScreenFix blacks out the broken strip and keeps ordinary windows in the space that still works.</p>\n          <p>Free and MIT licensed</p>',
+            f'<p class="hero-explanation">{HERO_EXPLANATION}</p>',
+            f'<p class="hero-explanation">{HERO_EXPLANATION}</p>\n          <p>Free and MIT licensed</p>',
             "standalone trust claim",
         )
 
@@ -5636,9 +6052,9 @@ class LandingPageContractTests(unittest.TestCase):
             path = Path(temporary_directory) / "index.html"
             shutil.copyfile(ROOT / "site" / "index.html", path)
             source = path.read_text(encoding="utf-8")
-            first_start = source.index("        <details>\n          <summary>Does ScreenFix repair")
-            second_start = source.index("        <details>\n          <summary>Which windows")
-            third_start = source.index("        <details>\n          <summary>Why does")
+            first_start = source.index(f"        <details>\n          <summary>{SEO_FAQ_QUESTION}")
+            second_start = source.index("        <details>\n          <summary>Does ScreenFix repair")
+            third_start = source.index("        <details>\n          <summary>Which windows")
             reordered = source[:first_start] + source[second_start:third_start] + source[first_start:second_start] + source[third_start:]
             path.write_text(reordered, encoding="utf-8")
             with self.assertRaisesRegex(ContractError, "FAQ order"):
@@ -5646,7 +6062,7 @@ class LandingPageContractTests(unittest.TestCase):
 
     def test_empty_faq_summary_mutation_is_rejected(self) -> None:
         self.assert_mutation_rejected(
-            "<summary>Does ScreenFix repair the damaged panel?</summary>",
+            f"<summary>{SEO_FAQ_QUESTION}</summary>",
             "<summary></summary>",
             "FAQ summary must be non-empty",
         )
